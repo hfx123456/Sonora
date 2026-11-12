@@ -18,7 +18,7 @@ import (
 func testConnectApp(t *testing.T) *app {
 	t.Helper()
 	a := newTestApp()
-	a.connect = &connectState{client: spotify.NewConnect("local", "Vinyl", nil), observer: true, receiver: true, jobs: make(chan func() error, 32), done: make(chan struct{})}
+	a.connect = &connectState{client: spotify.NewConnect("local", "Vinyl", nil), observer: true, receiver: true, jobs: make(chan func() error, 32), reports: make(chan func() error, 1), done: make(chan struct{})}
 	t.Cleanup(a.connect.client.Close)
 	a.pl.Control = a.connectControl
 	a.pl.Cue([]spotify.Track{{ID: "one", Name: "One", Duration: 200000}})
@@ -68,12 +68,12 @@ func TestConnectRevokesOwnership(t *testing.T) {
 	}
 }
 
-// A saved local song needs a play context, not resume against an empty server state.
+// A saved local song starts immediately and registers its context in the background.
 func TestConnectResumeAndPlayRouting(t *testing.T) {
 	a := testConnectApp(t)
 	a.pl.TogglePlay()
-	if len(a.connect.jobs) != 1 || a.pl.Playing() {
-		t.Fatal("saved session was played locally before the server accepted it")
+	if len(a.connect.jobs) != 1 || !a.pl.Playing() {
+		t.Fatal("saved session waited for the server before playing")
 	}
 	request := player.QueueRequest{Tracks: []spotify.Track{{ID: "a"}, {ID: "b"}}, Start: 1}
 	body := connectPlayBody(request)
@@ -82,8 +82,8 @@ func TestConnectResumeAndPlayRouting(t *testing.T) {
 		t.Fatal("play context lost tracks or starting index")
 	}
 	a.pl.PlayQueue(request.Tracks, 1)
-	if len(a.connect.jobs) != 2 {
-		t.Fatal("new queue was not routed")
+	if len(a.connect.jobs) != 1 || a.pl.Current().ID != "b" {
+		t.Fatal("new queue waited, or the superseded registration was not replaced")
 	}
 }
 
@@ -173,8 +173,8 @@ func TestConnectQueueIsTheClusters(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: http.Header{}}, nil
 	})}
 	a.pl.Jump(2)
-	if len(a.connect.jobs) != 1 || a.pl.Current().ID != "one" {
-		t.Fatal("jump was not routed to Connect")
+	if len(a.connect.jobs) != 1 || a.pl.Current().ID != "three" {
+		t.Fatal("jump did not start locally and sync to Connect")
 	}
 	if err := (<-a.connect.jobs)(); err != nil {
 		t.Fatal(err)
@@ -223,7 +223,7 @@ func TestConnectReportAnsweredAfterTheSongEnded(t *testing.T) {
 	}
 	defer func() { connectReport = (*spotify.Connect).Report }()
 	a.reportConnect()
-	if err := (<-a.connect.jobs)(); err != nil {
+	if err := (<-a.connect.reports)(); err != nil {
 		t.Fatal(err)
 	}
 	if got := reported.(map[string]any)["state_id"]; got != "new-two" {
@@ -244,7 +244,7 @@ func TestConnectReportTurnedDown(t *testing.T) {
 	}
 	defer func() { connectReport = (*spotify.Connect).Report }()
 	a.reportConnect()
-	if err := (<-a.connect.jobs)(); err != nil {
+	if err := (<-a.connect.reports)(); err != nil {
 		t.Errorf("the worker would toast: %v", err)
 	}
 

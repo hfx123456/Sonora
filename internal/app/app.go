@@ -168,10 +168,8 @@ type app struct {
 	mutedFrom  float64
 
 	rowBars barState
-	// songDoubleClickedWall and songDoubleClickedUntil keep the trailing
-	// mouse-up of a double click from being treated as a single click.
-	songDoubleClickedUntil time.Time
-	songDoubleClickedWall  time.Time
+	// The row whose double-click press is still waiting for mouse-up.
+	songDoubleClick uint64
 	// underTop and underBottom say whether the page has content under its
 	// bars, which show their scroll edges then.
 	underTop, underBottom bool

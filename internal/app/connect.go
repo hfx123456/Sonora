@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -28,14 +29,23 @@ type connectState struct {
 	observer, receiver, applying bool
 	// lost tells that Spotify turned down the state this device reported and
 	// gave no other: it plays on here, on its own, until Spotify gives one.
-	lost       bool
-	err        string
-	open       bool
-	known      map[string]spotify.Track // what Decorate named, by URI
-	decorating bool
-	timer      *time.Timer
-	jobs       chan func() error
-	done       chan struct{}
+	lost        bool
+	err         string
+	open        bool
+	known       map[string]spotify.Track // what Decorate named, by URI
+	decorating  bool
+	timer       *time.Timer
+	jobs        chan func() error
+	reports     chan func() error
+	done        chan struct{}
+	playJob     latestConnectJob
+	reportJob   latestConnectJob
+	playVersion atomic.Uint64
+	// pendingPlay is the locally selected URI awaiting a server state.
+	// Earlier selections must not restart or replace the current audio.
+	pendingPlay string
+	playSent    uint64 // the selection already registered or awaiting its reply
+	localQueue  bool   // keep the native queue until a matching cluster arrives
 	// The volume asked of a device, sent once the request before it is
 	// done: a drag turns it a percent at a time, which one by one would
 	// walk the device there long after the drag.
@@ -165,7 +175,7 @@ func (a *app) startConnect() {
 	}
 	hostname, _ := os.Hostname()
 	sum := sha256.Sum256([]byte("Vinyl/" + a.profile.UserID + "/" + hostname))
-	state := &connectState{user: a.profile.UserID, jobs: make(chan func() error, 32), done: make(chan struct{})}
+	state := &connectState{user: a.profile.UserID, jobs: make(chan func() error, 32), reports: make(chan func() error, 1), done: make(chan struct{})}
 	state.client = spotify.NewConnect(hex.EncodeToString(sum[:20]), appName+" · "+hostname, func(event spotify.ConnectEvent) {
 		a.post(func() {
 			if a.connect == state {
@@ -178,31 +188,35 @@ func (a *app) startConnect() {
 		state.local = state.local || track.Local()
 	}
 	a.pl.Control = a.connectControl
-	go func() {
-		for {
+	go a.runConnectJobs(state, state.jobs)
+	// A slow periodic report cannot hold user commands behind its HTTP request.
+	go a.runConnectJobs(state, state.reports)
+	state.client.Start()
+	a.connectTick(state)
+}
+
+func (a *app) runConnectJobs(state *connectState, jobs <-chan func() error) {
+	for {
+		select {
+		case <-state.done:
+			return
+		case job := <-jobs:
 			select {
 			case <-state.done:
 				return
-			case job := <-state.jobs:
-				select {
-				case <-state.done:
-					return
-				default:
-				}
-				if err := job(); err != nil {
-					log.Printf("connect: %v", err)
-					a.post(func() {
-						if a.connect == state {
-							state.err = connectMessage(err)
-							a.toast = state.err
-						}
-					})
-				}
+			default:
+			}
+			if err := job(); err != nil {
+				log.Printf("connect: %v", err)
+				a.post(func() {
+					if a.connect == state {
+						state.err = connectMessage(err)
+						a.toast = state.err
+					}
+				})
 			}
 		}
-	}()
-	state.client.Start()
-	a.connectTick(state)
+	}
 }
 
 func (a *app) connectJob(job func() error) bool {
@@ -260,6 +274,7 @@ func (a *app) connectTick(state *connectState) {
 			if a.connect != state || a.quitting {
 				return
 			}
+			a.sendLocalConnectPlay()
 			a.reportConnect()
 			a.connectTick(state)
 		})
@@ -292,7 +307,18 @@ func (a *app) reportConnect() {
 		// The page's clock runs a little past the end of the song.
 		pos = min(pos, duration)
 	}
-	a.connectJob(func() error {
+	version := state.playVersion.Load()
+	queueLatestConnect(&state.reportJob, func(job func() error) bool {
+		select {
+		case state.reports <- job:
+			return true
+		default:
+			return false
+		}
+	}, func() error {
+		if version != state.playVersion.Load() {
+			return nil
+		}
 		// Nothing the listener did: what goes wrong goes to the log, not to a
 		// toast that would come back every five seconds.
 		err := connectReport(state.client, ref, pos, duration, paused)
@@ -301,7 +327,11 @@ func (a *app) reportConnect() {
 		}
 		var turned *spotify.ConnectError
 		if errors.As(err, &turned) && turned.Status == http.StatusBadRequest {
-			a.post(func() { a.connectTurnedDown(state, sent) })
+			a.post(func() {
+				if version == state.playVersion.Load() {
+					a.connectTurnedDown(state, sent)
+				}
+			})
 		}
 		return nil
 	})
@@ -334,15 +364,21 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 		log.Printf("connect: observer ready")
 		state.observer = true
 		state.err = ""
+		a.sendLocalConnectPlay()
 	case "receiver_ready":
 		log.Printf("connect: ready, as %q", state.client.Name)
 		state.receiver = true
 		state.lost = false
 		state.err = ""
+		a.sendLocalConnectPlay()
 	case "observer_offline":
 		state.observer = false
+		state.playVersion.Add(1)
+		state.playSent = 0
 	case "receiver_offline":
 		state.receiver = false
+		state.playVersion.Add(1)
+		state.playSent = 0
 		if state.ref != nil {
 			state.ref = nil
 			a.pl.StopConnect()
@@ -363,6 +399,9 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 			a.connectOptions(cluster.Player.Options)
 		}
 		if cluster.Active != "" && cluster.Active != state.client.ID {
+			state.pendingPlay = ""
+			state.localQueue = false
+			state.playVersion.Add(1)
 			state.ref, state.lost = nil, false
 			track := cluster.Track()
 			if track.ID != "" {
@@ -378,6 +417,10 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 				a.pl.StopConnect()
 			}
 		} else if cluster.Active == state.client.ID && state.ref != nil {
+			clusterTrack := cluster.Track()
+			if current := a.pl.Current(); current != nil && clusterTrack.URI() == current.URI() {
+				state.localQueue = false
+			}
 			a.connectQueue(state.ref.Index)
 		}
 	case "report":
@@ -417,7 +460,31 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 		}
 		switch command.Type {
 		case "replace_state":
+			if state.pendingPlay != "" {
+				if command.Ref == nil {
+					// Revoking an earlier context may arrive during a new play.
+					// A cluster transfer to another device still takes ownership.
+					return
+				}
+				track, err := command.Machine.Track(command.Ref.Index)
+				if err != nil || track.URI() != state.pendingPlay {
+					return
+				}
+				// The audio has already started (and may since have paused or
+				// sought). Adopt the identity, keeping that newer local state.
+				ref := *command.Ref
+				ref.Paused = !a.pl.Playing()
+				state.pendingPlay = ""
+				state.machine = command.Machine
+				state.ref, state.lost = &ref, false
+				state.cluster.Active = state.client.ID
+				a.connectOptions(state.machine.Attributes.Options)
+				a.reportConnect()
+				return
+			}
 			if command.Ref == nil {
+				state.playVersion.Add(1)
+				state.localQueue = false
 				state.ref = nil
 				if !a.pl.IsRemote() {
 					a.pl.StopConnect()
@@ -451,6 +518,9 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 				state.applying = false
 			}
 		case "log_out":
+			state.pendingPlay = ""
+			state.localQueue = false
+			state.playVersion.Add(1)
 			state.ref = nil
 			a.pl.StopConnect()
 		case "ping":
@@ -489,6 +559,9 @@ func (a *app) applyConnect(ref *spotify.ConnectRef, seek *int64) {
 // after. Until the cluster has come to the track, the machine's two.
 func (a *app) connectQueue(index int) {
 	state := a.connect
+	if state.localQueue {
+		return
+	}
 	track, err := state.machine.Track(index)
 	if err != nil {
 		return
@@ -577,6 +650,9 @@ func (a *app) connectControl(action string, value any) bool {
 		}
 		if state.local {
 			state.ref = nil
+			state.pendingPlay = ""
+			state.localQueue = false
+			state.playVersion.Add(1)
 			if state.cluster.Active == state.client.ID {
 				a.connectJob(func() error { return state.client.Command(state.client.ID, "pause", nil) })
 			}
@@ -587,6 +663,9 @@ func (a *app) connectControl(action string, value any) bool {
 	}
 	if state == nil || state.applying || state.lost {
 		return false
+	}
+	if a.localConnectControl(action, value) {
+		return true
 	}
 	if !state.observer || !state.receiver {
 		if a.pl.IsRemote() || state.ref != nil {
@@ -600,17 +679,6 @@ func (a *app) connectControl(action string, value any) bool {
 		target = state.client.ID
 	}
 	extra := map[string]any{}
-	if action == "toggle" && target == state.client.ID && state.ref == nil && a.pl.Current() != nil {
-		extra = connectPlayBody(player.QueueRequest{Tracks: append([]spotify.Track(nil), a.pl.Queue()...), Start: 0})
-		order, at := a.pl.PlayOrder()
-		if at >= 0 && at < len(order) {
-			extra["options"].(map[string]any)["skip_to"] = map[string]any{"track_index": order[at]}
-		}
-		extra["options"].(map[string]any)["seek_to"] = a.pl.Position().Milliseconds()
-		extra["options"].(map[string]any)["initially_paused"] = a.pl.Playing()
-		a.connectJob(func() error { return state.client.Command(target, "play", extra) })
-		return true
-	}
 	switch action {
 	case "play":
 		extra = connectPlayBody(value.(player.QueueRequest))

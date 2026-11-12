@@ -10,7 +10,7 @@ import (
 
 func connectTestApp() *app {
 	a := newTestApp()
-	a.connect = &connectState{client: spotify.NewConnect("local", "Vinyl", nil), observer: true, receiver: true, jobs: make(chan func() error, 32), done: make(chan struct{})}
+	a.connect = &connectState{client: spotify.NewConnect("local", "Vinyl", nil), observer: true, receiver: true, jobs: make(chan func() error, 32), reports: make(chan func() error, 1), done: make(chan struct{})}
 	a.pl.Control = a.connectControl
 	return a
 }

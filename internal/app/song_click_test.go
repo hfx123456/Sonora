@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"vinyl/internal/spotify"
@@ -109,8 +110,8 @@ func TestSongRowDoubleClickPlaysWithConnect(t *testing.T) {
 		return errors.New("offline")
 	}
 	a := artistApp()
-	a.connect = &connectState{client: spotify.NewConnect("local", "Vinyl", nil), observer: false, receiver: false,
-		jobs: make(chan func() error, 32), done: make(chan struct{})}
+	a.connect = &connectState{client: spotify.NewConnect("local", "Vinyl", nil), observer: true, receiver: true,
+		jobs: make(chan func() error, 32), reports: make(chan func() error, 1), done: make(chan struct{})}
 	t.Cleanup(a.connect.client.Close)
 	a.pl.Control = a.connectControl
 	tt := ui.NewTester(a.view, 1200, 800)
@@ -136,5 +137,58 @@ func TestSongRowDoubleClickPlaysWithConnect(t *testing.T) {
 	}
 	if !a.pl.Playing() {
 		t.Fatalf("a failed play request left the song waiting: playing %v, loading %v", a.pl.Playing(), a.pl.Loading())
+	}
+}
+
+// The release of a double click never pauses, but the next real click does, even immediately.
+func TestSongRowClickImmediatelyAfterDoubleClick(t *testing.T) {
+	a := artistApp()
+	tt := ui.NewTester(a.view, 1200, 800)
+	if err := tt.Click("孤勇者"); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := tt.Find("孤勇者")
+	if !ok {
+		t.Fatal("song row missing")
+	}
+	x, y := r.X+r.W/2, r.Y+r.H/2
+	tt.Press(x, y)
+	tt.Frame()
+	if !a.pl.Playing() {
+		t.Fatal("double-click press did not play")
+	}
+	// Holding down the second press must not depend on a half-second timer.
+	tt.Advance(700 * time.Millisecond)
+	tt.Release(x, y)
+	tt.Frame()
+	if !a.pl.Playing() {
+		t.Fatal("the double-click release paused the song")
+	}
+	if err := tt.Click("孤勇者"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.pl.Playing() {
+		t.Fatal("the next real single click was swallowed")
+	}
+}
+
+// A quick third click after a completed double click pauses instead of being blocked for 500 ms.
+func TestSongRowQuickThirdClickPauses(t *testing.T) {
+	a := artistApp()
+	tt := ui.NewTester(a.view, 1200, 800)
+	for range 2 {
+		if err := tt.Click("孤勇者"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !a.pl.Playing() {
+		t.Fatal("double click did not play")
+	}
+	if err := tt.Click("孤勇者"); err != nil {
+		t.Fatal(err)
+	}
+	if a.pl.Playing() {
+		t.Fatal("quick single click was swallowed")
 	}
 }

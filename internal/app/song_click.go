@@ -1,22 +1,24 @@
 package app
 
-import (
-	"time"
-
-	"github.com/egoist/mygo/ui"
-)
+import "github.com/egoist/mygo/ui"
 
 // rowDoubleClicked starts playback on a double click, or pauses on a
 // single click of the current song.
 func (a *app) rowDoubleClicked(c *ui.Context, row ui.Element, current bool) bool {
 	if row.DoubleClicked() {
-		a.songDoubleClickedUntil = c.Now().Add(500 * time.Millisecond)
-		a.songDoubleClickedWall = time.Now().Add(500 * time.Millisecond)
+		// DoubleClicked arrives on mouse-down. Ignore only the release of
+		// this press, not every single click for the next half second.
+		a.songDoubleClick = row.ID()
+		if !row.Pressed() {
+			a.songDoubleClick = 0
+		}
 		row.Clicked()
 		return true
 	}
-	if (!a.songDoubleClickedUntil.IsZero() && !c.Now().After(a.songDoubleClickedUntil)) ||
-		(!a.songDoubleClickedWall.IsZero() && time.Now().Before(a.songDoubleClickedWall)) {
+	if a.songDoubleClick == row.ID() {
+		if !row.Pressed() {
+			a.songDoubleClick = 0
+		}
 		row.Clicked()
 		return false
 	}
