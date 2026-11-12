@@ -10,9 +10,9 @@
 
 **简体中文** · [English](README.en.md)
 
-[![最新版本](https://img.shields.io/github/v/release/margbug01/MySpotify?style=flat-square&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=ef3b45)](https://github.com/margbug01/MySpotify/releases/latest) ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-3a6ea5?style=flat-square) ![macOS Apple 芯片](https://img.shields.io/badge/macOS-Apple%20%E8%8A%AF%E7%89%87-555555?style=flat-square) ![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-c2410c?style=flat-square)
+[![最新版本](https://img.shields.io/github/v/release/hfx123456/MySpotify?style=flat-square&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=ef3b45)](https://github.com/hfx123456/MySpotify/releases/latest) ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-3a6ea5?style=flat-square) ![macOS Apple 芯片](https://img.shields.io/badge/macOS-Apple%20%E8%8A%AF%E7%89%87-555555?style=flat-square) ![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-c2410c?style=flat-square)
 
-**[下载最新版](https://github.com/margbug01/MySpotify/releases/latest)** · [官网](https://margbug01.github.io/MySpotify/) · [安装步骤](#开始使用) · [常见问题](#常见问题)
+**[下载最新版](https://github.com/hfx123456/MySpotify/releases/latest)** · [更新日志](CHANGELOG.md) · [安装步骤](#开始使用) · [常见问题](#常见问题)
 
 <img src="docs/screenshots/hero.webp" width="860" alt="首页，浅色和深色">
 
@@ -72,11 +72,35 @@ Linux 提供实验性 `.deb` / `.tar.gz` 构建。amd64 默认使用 Qt WebEngin
 
 </details>
 
+## 这个定制版加了什么
+
+本仓库是 [margbug01/MySpotify](https://github.com/margbug01/MySpotify) 的个人 fork，用自己签名的更新源发布，装好之后能在应用里直接更新。
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/island.webp" alt="词岛：顶部胶囊双语歌词"></td>
+    <td width="50%"><img src="docs/screenshots/fusion.webp" alt="播放页双语歌词"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/desktop-lyrics.webp" alt="透明桌面双行歌词"></td>
+    <td><img src="docs/screenshots/playlist-search.webp" alt="歌单内搜索"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/search-zh-tw.webp" alt="输入繁体也能搜到简体"></td>
+    <td><img src="docs/screenshots/fusion-menu.webp" alt="歌词菜单"></td>
+  </tr>
+</table>
+
+- **桌面歌词**：顶部胶囊（词岛）和透明双行两种样式，原文一行、中文翻译一行；字号、宽度、位置可调，能锁定成点击穿透。暂停时自动隐藏，继续播放再出现。
+- **歌单内搜索**：歌单顶部常驻搜索框，1464 首里筛出 22 首只要一次输入。
+- **简繁互搜**：输入繁体「周杰倫」，简体的周杰伦照样搜得到。
+- **一个菜单管完**：切换歌词样式、动态效果、中文字幕、时间轴偏移（`[` / `]` 也行），都能在播放栏的歌词菜单里点。
+
 ## 开始使用
 
 ### Windows
 
-1. 到 [Releases](https://github.com/margbug01/MySpotify/releases/latest) 下载 `MySpotify-<版本>-windows-amd64.zip`，解压到任意文件夹，双击 `MySpotify.exe`。
+1. 到 [Releases](https://github.com/hfx123456/MySpotify/releases/latest) 下载 `MySpotify-<版本>-windows-amd64.zip`，解压到任意文件夹，双击 `MySpotify.exe`。
 2. exe 没有代码签名，第一次打开 Windows 可能弹「Windows 已保护你的电脑」：点「更多信息 › 仍要运行」。不放心可以对一下 Release 里写的 sha256，或者按[开发说明](DEVELOPMENT.md#从源码构建)自己编。
 3. 需要 Windows 10 或 11，以及 [WebView2 运行时](https://developer.microsoft.com/microsoft-edge/webview2/)（Windows 11 自带，Windows 10 大多也已经装了）。
 

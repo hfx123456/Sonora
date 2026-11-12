@@ -10,9 +10,9 @@ A native interface, lyrics that scroll, music videos and video podcasts. Free ac
 
 [简体中文](README.md) · **English**
 
-[![Latest release](https://img.shields.io/github/v/release/margbug01/MySpotify?style=flat-square&label=latest&color=ef3b45)](https://github.com/margbug01/MySpotify/releases/latest) ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-3a6ea5?style=flat-square) ![macOS Apple silicon](https://img.shields.io/badge/macOS-Apple%20silicon-555555?style=flat-square) ![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-c2410c?style=flat-square)
+[![Latest release](https://img.shields.io/github/v/release/hfx123456/MySpotify?style=flat-square&label=latest&color=ef3b45)](https://github.com/hfx123456/MySpotify/releases/latest) ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-3a6ea5?style=flat-square) ![macOS Apple silicon](https://img.shields.io/badge/macOS-Apple%20silicon-555555?style=flat-square) ![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-c2410c?style=flat-square)
 
-**[Download the latest release](https://github.com/margbug01/MySpotify/releases/latest)** · [Website](https://margbug01.github.io/MySpotify/en.html) · [Install](#get-started) · [FAQ](#faq)
+**[Download the latest release](https://github.com/hfx123456/MySpotify/releases/latest)** · [Changelog](CHANGELOG.md) · [Install](#get-started) · [FAQ](#faq)
 
 <img src="docs/screenshots/hero.webp" width="860" alt="The home page, in light and dark themes">
 
@@ -75,11 +75,35 @@ Experimental Linux `.deb` / `.tar.gz` builds are available. On amd64, Qt WebEngi
 
 </details>
 
+## What this fork adds
+
+A personal fork of [margbug01/MySpotify](https://github.com/margbug01/MySpotify), published from its own signed update feed so installed builds update themselves.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/island.webp" alt="The lyric island over the app"></td>
+    <td width="50%"><img src="docs/screenshots/fusion.webp" alt="Bilingual lyrics on the Now Playing page"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/desktop-lyrics.webp" alt="Two transparent lines over the desktop"></td>
+    <td><img src="docs/screenshots/playlist-search.webp" alt="Search inside a playlist"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/search-zh-tw.webp" alt="Traditional Chinese input finds simplified Chinese results"></td>
+    <td><img src="docs/screenshots/fusion-menu.webp" alt="The lyric menu"></td>
+  </tr>
+</table>
+
+- **Desktop lyrics**: a capsule island at the top or two transparent lines anywhere, original line over its Chinese translation, with adjustable size, width and position; can be locked click-through. Hidden while paused, back when playback resumes.
+- **Search inside a playlist**: a search box that stays at the top of an open playlist filters 1,464 songs down to 22 in one go.
+- **Traditional/simplified Chinese search**: typing 周杰倫 (traditional) still finds 周杰伦.
+- **One menu for the overlay**: style, motion, translation, and timing offset (`[` / `]` too), all from the lyric menu in the player bar.
+
 ## Get started
 
 ### Windows
 
-1. Download `MySpotify-<version>-windows-amd64.zip` from [Releases](https://github.com/margbug01/MySpotify/releases/latest), unzip it anywhere and double-click `MySpotify.exe`.
+1. Download `MySpotify-<version>-windows-amd64.zip` from [Releases](https://github.com/hfx123456/MySpotify/releases/latest), unzip it anywhere and double-click `MySpotify.exe`.
 2. The exe isn't code-signed, so "Windows protected your PC" may appear the first time: click More info › Run anyway. If you'd rather check, compare the sha256 in the release, or [build it yourself](DEVELOPMENT.en.md#build-from-source).
 3. It needs Windows 10 or 11 and the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (included in Windows 11, and already on most Windows 10 machines).
 
