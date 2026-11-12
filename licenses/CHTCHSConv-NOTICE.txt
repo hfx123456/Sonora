@@ -1,0 +1,13 @@
+The embedded Lyricify helper depends on CHTCHSConv 1.0.0, containing
+ChineseConverter.dll from Microsoft Visual Studio International Pack 1.0 SR1.
+Copyright Microsoft Corporation.
+
+Upstream package metadata is retained in CHTCHSConv.nuspec.
+The NuGet package does not contain a license text or license expression.
+This notice does not grant additional distribution rights.
+Project: https://www.microsoft.com/en-us/download/details.aspx?id=15251
+Package: https://www.nuget.org/packages/CHTCHSConv/1.0.0
+
+Lyricify source is used without modification, pinned to:
+https://github.com/WXRIW/Lyricify-Lyrics-Helper/commit/3fc579b029c24a1f54ebb2fd002ee3624c85c7e7
+Only MySpotify's bridge and UI were added in this local personal build.

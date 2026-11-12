@@ -1,0 +1,67 @@
+package lyrics
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+type Cached struct {
+	Key    string
+	Source string
+	Lines  []Line
+}
+
+func cachePath(dir, key string) string {
+	return filepath.Join(dir, fmt.Sprintf("%x.json", sha256.Sum256([]byte(key))))
+}
+
+func LoadCached(dir, key string) Cached {
+	var cached Cached
+	if dir == "" || key == "" {
+		return cached
+	}
+	data, err := os.ReadFile(cachePath(dir, key))
+	if err != nil || json.Unmarshal(data, &cached) != nil || cached.Key != key {
+		return Cached{}
+	}
+	return cached
+}
+
+func SaveCached(dir, key, source string, lines []Line) {
+	if dir == "" || key == "" || len(lines) == 0 {
+		return
+	}
+	previous := LoadCached(dir, key)
+	quality := func(items []Line) int {
+		score := 0
+		for _, line := range items {
+			if !line.Unsynced {
+				score = max(score, 1)
+			}
+			if line.Timed {
+				score = max(score, 2)
+			}
+		}
+		return score
+	}
+	if quality(previous.Lines) > quality(lines) {
+		return
+	}
+	data, err := json.Marshal(Cached{key, source, lines})
+	if err != nil || os.MkdirAll(dir, 0o700) != nil {
+		return
+	}
+	file, err := os.CreateTemp(dir, "lyrics-*.part")
+	if err != nil {
+		return
+	}
+	defer os.Remove(file.Name())
+	_, err = file.Write(data)
+	closeErr := file.Close()
+	if err == nil && closeErr == nil {
+		os.Rename(file.Name(), cachePath(dir, key))
+	}
+}

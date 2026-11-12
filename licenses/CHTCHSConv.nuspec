@@ -1,0 +1,18 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>CHTCHSConv</id>
+    <version>1.0.0</version>
+    <title>ChineseConverter.dll from Microsoft Visual Studio International Pack 1.0 SR1</title>
+    <authors>Microsoft Corporation</authors>
+    <owners>Microsoft Corporation</owners>
+    <projectUrl>https://www.microsoft.com/en-us/download/details.aspx?id=15251</projectUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Traditional Chinese to Simplified Chinese Conversion Library and Add-In Tool provides API that converts the string between Traditional Chinese and Simplified Chinese languages.</description>
+    <copyright>Microsoft Corporation</copyright>
+    <tags>Traditional Chinese to Simplified Conversion Library and Add-In Tool</tags>
+    <dependencies>
+      <group targetFramework=".NETStandard2.0" />
+    </dependencies>
+  </metadata>
+</package>

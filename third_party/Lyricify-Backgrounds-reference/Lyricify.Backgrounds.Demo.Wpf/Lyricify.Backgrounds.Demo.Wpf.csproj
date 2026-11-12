@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFrameworks>net8.0-windows10.0.17763.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Lyricify.Backgrounds.Demo.Shared\Lyricify.Backgrounds.Demo.Shared.csproj" />
+    <ProjectReference Include="..\Lyricify.Backgrounds.Hosting.Wpf\Lyricify.Backgrounds.Hosting.Wpf.csproj" />
+    <ProjectReference Include="..\Lyricify.Backgrounds.AppleMusicInspired.Ios.Wpf\Lyricify.Backgrounds.AppleMusicInspired.Ios.Wpf.csproj" />
+    <ProjectReference Include="..\Lyricify.Backgrounds.AppleMusicInspired.IosClassic.Wpf\Lyricify.Backgrounds.AppleMusicInspired.IosClassic.Wpf.csproj" />
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
+  </ItemGroup>
+</Project>

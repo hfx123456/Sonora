@@ -1,0 +1,23 @@
+MySpotify's fusion_background.go adapts portions of:
+Lyricify Backgrounds by WXRIW / Lyricify contributors
+https://github.com/WXRIW/Lyricify-Backgrounds
+Commit cbef8a667c02a01707c78c7e76dc67d65cf161ed
+
+Source: Lyricify.Backgrounds.AppleMusicInspired.IosClassic.Shared/Resources/
+AppleMusicIosClassicBackground.hlsl
+
+Changes: translated the three artwork layer rotation periods and transforms,
+classic saturation coefficients, and dark lyrics material to MyGo's Kage
+shader language. Samples MySpotify's existing preblurred artwork, uses a
+soft layer overlap, and draws to a reduced-size cached canvas at 10 FPS.
+The original WPF/WinUI host, Gaussian blur and mesh implementation are not
+embedded in this adaptation. Copyright notices and the Apache-2.0 license
+are retained in Lyricify-Backgrounds-LICENSE.txt.
+
+The lyrics island and desktop lyric appearance reference Lyricify's official
+screenshots by WXRIW / XY Wang. The Dynamic Lyrics Island concept is credited
+to Lyricify under CC BY-SA 4.0, as documented in Lyricify-App's README:
+https://github.com/WXRIW/Lyricify-App#lyricify-%E5%8E%9F%E5%88%9B
+https://creativecommons.org/licenses/by-sa/4.0/
+These visual adaptations are shared under CC BY-SA 4.0. This does not
+relicense the application's other source or the Apache-2.0 libraries.
