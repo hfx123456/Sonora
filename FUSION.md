@@ -1,4 +1,4 @@
-# 内置双语歌词（Windows 本地修改版）
+# 内置双语歌词（Windows 定制版）
 
 播放栏最右侧的音符图标提供「内部双语歌词面板」「透明桌面双行歌词」「顶部胶囊双语歌词」。参考 Lyricify 官方截图，词岛默认采用贴顶弧形边缘、细字重、白灰逐字扫亮和封面；菜单可以切换悬浮胶囊。桌面歌词采用细描边，悬停才显示曲目、播放控制和锁定按钮。内部面板使用封面色动态背景，暂停时停止动画。
 
@@ -16,7 +16,9 @@
 
 透明桌面歌词和悬浮胶囊可自由拖动、置顶，右键打开相同菜单。锁定后鼠标点击会穿透到后面的窗口，从播放栏菜单或系统托盘可解锁。菜单还提供字号放大/缩小、提前/延后各 0.5 秒、重置、重新查找、导入 LRC / TTML / YRC / QRC / LYS / LYL。点击内部面板的一句可以跳到对应时间。位置、显示方式、字号和译文开关会保存；时间偏移是所有歌曲共用的设置。本地同名 LRC 或内嵌歌词已包含中文时优先使用；本次手工载入的歌词在当前歌曲会话内有效，重新查找会恢复自动检索。
 
-检索与解析使用真实的 [Lyricify Lyrics Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper)，固定源代码提交 `3fc579b029c24a1f54ebb2fd002ee3624c85c7e7`。浮窗和面板由 MySpotify 自己绘制，没有复制未公开的 Fusion 界面代码，也不启动 Lyricify Fusion。此功能是个人本地修改，未提交、发布或自动更新到上游。
+检索与解析使用真实的 [Lyricify Lyrics Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper)，固定源代码提交 `3fc579b029c24a1f54ebb2fd002ee3624c85c7e7`。浮窗和面板由 MySpotify 自己绘制，没有复制未公开的 Fusion 界面代码，也不启动 Lyricify Fusion。此功能随 [hfx123456/MySpotify](https://github.com/hfx123456/MySpotify) 定制版发布，使用本分支自己的签名更新源；没有因此成为上游的功能。
+
+暂停播放时，词岛和透明桌面歌词自动隐藏，继续播放时恢复；内部面板保留显示并停止连续动画。动态模式下，前奏歌名、歌手与作词作曲介绍阶段以每秒 30 帧刷新，避免没有演唱歌词驱动刷新时图标卡顿。菜单「歌词字体设置…」可以分别选择歌词字体和中文字体。
 
 动态背景适配自 [Lyricify Backgrounds](https://github.com/WXRIW/Lyricify-Backgrounds)，固定提交 `cbef8a667c02a01707c78c7e76dc67d65cf161ed`。将 iOS Classic 的三层封面旋转周期、变换、饱和度和暗色歌词材质移植为 MyGo Kage shader，使用现有预模糊封面、柔和图层过渡和低分辨率缓存，以 10 FPS 在 GPU 上绘制。软件渲染或减少动态效果时使用静态帧。没有嵌入原来的 WPF/WinUI 宿主、完整高斯模糊或 mesh 渲染器。这是已列功能的适配，并非 Fusion 全功能移植。源码、协议和外观参考署名见 `licenses/Lyricify-Backgrounds-NOTICE.txt`。
 
