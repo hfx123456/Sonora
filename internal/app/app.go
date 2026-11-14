@@ -268,7 +268,7 @@ func (a *app) showMain() {
 
 // Run runs the app until it quits.
 // appName is the name the app shows.
-const appName = "MySpotify"
+const appName = "Sonora"
 
 func Run() error {
 	a := &app{
@@ -283,21 +283,23 @@ func Run() error {
 		cacheUsed:  -1,
 		queueAt:    -1,
 	}
-	// Its data, the web player's sign-in among it, lives under this name,
-	// whatever the executable is called.
-	// Vinyl names where the app keeps its data (settings, the log, the
-	// sign-in in WebView2), as before it was MySpotify: appName is what it
-	// shows.
-	mygo.App.SetName("Vinyl")
+	// Separate app identity & data directories ("Sonora") so Sonora runs
+	// independently from upstream Vinyl/MySpotify with its own single-instance lock.
+	mygo.App.SetName("Sonora")
 	// One runs: launched again, it shows the window of the one running,
 	// hidden in the notification area perhaps. The scenes run beside it.
 	if shotHook == nil && !mygo.App.RequestSingleInstanceLock() {
 		return nil
 	}
+	if shotHook == nil {
+		userDir, _ := mygo.App.Path(mygo.PathUserData)
+		cacheDir, _ := mygo.App.Path(mygo.PathCache)
+		migrateLegacyVinylData(userDir, cacheDir)
+	}
 	if dir, err := mygo.App.Path(mygo.PathUserData); err == nil {
 		a.playlistCacheRoot = filepath.Join(dir, "playlist-cache-v1")
 		player.LyricsCacheDir = filepath.Join(dir, "lyrics-cache-v1")
-		log.SetOutput(io.MultiWriter(&logFile{path: filepath.Join(dir, "vinyl.log")}, os.Stderr))
+		log.SetOutput(io.MultiWriter(&logFile{path: filepath.Join(dir, "sonora.log")}, os.Stderr))
 		spotify.OpsFile = filepath.Join(dir, "queries.json")
 		spotify.LoadOps()
 	}

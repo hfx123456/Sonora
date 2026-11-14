@@ -16,13 +16,13 @@
 
 透明桌面歌词和悬浮胶囊可自由拖动、置顶，右键打开相同菜单。锁定后鼠标点击会穿透到后面的窗口，从播放栏菜单或系统托盘可解锁。菜单还提供字号放大/缩小、提前/延后各 0.5 秒、重置、重新查找、导入 LRC / TTML / YRC / QRC / LYS / LYL。点击内部面板的一句可以跳到对应时间。位置、显示方式、字号和译文开关会保存；时间偏移是所有歌曲共用的设置。本地同名 LRC 或内嵌歌词已包含中文时优先使用；本次手工载入的歌词在当前歌曲会话内有效，重新查找会恢复自动检索。
 
-检索与解析使用真实的 [Lyricify Lyrics Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper)，固定源代码提交 `3fc579b029c24a1f54ebb2fd002ee3624c85c7e7`。浮窗和面板由 MySpotify 自己绘制，没有复制未公开的 Fusion 界面代码，也不启动 Lyricify Fusion。此功能随 [hfx123456/MySpotify](https://github.com/hfx123456/MySpotify) 定制版发布，使用本分支自己的签名更新源；没有因此成为上游的功能。
+检索与解析使用真实的 [Lyricify Lyrics Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper)，固定源代码提交 `3fc579b029c24a1f54ebb2fd002ee3624c85c7e7`。浮窗和面板由 Sonora 自己绘制，没有复制未公开的 Fusion 界面代码，也不启动 Lyricify Fusion。此功能随 [hfx123456/MySpotify](https://github.com/hfx123456/MySpotify)（Sonora）发布，使用本分支自己的签名更新源；没有因此成为上游的功能。
 
 暂停播放时，词岛和透明桌面歌词自动隐藏，继续播放时恢复；内部面板保留显示并停止连续动画。动态模式下，前奏歌名、歌手与作词作曲介绍阶段以每秒 30 帧刷新，避免没有演唱歌词驱动刷新时图标卡顿。菜单「歌词字体设置…」可以分别选择歌词字体和中文字体。
 
 动态背景适配自 [Lyricify Backgrounds](https://github.com/WXRIW/Lyricify-Backgrounds)，固定提交 `cbef8a667c02a01707c78c7e76dc67d65cf161ed`。将 iOS Classic 的三层封面旋转周期、变换、饱和度和暗色歌词材质移植为 MyGo Kage shader，使用现有预模糊封面、柔和图层过渡和低分辨率缓存，以 10 FPS 在 GPU 上绘制。软件渲染或减少动态效果时使用静态帧。没有嵌入原来的 WPF/WinUI 宿主、完整高斯模糊或 mesh 渲染器。这是已列功能的适配，并非 Fusion 全功能移植。源码、协议和外观参考署名见 `licenses/Lyricify-Backgrounds-NOTICE.txt`。
 
-`MySpotify.exe` 内嵌 `MySpotify.Lyrics.exe` 及其 .NET 运行时，便携版不需要单独安装 .NET 或 Lyricify Fusion，适用于 Windows 10/11 x64。第一次使用会将这个无界面的组件解压到 Vinyl 缓存目录，查询结束即退出。组件和歌词缓存位于用户缓存目录下的 `fusion` 子目录；查询成功的歌词会缓存，失败不会。菜单中的重新查找会绕过歌词缓存。切歌、关闭全部歌词显示或退出时取消正在进行的查询。Spotify 登录和播放仍需要 WebView2 运行时，便携包附有微软官方在线安装器。
+`Sonora.exe` 内嵌 `MySpotify.Lyrics.exe` 及其 .NET 运行时，便携版不需要单独安装 .NET 或 Lyricify Fusion，适用于 Windows 10/11 x64。第一次使用会将这个无界面的组件解压到 Sonora 缓存目录，查询结束即退出。组件和歌词缓存位于用户缓存目录下的 `fusion` 子目录；查询成功的歌词会缓存，失败不会。菜单中的重新查找会绕过歌词缓存。切歌、关闭全部歌词显示或退出时取消正在进行的查询。Spotify 登录和播放仍需要 WebView2 运行时，便携包附有微软官方在线安装器。
 
 ## 重新构建
 
@@ -32,7 +32,7 @@
 ./tools/fusion-bridge/Build.ps1 -LyricifySource 'C:/path/to/Lyricify-Lyrics-Helper'
 $env:CGO_ENABLED = '0'
 go test ./internal/...
-go build -trimpath -ldflags='-H windowsgui -s -w' -o MySpotify.exe .
+go build -trimpath -ldflags='-H windowsgui -s -w' -o Sonora.exe .
 ```
 
 构建脚本默认发布包含 .NET 运行时的单文件组件，生成 `internal/fusion/bridge.bin`，Go 会把它编进最终主程序。使用 `-FrameworkDependent` 可生成较小、需要另装 .NET 8 的组件。保留 `licenses` 中的 Lyricify、NuGet 依赖及 .NET 运行时许可证和说明。仅 Windows 提供内嵌组件；其他平台需要重新发布相应平台组件，不能直接运行这个 Windows EXE。

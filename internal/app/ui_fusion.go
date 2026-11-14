@@ -406,7 +406,7 @@ func (a *app) setFusionMode(mode string) {
 			a.fusion.pauseHidden = false
 			a.fusion.manualShow = !a.pl.Playing()
 			if a.fusion.win == nil {
-				a.fusion.win = mygo.NewWindow(mygo.WindowOptions{Title: "MySpotify 歌词", Hidden: true, Frameless: true, Transparent: true, DisableShadow: true, DisableResize: true, AlwaysOnTop: true, SkipTaskbar: true, Width: width, Height: height, X: x, Y: y, Content: ui.View(a.fusionOverlay)})
+				a.fusion.win = mygo.NewWindow(mygo.WindowOptions{Title: appName + " 歌词", Hidden: true, Frameless: true, Transparent: true, DisableShadow: true, DisableResize: true, AlwaysOnTop: true, SkipTaskbar: true, Width: width, Height: height, X: x, Y: y, Content: ui.View(a.fusionOverlay)})
 				a.fusion.win.OnClose(func(event *mygo.CloseEvent) {
 					if !a.quitting {
 						event.PreventDefault()
@@ -521,7 +521,7 @@ func (a *app) fusionOverlayControls(c *ui.Context, island bool) {
 	}
 	ui.Row(c).Absolute().Top(0).Left(16).Right(10).Height(34).Gap(3).AlignItems(ui.Center).Children(func() {
 		ui.Icon(c, iconFusion).Size(18, 18).TextColor(white.Alpha(0.65))
-		name := "MySpotify"
+		name := appName
 		if track := a.pl.Current(); track != nil {
 			name = track.Name + " · " + track.ArtistNames()
 		}

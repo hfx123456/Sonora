@@ -174,7 +174,7 @@ func (a *app) startConnect() {
 		return
 	}
 	hostname, _ := os.Hostname()
-	sum := sha256.Sum256([]byte("Vinyl/" + a.profile.UserID + "/" + hostname))
+	sum := sha256.Sum256([]byte("Sonora/" + a.profile.UserID + "/" + hostname))
 	state := &connectState{user: a.profile.UserID, jobs: make(chan func() error, 32), reports: make(chan func() error, 1), done: make(chan struct{})}
 	state.client = spotify.NewConnect(hex.EncodeToString(sum[:20]), appName+" · "+hostname, func(event spotify.ConnectEvent) {
 		a.post(func() {

@@ -1,4 +1,4 @@
-"""Draws MySpotify's icons. Run on Windows, with Pillow: python tools/icons.py
+"""Draws Sonora's icons. Run on Windows, with Pillow: python tools/icons.py
 
 Every icon is rendered from clean vector geometry:
 

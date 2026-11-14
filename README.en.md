@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="docs/icon.png" width="88" alt="MySpotify">
+<img src="docs/icon.png" width="88" alt="Sonora">
 
-# MySpotify · Custom Windows Build
+# Sonora · Custom Windows Fork
 
 **Lyric island · Bilingual word highlighting · Local music · Sticky playlist search**
 
-A personal fork focused on desktop lyrics, local listening and finding songs in large playlists.
+An independent fork of MySpotify with its own identity, custom icon and isolated profile directories, focused on desktop lyrics, local listening and finding songs in large playlists.
 
 [简体中文](README.md) · **English**
 
@@ -95,22 +95,22 @@ Local music does not transfer through Spotify Connect, and protected Apple Music
 
 ## Install and update
 
-1. Download `vinyl-<version>-windows-amd64.tar.gz` from **[this repository's Releases](https://github.com/hfx123456/MySpotify/releases/latest)**.
-2. Extract the complete archive with a tool supporting `.tar.gz`, retain the accompanying license files and resources, and run `MySpotify.exe`.
+1. Download `Sonora-<version>-windows-amd64.zip` or `sonora-<version>-windows-amd64.tar.gz` from **[this repository's Releases](https://github.com/hfx123456/MySpotify/releases/latest)**.
+2. Extract the complete archive, retain the accompanying license files and resources alongside `Sonora.exe`, and run `Sonora.exe`.
 3. Online Spotify sign-in and playback need [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
 4. Use **本地音乐** to add local songs, or **Fusion 双语歌词** in the player bar to enable an overlay.
 
 Signed builds use **hfx123456/MySpotify** as their update source and verify updates using this fork's public key. Check for updates under **设置 → 关于**.
 
-**Upstream releases and this fork's releases are different builds**, even if their version numbers match. Replacing the executable with an upstream build replaces the custom features and update source. Upstream changes must first be merged and verified here, then published as a new signed custom build.
+**Sonora is isolated from upstream MySpotify**: it uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and profile directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), so both apps can coexist side by side. On first launch it automatically migrates existing settings, playback state, caches and sealed login cookies from `Vinyl` without modifying the legacy folder.
 
 ## Inherited features and limits
 
 Spotify browsing, streaming, music videos, podcasts, scrolling lyrics, media keys, global shortcuts, tray behavior and themes are inherited from upstream, not new additions by this fork.
 
-This is an unofficial personal project, unaffiliated with Spotify. Online features use Spotify's internal web-player interfaces and may break or conflict with its terms, putting accounts at risk. DRM decryption remains in the system web component; cached encrypted segments are not offline audio downloads. Use only your own account.
+Sonora is an unofficial personal project, unaffiliated with Spotify. Online features use Spotify's internal web-player interfaces and may break or conflict with its terms, putting accounts at risk. DRM decryption remains in the system web component; cached encrypted segments are not offline audio downloads. Use only your own account.
 
-Windows settings, playback state and logs live under `%APPDATA%\Vinyl`; login data and caches use relevant subdirectories under `%LOCALAPPDATA%\Vinyl`. Keep login data out of public repositories.
+Windows settings, playback state and logs live under `%APPDATA%\Sonora`; login data and caches use relevant subdirectories under `%LOCALAPPDATA%\Sonora`. Keep login data out of public repositories.
 
 ## Development and attribution
 

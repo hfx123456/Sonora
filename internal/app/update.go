@@ -11,7 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// MySpotify updates itself with MyGo's signed updates. mygo build signs each
+// Sonora updates itself with MyGo's signed updates. mygo build signs each
 // platform's archive and manifest with the release key, and they go up with
 // the GitHub release; mygo.json names the repository and holds the public
 // key. The app reads its platform's manifest in the latest release, and
@@ -19,7 +19,7 @@ import (
 // go build, or a copy where it cannot write (still in the disk image), can
 // only point to the releases page.
 
-const releasesPage = "https://github.com/margbug01/MySpotify/releases"
+const releasesPage = "https://github.com/hfx123456/MySpotify/releases"
 
 type updateStage int
 
@@ -209,7 +209,7 @@ func (a *app) aboutRows(c *ui.Context, row func(label, desc string, control func
 	p := a.pal
 	u := &a.upd
 	row(appName+" "+appVersion(), "Windows 和 macOS 上的 Spotify 播放器，和 Spotify 没有关系", func() {
-		ui.Link(c, "GitHub", "https://github.com/margbug01/MySpotify")
+		ui.Link(c, "GitHub", "https://github.com/hfx123456/MySpotify")
 	})
 	switch {
 	case !u.enabled:
@@ -217,7 +217,7 @@ func (a *app) aboutRows(c *ui.Context, row func(label, desc string, control func
 			ui.Link(c, "打开下载页", releasesPage)
 		})
 	case u.stage == updateAvailable:
-		row("有新版本 "+u.found.Version, "当前 "+appVersion()+"，更新时 MySpotify 会重新打开一下", func() {
+		row("有新版本 "+u.found.Version, "当前 "+appVersion()+"，更新时 "+appName+" 会重新打开一下", func() {
 			if ui.PrimaryButton(c.Key("install-update"), "更新并重启").Clicked() {
 				a.installUpdate()
 			}
@@ -234,7 +234,7 @@ func (a *app) aboutRows(c *ui.Context, row func(label, desc string, control func
 			ui.Progress(c, u.progress).Width(140)
 		})
 	case u.stage == updateReady:
-		row(u.found.Version+" 已经装好", "重新打开 MySpotify 后生效", func() {
+		row(u.found.Version+" 已经装好", "重新打开 "+appName+" 后生效", func() {
 			if ui.PrimaryButton(c.Key("restart-update"), "立即重启").Clicked() {
 				u.relaunch()
 			}
@@ -284,7 +284,7 @@ func (a *app) updateBadge(c *ui.Context) {
 	p := a.pal
 	text := "新版本 " + u.found.Version
 	b := ui.ButtonBase(c.Key("update-badge")).Height(30).PaddingX(10).Radius(9).AlignItems(ui.Center).Justify(ui.Start).
-		Label(text).Tooltip("打开设置，更新 MySpotify").FocusRing(false)
+		Label(text).Tooltip("打开设置，更新 " + appName).FocusRing(false)
 	if b.Hovered() {
 		b.Background(p.hover)
 	}

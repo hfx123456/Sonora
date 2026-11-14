@@ -184,7 +184,7 @@ func (a *app) fusionPosition() time.Duration {
 
 func (a *app) fusionCurrent() (lyrics.Line, string) {
 	if a.pl.Current() == nil {
-		return lyrics.Line{Text: "MySpotify"}, "等待播放"
+		return lyrics.Line{Text: appName}, "等待播放"
 	}
 	if a.fusion.loading {
 		return lyrics.Line{Text: fusionWaitingNotes}, ""

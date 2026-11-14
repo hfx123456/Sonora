@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="docs/icon.png" width="88" alt="MySpotify">
+<img src="docs/icon.png" width="88" alt="Sonora">
 
-# MySpotify · Windows 定制版
+# Sonora · Windows 独立定制版
 
 **贴顶词岛 · 双语逐字歌词 · 本地音乐 · 歌单吸顶搜索**
 
-在 MySpotify 的基础上，把桌面看词、本地听歌和大歌单找歌做得更顺手。
+源于 MySpotify，已独立命名、更换全新图标并隔离配置与实例，把桌面看词、本地听歌和大歌单找歌做得更顺手。
 
 **简体中文** · [English](README.en.md)
 
@@ -99,26 +99,26 @@
 
 ## 下载与开始使用
 
-1. 打开 **[本仓库 Releases](https://github.com/hfx123456/MySpotify/releases/latest)**，下载对应版本的 `vinyl-<版本>-windows-amd64.tar.gz`。
-2. 用支持 `.tar.gz` 的解压工具完整解压，保留 `MySpotify.exe` 旁的 `LICENSE`、`licenses/` 和其他随附文件，再运行 `MySpotify.exe`。
+1. 打开 **[本仓库 Releases](https://github.com/hfx123456/MySpotify/releases/latest)**，下载对应版本的 `Sonora-<版本>-windows-amd64.zip` 或 `sonora-<版本>-windows-amd64.tar.gz`。
+2. 完整解压，保留 `Sonora.exe` 旁的 `LICENSE`、`licenses/` 和其他随附文件，再运行 `Sonora.exe`。
 3. 在线 Spotify 登录与播放需要 **Microsoft Edge WebView2 Runtime**。缺少时从[微软官方下载页](https://developer.microsoft.com/microsoft-edge/webview2/)安装。
 4. 听本地歌：侧栏「本地音乐」→「添加文件夹」或「添加歌曲」。开桌面歌词：播放栏最右侧「Fusion 双语歌词」→ 选择模式。
 
-## 定制版怎样更新
+## Sonora 怎样更新与隔离数据
 
 本分支使用 **`hfx123456/MySpotify` 的发布源和自己的更新签名公钥**。使用本仓库签名构建后，可在「设置 → 关于」检查更新；更新包的签名由程序核验。
 
-**上游同名版本与本仓库版本不是同一份程序。** 手动用上游安装包覆盖会替换本分支的特色功能和更新源。要兼得上游修复与本分支功能，需要先合并上游源码、验证，再由本仓库发布新的签名构建。修改版的版本号也不能单独用来判断包含了哪些上游改动。
+**Sonora 与上游同名程序互相独立**：拥有独立单实例锁、图标和配置目录，可与原版并行安装运行；首次从原版迁移时会自动平滑复制原有设置、播放记录、缓存和登录态（原目录保留不动）。
 
 ## 上游基础能力与使用边界
 
 本分支继续保留上游的 Spotify 首页、搜索、歌单、专辑、艺人、喜欢与收藏、在线播放、MV、视频播客、滚动歌词、系统媒体键、全局快捷键、托盘及主题等能力。这些不是本分支新开发的功能。
 
-MySpotify 是非官方个人项目，与 Spotify 没有关联或认可。在线功能依赖 Spotify 网页播放器内部接口，可能随接口变化失效，也可能不符合其服务条款，账号存在被限制的风险。Spotify 音频仍通过系统网页组件的 DRM 模块解密；缓存的是加密分段，不等于可离线下载的音频。请只使用自己的账号。
+Sonora 是非官方个人项目，与 Spotify 没有关联或认可。在线功能依赖 Spotify 网页播放器内部接口，可能随接口变化失效，也可能不符合其服务条款，账号存在被限制的风险。Spotify 音频仍通过系统网页组件的 DRM 模块解密；缓存的是加密分段，不等于可离线下载的音频。请只使用自己的账号。
 
 ## 配置、开发与问题定位
 
-Windows 的配置、播放状态和日志位于 `%APPDATA%\Vinyl`，登录态与缓存位于 `%LOCALAPPDATA%\Vinyl` 的相应子目录。替换程序前可以备份这些目录，**不要把登录数据提交到公开仓库**。
+Windows 的配置、播放状态和日志位于 `%APPDATA%\Sonora`，登录态与缓存位于 `%LOCALAPPDATA%\Sonora` 的相应子目录（首次启动若存在旧 `%APPDATA%\Vinyl` 会自动迁移且保留原目录不动）。替换程序前可以备份这些目录，**不要把登录数据提交到公开仓库**。
 
 - [内置歌词说明与构建](FUSION.md)：显示模式、匹配策略、缓存和组件构建。
 - [开发说明](DEVELOPMENT.md)：主程序构建与调试。

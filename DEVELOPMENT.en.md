@@ -2,12 +2,12 @@
 
 [简体中文](DEVELOPMENT.md) · **English**
 
-How MySpotify is built, released and debugged. To just use it, the [README](README.en.md) is enough.
+How Sonora (forked from MySpotify) is built, released and debugged. To just use it, the [README](README.en.md) is enough.
 
 ## How it works
 
 - **Sign-in**: a window that usually stays hidden opens open.spotify.com, and `internal/spotify/capture.js` records the token and client-token the web player gets for itself. If you aren't signed in, that window is shown as Spotify's login page. After signing in, the window's cookies are saved encrypted (`internal/app/account_store.go`). When the token is about to expire, those cookies and a one-time TOTP code go straight to `/api/token`, as the web player renews itself, with no window to open. Only when the cookies are no longer valid does it fall back to reloading that window. When not signed in, the same `/api/token` gives a guest identity.
-- **Data**: Pathfinder GraphQL persisted queries (their hashes are in `ops` in `internal/spotify/spotify.go`) plus spclient (lyrics, the player queue, playlist changes, radio, recently played, profile). The public Web API answers 429 to this identity across the board, so it isn't used. When a hash goes stale (412 "Invalid query hash"), `internal/spotify/ops.go` rereads the main script and the chunks loaded on demand, retries once with the new hash and saves it to `%APPDATA%\Vinyl\queries.json`, reading no more than once in 10 minutes. Library lists are checked when the window comes back to the front (at most every 5 seconds) and every 30 seconds, keeping the last result when the network fails.
+- **Data**: Pathfinder GraphQL persisted queries (their hashes are in `ops` in `internal/spotify/spotify.go`) plus spclient (lyrics, the player queue, playlist changes, radio, recently played, profile). The public Web API answers 429 to this identity across the board, so it isn't used. When a hash goes stale (412 "Invalid query hash"), `internal/spotify/ops.go` rereads the main script and the chunks loaded on demand, retries once with the new hash and saves it to `%APPDATA%\Sonora\queries.json`, reading no more than once in 10 minutes. Library lists are checked when the window comes back to the front (at most every 5 seconds) and every 30 seconds, keeping the last result when the network fails.
 - **Playback**: another hidden WebView page (`internal/player/web/player.html`) plays encrypted MP4. Windows uses hls.js + Widevine. macOS follows the Safari web player: it needs files in the cbcs format and uses WebKit's native HLS + FairPlay (`skd://` plus the file ID, `fairplay-license/v1`). Manifest, segment and license requests all go through a small local service on 127.0.0.1, which stores segments in the cache as they pass, keyed by the CDN path and byte range (the CDN's signature changes daily and stays out of the key). Podcast episodes take this path when they can; for when they can't, see "Podcasts" below. The page is created the first time a song really plays and closed after 5 idle minutes, resuming from the same position next time. It doesn't use the GPU, while the main interface does as usual.
 - **Errors**: a 401 on the license asks once more with a new identity. A 429 waits for Retry-After (doubling from 30 seconds when none is given), then restarts from the same position. A 403 stops at that song. Network errors in the page (`startLoad`, or `loadSource` again if the manifest failed) and media errors (`recoverMediaError`) are retried twice per song before skipping to the next. When the end event doesn't arrive, a song counts as finished only if the audio has stopped within the last 0.25 seconds, the tail is fully buffered and nothing has moved for about 4 seconds.
 - **Lyrics**: Spotify's synced lyrics → NetEase (`/api/cloudsearch/pc` searching by title and main artist, taking the closest song of the same name within 2 seconds of length; its lengths match Spotify's almost to the millisecond, and the text is Simplified Chinese) → LRCLIB exact lookup (title, main artist, album and length must all match) → LRCLIB search for a timed entry with the same title and artist within 2 seconds → plain text only when nothing has timing. When the artist name from Connect is missing or spelled in a foreign script (Yitai Wang), it's first replaced by the Chinese name Spotify gives (王以太). When a site is busy or rate limiting (LRCLIB 503, NetEase 405/406) it tries again after 3 and 10 seconds. Podcasts aren't looked up. Once a foreign-language song has timed lyrics, NetEase is asked once more (`tv=-1`): if it has a Chinese translation, its original text + translation is used instead (the two match line by line). Chinese lyrics are converted to Simplified using OpenCC's character table (`internal/lyrics/TSCharacters.txt`), unless the system's preferred Chinese is Traditional (zh-Hant/TW/HK).
@@ -22,7 +22,7 @@ Needs Go 1.27.3 or later, and no cgo.
 
 ```
 go test ./...
-CGO_ENABLED=0 go build -trimpath -ldflags="-H windowsgui -s -w" -o outputs/MySpotify.exe .
+CGO_ENABLED=0 go build -trimpath -ldflags="-H windowsgui -s -w" -o outputs/Sonora.exe .
 ```
 
 The macOS app and dmg use MyGo's own packaging command (run it on a Mac; the output is in `build/darwin-arm64/`, and `-skip-dmg` makes only the app):
@@ -34,7 +34,7 @@ go tool mygo build
 The icons are all drawn by `tools/icons.py` (on Windows, with Pillow, using headless Edge to render the SVGs). `resources/icon.svg`/`icon.png` is the program's icon; `icon-small.svg` is a simplified version for 16–24 pixels (two grooves, thicker); `icon.ico` combines the two by size. `internal/app/tray.png` is the template icon for the tray and the Mac menu bar (only black and transparent: drawn white automatically on a dark Windows taskbar, tinted by macOS itself). `AppIcon.icon` is the Icon Composer document for the Mac Dock (light and dark backgrounds, `macos.icon` in `mygo.json`; it's compiled in only when `mygo build` runs on a Mac with Xcode 26, otherwise falling back to an `.icns` made from `icon.png`). After changing the icon or version, run `python tools/icons.py` first, then regenerate `rsrc_windows_amd64.syso`, which holds the icon, version information and manifest (also change the version in `mygo.json`):
 
 ```
-go run github.com/tc-hib/go-winres@v0.3.3 simply --icon resources/icon.ico --manifest gui --product-name MySpotify --file-description MySpotify --product-version 0.4.13 --file-version 0.4.13 --original-filename MySpotify.exe --arch amd64 --out rsrc
+go run github.com/tc-hib/go-winres@v0.3.3 simply --icon resources/icon.ico --manifest gui --product-name Sonora --file-description Sonora --product-version 0.5.0 --file-version 0.5.0 --original-filename Sonora.exe --arch amd64 --out rsrc
 ```
 
 ### Releasing
@@ -52,14 +52,14 @@ Both platforms are packaged at once on a Mac. In-app updates accept only package
    ```
 
 5. Create a `v<version>` release on GitHub. Save it as a draft first, upload all the attachments, and after checking them publish it and set it as Latest. The app reads the manifest in the latest release and can't see drafts, so it never finds a manifest whose archive hasn't finished uploading.
-   - `build/darwin-arm64/`: the dmg (renamed to `MySpotify-<version>-macos-arm64.dmg`), `vinyl-<version>-darwin-arm64.tar.gz`, `*.delta`, `update-darwin-arm64.json`
-   - `build/windows-amd64/`: put the program files in this folder and a `README.txt` into `MySpotify-<version>-windows-amd64/` and zip it under the same name; add `vinyl-<version>-windows-amd64.tar.gz`, `*.delta`, `update-windows-amd64.json`
+   - `build/darwin-arm64/`: the dmg (renamed to `Sonora-<version>-macos-arm64.dmg`), `sonora-<version>-darwin-arm64.tar.gz`, `*.delta`, `update-darwin-arm64.json`
+   - `build/windows-amd64/`: put the program files in this folder and a `README.txt` into `Sonora-<version>-windows-amd64/` and zip it under the same name; add `sonora-<version>-windows-amd64.tar.gz`, `*.delta`, `update-windows-amd64.json`
 
 `*.delta` files are incremental packages from the previous few versions to this one. `mygo build` reads the published versions and makes them automatically, and the app prefers them when updating.
 
 The public key is in `updates` in `mygo.json`. The private key stays only on the Mac used for releases, with permissions 600, and never goes in the repository. If it's lost, installed apps can't receive further updates; if someone else gets it, they can push any code to every user. Keep another copy in a password manager.
 
-Logs (including stack traces from crashes) go to `vinyl.log` in the settings folder. Past 1 MB it's moved to `vinyl.log.1` and a new one starts.
+Logs (including stack traces from crashes) go to `sonora.log` in the settings folder. Past 1 MB it's moved to `sonora.log.1` and a new one starts.
 
 ### Debugging
 

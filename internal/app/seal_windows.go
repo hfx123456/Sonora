@@ -19,14 +19,15 @@ var (
 	procProtectData   = crypt32.NewProc("CryptProtectData")
 	procUnprotectData = crypt32.NewProc("CryptUnprotectData")
 	procLocalFree     = kernel32.NewProc("LocalFree")
-	cookieEntropy     = []byte("dev.margbug.vinyl account-cookies")
-	errNoDPAPI        = fmt.Errorf("DPAPI: crypt32.dll has none")
+	cookieEntropy       = []byte("dev.hfx123456.sonora account-cookies")
+	legacyCookieEntropy = []byte("dev.margbug.vinyl account-cookies")
+	errNoDPAPI          = fmt.Errorf("DPAPI: crypt32.dll has none")
 )
 
 // cryptprotectUIForbidden: fail rather than ask the listener anything.
 const cryptprotectUIForbidden = 0x1
 
-// accountCookieDir is where the cookies are kept: %LOCALAPPDATA%\Vinyl,
+// accountCookieDir is where the cookies are kept: %LOCALAPPDATA%\Sonora,
 // beside WebView2's own, which a roaming profile does not take along to
 // other machines as it does %APPDATA%.
 func accountCookieDir() (string, error) { return mygo.App.Path(mygo.PathCache) }
@@ -68,13 +69,11 @@ func seal(b []byte) ([]byte, error) {
 	return out.take(), nil
 }
 
-// unseal opens what seal sealed, failing with errUnreadable for anything it
-// cannot: another user's, another machine's, or not sealed at all.
-func unseal(b []byte) ([]byte, error) {
+func unsealWith(b, key []byte) ([]byte, error) {
 	if procUnprotectData.Find() != nil {
 		return nil, errNoDPAPI
 	}
-	in, entropy := blobOf(b), blobOf(cookieEntropy)
+	in, entropy := blobOf(b), blobOf(key)
 	var out dataBlob
 	r, _, _ := procUnprotectData.Call(uintptr(unsafe.Pointer(in)), 0, uintptr(unsafe.Pointer(entropy)),
 		0, 0, cryptprotectUIForbidden, uintptr(unsafe.Pointer(&out)))
@@ -83,4 +82,14 @@ func unseal(b []byte) ([]byte, error) {
 		return nil, errUnreadable
 	}
 	return out.take(), nil
+}
+
+// unseal opens what seal sealed, failing with errUnreadable for anything it
+// cannot: another user's, another machine's, or not sealed at all.
+func unseal(b []byte) ([]byte, error) {
+	return unsealWith(b, cookieEntropy)
+}
+
+func unsealLegacyVinyl(b []byte) ([]byte, error) {
+	return unsealWith(b, legacyCookieEntropy)
 }

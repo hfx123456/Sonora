@@ -23,7 +23,9 @@ import (
 
 // keychainService names the key's item in the login keychain; tests name
 // one of their own.
-var keychainService = "dev.margbug.vinyl"
+var keychainService = "dev.hfx123456.sonora"
+
+func unsealLegacyVinyl([]byte) ([]byte, error) { return nil, errUnreadable }
 
 const keychainAccount = "account-cookies"
 
