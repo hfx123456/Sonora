@@ -42,6 +42,7 @@ func Reachable() bool {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodHead, spclientURL, nil)
 	res, err := Client.Do(req)
 	if err != nil {
+		Client.CloseIdleConnections()
 		return false
 	}
 	res.Body.Close()

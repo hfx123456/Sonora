@@ -117,9 +117,10 @@ type Player struct {
 
 	// Spotify turned the track away for asking too often: it loads again
 	// once the wait is over, if it is to play then.
-	waiting   bool
-	throttles int // the times in a row, to wait longer each
-	offline   int // the times in a row the network was down, likewise
+	waiting        bool
+	throttles      int // the times in a row, to wait longer each
+	offline        int // the times in a row the network was down, likewise
+	networkRetries int // reloads at position after a network error with network up
 
 	lyrics       []lyrics.Line
 	lyricsLoaded bool
@@ -255,7 +256,7 @@ func (p *Player) ended() {
 				p.videoFailed(msg)
 				return
 			}
-			p.failed(licence, wait)
+			p.failed(msg, licence, wait)
 			return
 		}
 	}
@@ -284,9 +285,10 @@ func (p *Player) ended() {
 	p.Next()
 }
 
-// failed goes on from a track the page could not play: licence is how the
-// licence service last answered for it, wait how long it asked to wait.
-func (p *Player) failed(licence int, wait time.Duration) {
+// failed goes on from a track the page could not play: msg is what it
+// reported, licence is how the licence service last answered for it, wait how
+// long it asked to wait.
+func (p *Player) failed(msg string, licence int, wait time.Duration) {
 	switch licence {
 	case http.StatusTooManyRequests:
 		p.throttled(wait)
@@ -299,9 +301,16 @@ func (p *Player) failed(licence int, wait time.Duration) {
 			p.sync()
 		})
 	default:
-		// The page tried again, and could not: on to the next.
+		// The page tried again, and could not: if it was a network error and
+		// the network is up now (such as after a proxy node switch), reload the
+		// current track once at its position before skipping on.
 		at, skipped := p.at, p.skipped
 		p.unlessOffline(func() {
+			if strings.HasPrefix(msg, "networkError ") && p.networkRetries < 1 {
+				p.networkRetries++
+				p.loadSkipping(at, skipped, p.playing, p.pending)
+				return
+			}
 			p.err = "这首歌暂时无法播放"
 			p.skip(at, skipped)
 		})
@@ -1198,6 +1207,7 @@ func (p *Player) stop() {
 
 // load plays the track at order[at], skipping those that cannot play.
 func (p *Player) load(at int) {
+	p.networkRetries = 0
 	p.loadSkipping(at, 0, true, 0)
 }
 
@@ -1344,7 +1354,11 @@ func (p *Player) open(gen int, m *spotify.Media, v *spotify.Video) {
 	}
 	if p.pending > 0 {
 		// Not past the end, as a video shorter than the song would be.
-		p.out.Seek(min(p.pending, max(p.out.Duration()-time.Second, 0)))
+		to := p.pending
+		if d := p.out.Duration(); d > time.Second {
+			to = min(to, d-time.Second)
+		}
+		p.out.Seek(to)
 		p.pending = 0
 	}
 	if p.playing {
@@ -1447,6 +1461,9 @@ func (p *Player) cue(at int, play bool, from time.Duration) (int, spotify.Track)
 	gen := p.gen
 	p.at = at
 	t := p.queue[p.order[at]]
+	if p.track == nil || p.track.ID != t.ID {
+		p.networkRetries = 0
+	}
 	p.track = &t
 	p.loading, p.playing, p.err = false, play, ""
 	p.media = nil

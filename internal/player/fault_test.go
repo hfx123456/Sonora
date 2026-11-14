@@ -233,3 +233,27 @@ func TestOfflineLoadWaits(t *testing.T) {
 		t.Fatalf("back online: loaded %v, %d times offline", p.out != nil, p.offline)
 	}
 }
+
+// A network error after a proxy node switch (when the network is already up
+// again) reloads the current track at its position once rather than skipping
+// to the next song from zero.
+func TestNetworkErrorReloadsAtPositionWhenOnline(t *testing.T) {
+	ch, p, _ := licensed(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("licence"))
+	})
+	page(p, http.MethodPost, "/event", `{"gen":1,"type":"playing","t":42}`)
+	page(p, http.MethodPost, "/event", `{"gen":1,"type":"error","msg":"networkError fragLoadError http=502"}`)
+	next(t, ch) // ended -> unlessOffline
+	next(t, ch) // online() is true -> reloads track 1 at 42s
+	next(t, ch) // resolveMedia -> open
+	if p.Current().ID != "1" || !p.Playing() || p.out == nil || p.Position() < 42*time.Second {
+		t.Fatalf("after networkError: track %s, playing %v, out %v, pos %v", p.Current().ID, p.Playing(), p.out != nil, p.Position())
+	}
+	// A second networkError on the same track falls through to skip.
+	page(p, http.MethodPost, "/event", `{"gen":2,"type":"error","msg":"networkError fragLoadError http=502"}`)
+	next(t, ch)
+	next(t, ch)
+	if !p.Loading() || p.Current().ID != "2" {
+		t.Fatalf("second networkError: loading %v, track %s; want track 2 loading", p.Loading(), p.Current().ID)
+	}
+}

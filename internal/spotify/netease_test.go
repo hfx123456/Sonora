@@ -125,3 +125,34 @@ func TestNetEaseTranslation(t *testing.T) {
 		}
 	}
 }
+
+// A title with "(feat. ...)" or " - ..." that misses NetEase's search falls
+// back to the cleaned title so translated lyrics are still found.
+func TestNetEaseTranslationFallsBackToCleanTitle(t *testing.T) {
+	old := Client
+	defer func() { Client = old }()
+	track := Track{Name: "Echo (feat. blackbear)", Artists: []Artist{{Name: "Maroon 5"}, {Name: "blackbear"}}, Duration: 178620}
+	var queries []string
+	Client = &http.Client{Transport: lyricsTransport(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/cloudsearch/pc":
+			q := req.URL.Query().Get("s")
+			queries = append(queries, q)
+			if q == "Echo Maroon 5" {
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"code":200,"result":{"songs":[{"id":1852069343,"name":"Echo","dt":178620}]}}`))}, nil
+			}
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"code":200,"result":{"songs":[{"id":1,"name":"Other","dt":200000}]}}`))}, nil
+		case "/api/song/lyric":
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"code":200,"lrc":{"lyric":"[00:07.313]You got me"},"tlyric":{"lyric":"[00:07.313]你点燃了我"}}`))}, nil
+		}
+		t.Fatalf("unexpected path %s", req.URL.Path)
+		return nil, nil
+	})}
+	synced, tr, err := NetEaseTranslation(track)
+	if err != nil || synced == "" || tr == "" {
+		t.Fatalf("got synced=%q tr=%q err=%v", synced, tr, err)
+	}
+	if len(queries) != 2 || queries[0] != "Echo (feat. blackbear) Maroon 5" || queries[1] != "Echo Maroon 5" {
+		t.Fatalf("queries=%v", queries)
+	}
+}

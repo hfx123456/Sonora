@@ -226,3 +226,35 @@ func TestAPartLetGoOfLeavesTheCDN(t *testing.T) {
 		t.Fatal("the mirror is passed over")
 	}
 }
+
+// When every CDN fails (e.g. during a proxy node switch), the blacklist is
+// cleared so all CDNs are available again once the network recovers.
+func TestAllCDNsFailingClearsBlacklist(t *testing.T) {
+	var down atomic.Bool
+	down.Store(true)
+	restore := mirrorTest(t, []string{
+		"https://audio-ak.spotifycdn.com/audio/" + mirrorFileID + "?sig=ak",
+		"https://audio-fa.scdn.co/audio/" + mirrorFileID + "?sig=fa",
+	}, func(req *http.Request) (*http.Response, error) {
+		if down.Load() {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return partial("ok", "bytes 0-1/3307037"), nil
+	})
+	defer restore()
+
+	source := "https://audio-ak.spotifycdn.com/audio/" + mirrorFileID + "?sig=ak"
+	if res, err := fetchPart(httptest.NewRequest(http.MethodGet, "http://127.0.0.1/m/1/0", nil), source, "bytes=0-1"); err == nil {
+		res.Body.Close()
+		t.Fatal("expected error while all CDNs are down")
+	}
+	if mirrors.down("audio-ak.spotifycdn.com") || mirrors.down("audio-fa.scdn.co") {
+		t.Fatal("CDNs remained blacklisted after all CDNs failed")
+	}
+	down.Store(false)
+	res, err := fetchPart(httptest.NewRequest(http.MethodGet, "http://127.0.0.1/m/1/1", nil), source, "bytes=0-1")
+	if err != nil {
+		t.Fatalf("expected recovery after network came back: %v", err)
+	}
+	res.Body.Close()
+}

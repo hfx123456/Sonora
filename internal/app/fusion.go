@@ -61,9 +61,6 @@ func fusionCacheUsable(cached lyrics.Cached) bool {
 	if len(cached.Lines) == 0 || cached.Lines[0].Unsynced {
 		return false
 	}
-	if cached.Source != "" && cached.Source != "播放器歌词" {
-		return true
-	}
 	return fusionChinese(cached.Lines) || hasFusionTranslation(cached.Lines)
 }
 
@@ -204,7 +201,7 @@ func (a *app) receiveFusion(key string, generation int, result fusion.Result, er
 			return
 		}
 	}
-	if len(result.Lines) > 0 && !a.pl.Current().Local() && result.Source != "播放器歌词" {
+	if len(result.Lines) > 0 && !a.pl.Current().Local() && result.Source != "播放器歌词" && (fusionChinese(result.Lines) || hasFusionTranslation(result.Lines)) {
 		lyrics.SaveCached(player.LyricsCacheDir, a.pl.Current().URI(), result.Source, result.Lines)
 	}
 	state.lines, state.source = prepareFusionLines(result.Lines), result.Source

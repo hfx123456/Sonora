@@ -15,10 +15,21 @@ import (
 
 var LyricsCacheDir string
 
+func hasTranslation(lines []lyrics.Line) bool {
+	return slices.ContainsFunc(lines, func(l lyrics.Line) bool { return l.Translation != "" })
+}
+
 func trackLyrics(track spotify.Track) []lyrics.Line {
 	if !track.Local() && !track.Episode {
 		if cached := lyrics.LoadCached(LyricsCacheDir, track.URI()); len(cached.Lines) > 0 {
-			return cached.Lines
+			if cached.Lines[0].Unsynced || lyrics.Chinese(cached.Lines) || hasTranslation(cached.Lines) {
+				return cached.Lines
+			}
+			lines := localize(track, cached.Lines, spotify.NetEaseTranslation)
+			if hasTranslation(lines) {
+				lyrics.SaveCached(LyricsCacheDir, track.URI(), "播放器歌词", lines)
+			}
+			return lines
 		}
 	}
 	lines := uncachedTrackLyrics(track)

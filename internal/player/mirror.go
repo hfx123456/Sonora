@@ -47,6 +47,18 @@ func (m *mirrorState) failed(host string, err error) {
 	m.dead[host] = time.Now().Add(mirrorDown)
 }
 
+func (m *mirrorState) clear(host string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.dead, host)
+}
+
+func (m *mirrorState) reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dead = nil
+}
+
 // fetchPart gets a byte range of the file at source, from source itself, or
 // from one of the CDNs that serve the same file if that one does not
 // answer. It returns the response of whichever did: the caller caches under
@@ -67,6 +79,9 @@ func fetchPart(r *http.Request, source, rg string) (*http.Response, error) {
 		if gone(r) {
 			return nil, r.Context().Err()
 		}
+		if err != nil {
+			spotify.Client.CloseIdleConnections()
+		}
 		// A CDN that turns a request down properly is passed over for a
 		// while too: it answered, and the answer was no.
 		mirrors.failed(host, err)
@@ -84,6 +99,9 @@ func fetchPart(r *http.Request, source, rg string) (*http.Response, error) {
 			if gone(r) {
 				return nil, r.Context().Err()
 			}
+			if err != nil {
+				spotify.Client.CloseIdleConnections()
+			}
 			mirrors.failed(hostOf(u), err)
 			continue
 		}
@@ -92,7 +110,20 @@ func fetchPart(r *http.Request, source, rg string) (*http.Response, error) {
 	}
 	// None answered: report what the one the manifest names said, whether a
 	// failure or a refusal, rather than nothing.
-	return getRange(r, source, rg)
+	res, err := getRange(r, source, rg)
+	if err == nil && answers(res) {
+		mirrors.clear(host)
+		return res, nil
+	}
+	if !gone(r) {
+		if err != nil {
+			spotify.Client.CloseIdleConnections()
+		}
+		// Every CDN failed (such as during a proxy node switch): clear the
+		// blacklist so all CDNs are usable again once the network settles.
+		mirrors.reset()
+	}
+	return res, err
 }
 
 // gone reports whether the page let go of r, as it does of the parts it

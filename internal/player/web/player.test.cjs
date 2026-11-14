@@ -10,13 +10,14 @@ let rejectEnd = false;
 let timerID = 0;
 class Hls {
   static Events = { ERROR: 'error' };
-  static ErrorTypes = {};
+  static ErrorTypes = { NETWORK_ERROR: 'networkError', MEDIA_ERROR: 'mediaError', KEY_SYSTEM_ERROR: 'keySystemError' };
   constructor(config) { this.config = config; this.starts = []; instances.push(this); }
-  on() {}
+  on(name, fn) { if (name === Hls.Events.ERROR) this.onError = fn; }
   loadSource() {}
   attachMedia(audio) { this.audio = audio; }
   stopLoad() { this.stopped = true; }
   startLoad(position) { this.starts.push(position); this.stopped = false; }
+  recoverMediaError() { this.recovered = (this.recovered || 0) + 1; }
   destroy() { this.destroyed = true; }
 }
 const session = { handlers: {}, setActionHandler(action, fn) { this.handlers[action] = fn; } };
@@ -201,6 +202,30 @@ async function checkEndings() {
   elements.at(-1).handlers.loadedmetadata();
   assert.equal(events.filter(event => event.gen === 6 && event.type === 'duration').length, 0);
   player.unload(6);
+  assert.equal(intervals.size, 0);
+
+  // Network errors retry with backoff (up to 4 times) and reset tries once playing resumes.
+  player.load(8);
+  const netHls = instances.at(-1);
+  const netAudio = netHls.audio;
+  player.play(8);
+  netAudio.currentTime = 55;
+  for (let i = 0; i < 4; i++) {
+    netHls.onError(Hls.Events.ERROR, { fatal: true, type: Hls.ErrorTypes.NETWORK_ERROR, details: 'fragLoadError', response: { code: 502 } });
+    assert.equal(timers.size, 1);
+    const fn = [...timers.values()][0];
+    timers.clear();
+    fn();
+  }
+  assert.equal(netHls.starts.length, 4);
+  assert.equal(events.filter(event => event.gen === 8 && event.type === 'error').length, 0);
+  // Resuming playback resets tries so a later node switch gets fresh retries.
+  netAudio.handlers.playing();
+  netHls.onError(Hls.Events.ERROR, { fatal: true, type: Hls.ErrorTypes.NETWORK_ERROR, details: 'fragLoadError', response: { code: 502 } });
+  assert.equal(timers.size, 1);
+  assert.equal(events.filter(event => event.gen === 8 && event.type === 'error').length, 0);
+  player.unload(8);
+  assert.equal(timers.size, 0);
   assert.equal(intervals.size, 0);
   console.log('player lifecycle and ending JS tests passed');
 }

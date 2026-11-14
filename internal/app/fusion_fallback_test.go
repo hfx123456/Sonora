@@ -32,8 +32,8 @@ func TestFusionCacheUsabilityChecks(t *testing.T) {
 	if !fusionCacheUsable(lyrics.Cached{Source: "播放器歌词", Lines: []lyrics.Line{{Text: "一起长大的约定", At: time.Second}}}) {
 		t.Fatal("Chinese player cache was unnecessarily rejected")
 	}
-	if !fusionCacheUsable(lyrics.Cached{Source: "QQ 音乐 · Lyricify", Lines: []lyrics.Line{{Text: "Instrumental", At: time.Second}}}) {
-		t.Fatal("Fusion cache was rejected")
+	if fusionCacheUsable(lyrics.Cached{Source: "QQ 音乐 · Lyricify", Lines: []lyrics.Line{{Text: "Instrumental", At: time.Second}}}) {
+		t.Fatal("untranslated foreign Fusion cache blocked translation lookup")
 	}
 	if !fusionCacheUsable(lyrics.Cached{Source: "播放器歌词", Lines: []lyrics.Line{{Text: "Koko soko", Translation: "无所不在", At: time.Second}}}) {
 		t.Fatal("translated player cache was rejected")

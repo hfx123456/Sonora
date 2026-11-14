@@ -52,28 +52,15 @@ func neteaseLyrics(t Track) (lyric, translation string, err error) {
 	if t.Episode || t.Name == "" || t.Length() <= 0 {
 		return "", "", nil
 	}
-	q := t.Name
-	if len(t.Artists) > 0 {
-		q += " " + t.Artists[0].Name
-	}
-	var found struct {
-		Result struct {
-			Songs []struct {
-				ID       int64  `json:"id"`
-				Name     string `json:"name"`
-				Duration int64  `json:"dt"`
-			} `json:"songs"`
-		} `json:"result"`
-	}
-	// Not search/get/web, which turns a fifth search in a few seconds
-	// down for minutes.
-	if err := netease("/api/cloudsearch/pc?"+url.Values{"s": {q}, "type": {"1"}, "limit": {"10"}}.Encode(), &found); err != nil {
+	id, err := searchNetEase(t.Name, t)
+	if err != nil {
 		return "", "", err
 	}
-	id, nearest := int64(0), int64(2001)
-	for _, s := range found.Result.Songs {
-		if d := max(s.Duration-t.Duration, t.Duration-s.Duration); d < nearest && sameTitle(s.Name, t.Name) {
-			id, nearest = s.ID, d
+	if id == 0 {
+		if cleaned := cleanTitle(t.Name); cleaned != "" && cleaned != strings.TrimSpace(t.Name) {
+			if id, err = searchNetEase(cleaned, t); err != nil {
+				return "", "", err
+			}
 		}
 	}
 	if id == 0 {
@@ -95,6 +82,34 @@ func neteaseLyrics(t Track) (lyric, translation string, err error) {
 		return "", "", nil
 	}
 	return strings.TrimSpace(res.Lrc.Lyric), strings.TrimSpace(res.Tlyric.Lyric), nil
+}
+
+func searchNetEase(title string, t Track) (int64, error) {
+	q := title
+	if len(t.Artists) > 0 {
+		q += " " + t.Artists[0].Name
+	}
+	var found struct {
+		Result struct {
+			Songs []struct {
+				ID       int64  `json:"id"`
+				Name     string `json:"name"`
+				Duration int64  `json:"dt"`
+			} `json:"songs"`
+		} `json:"result"`
+	}
+	// Not search/get/web, which turns a fifth search in a few seconds
+	// down for minutes.
+	if err := netease("/api/cloudsearch/pc?"+url.Values{"s": {q}, "type": {"1"}, "limit": {"10"}}.Encode(), &found); err != nil {
+		return 0, err
+	}
+	id, nearest := int64(0), int64(2001)
+	for _, s := range found.Result.Songs {
+		if d := max(s.Duration-t.Duration, t.Duration-s.Duration); d < nearest && sameTitle(s.Name, t.Name) {
+			id, nearest = s.ID, d
+		}
+	}
+	return id, nil
 }
 
 // netease gets path from NetEase into out, as its web page does, without
@@ -146,8 +161,7 @@ func sameTitle(a, b string) bool {
 	return a == b || len([]rune(a)) == len([]rune(b)) && strings.IndexFunc(a, han) >= 0 && strings.IndexFunc(b, han) >= 0
 }
 
-func foldTitle(s string) string {
-	s = strings.ToLower(s)
+func cleanTitle(s string) string {
 	if i := strings.Index(s, " - "); i > 0 {
 		s = s[:i]
 	}
@@ -159,9 +173,18 @@ func foldTitle(s string) string {
 			depth++
 		case strings.ContainsRune(")]）】", r):
 			depth = max(depth-1, 0)
-		case depth == 0 && (unicode.IsLetter(r) || unicode.IsNumber(r)):
+		case depth == 0:
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	return strings.TrimSpace(b.String())
+}
+
+func foldTitle(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, cleanTitle(s))
 }
