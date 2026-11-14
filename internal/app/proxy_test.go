@@ -26,13 +26,20 @@ func TestProxySetting(t *testing.T) {
 		return ""
 	}
 
+	sys := through()
+	customAddr := "127.0.0.1:7890"
+	if sys == "http://"+customAddr {
+		customAddr = "127.0.0.1:17999"
+	}
+	wantCustom := "http://" + customAddr
+
 	a := newTestApp()
 	tt := settingsTester(a)
 	click(t, tt, "代理地址")
-	tt.Type("127.0.0.1:7890")
+	tt.Type(customAddr)
 	tt.Key(0, ui.KeyEnter)
 	tt.Frame()
-	if a.settings.Proxy != "http://127.0.0.1:7890" || a.proxyText != a.settings.Proxy || through() != a.settings.Proxy || len(web) != 1 || web[0].String() != a.settings.Proxy {
+	if a.settings.Proxy != wantCustom || a.proxyText != a.settings.Proxy || through() != a.settings.Proxy || len(web) != 1 || web[0].String() != a.settings.Proxy {
 		t.Fatalf("set %q, shown %q, requests through %q, web pages given %v", a.settings.Proxy, a.proxyText, through(), web)
 	}
 
@@ -40,7 +47,7 @@ func TestProxySetting(t *testing.T) {
 	tt.Type("socks5://proxy.lan")
 	tt.Key(0, ui.KeyEnter)
 	tt.Frame()
-	if a.proxyErr == "" || a.settings.Proxy != "http://127.0.0.1:7890" || through() != a.settings.Proxy {
+	if a.proxyErr == "" || a.settings.Proxy != wantCustom || through() != a.settings.Proxy {
 		t.Fatalf("no port: told %q, set %q, requests through %q", a.proxyErr, a.settings.Proxy, through())
 	}
 
@@ -48,7 +55,7 @@ func TestProxySetting(t *testing.T) {
 	tt.Key(0, ui.KeyBackspace)
 	tt.Key(0, ui.KeyTab)
 	tt.Frame()
-	if a.settings.Proxy != "" || a.proxyErr != "" || web[len(web)-1] != nil || through() == "http://127.0.0.1:7890" {
-		t.Fatalf("emptied: set %q, told %q, requests through %q", a.settings.Proxy, a.proxyErr, through())
+	if a.settings.Proxy != "" || a.proxyErr != "" || web[len(web)-1] != nil || through() != sys {
+		t.Fatalf("emptied: set %q, told %q, requests through %q (want %q)", a.settings.Proxy, a.proxyErr, through(), sys)
 	}
 }

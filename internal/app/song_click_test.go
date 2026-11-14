@@ -53,7 +53,7 @@ func TestSongRowClickOtherKeepsPlaying(t *testing.T) {
 	}
 }
 
-// A single click on a song row pauses the current playback.
+// A single click on a song row pauses playing playback, and another single click resumes it.
 func TestSongRowClickPauses(t *testing.T) {
 	a := artistApp()
 	tt := ui.NewTester(a.view, 1200, 800)
@@ -69,6 +69,13 @@ func TestSongRowClickPauses(t *testing.T) {
 	tt.Frame()
 	if a.pl.Playing() {
 		t.Fatal("single click did not pause playback")
+	}
+	if err := tt.Click("孤勇者"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !a.pl.Playing() {
+		t.Fatal("second single click did not resume playback")
 	}
 }
 

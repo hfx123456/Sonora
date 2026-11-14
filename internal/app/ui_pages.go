@@ -217,7 +217,7 @@ func (a *app) playlistPage(c *ui.Context) {
 		a.trackSkeleton(c, s, false, func(c *ui.Context) { a.playlistHeaderSkeleton(c, s) })
 		return
 	}
-	tracks := filterPlaylistTracks(pl.Tracks, a.playlistQueries[id])
+	tracks := cachedFilterTracks(&a.playlistFilterCache, id, pl.Tracks, a.playlistQueries[id])
 	if a.playlistHeaderHeights == nil {
 		a.playlistHeaderHeights = map[string]float32{}
 	}

@@ -247,7 +247,7 @@ func (a *app) fusionLines(c *ui.Context) {
 	chinese := fusionChinese(state.lines)
 	var active ui.Element
 	scroll := ui.Scroll(c.Key("fusion-lines")).Grow(1).TrackScroll(&state.scroll)
-	scroll.MaskLinearGradient(ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{{ui.Transparent, 0}, {white, 0.07}, {white, 0.84}, {ui.Transparent, 1}}})
+	scroll.MaskLinearGradient(ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{{Color: ui.Transparent, At: 0}, {Color: white, At: 0.07}, {Color: white, At: 0.84}, {Color: ui.Transparent, At: 1}}})
 	scroll.Children(func() {
 		ui.Column(c).Padding(42, 24, 220, 24).Gap(27).Children(func() {
 			for index, line := range state.lines {
@@ -404,6 +404,7 @@ func (a *app) setFusionMode(mode string) {
 			}
 			a.fusion.mode = mode
 			a.fusion.pauseHidden = false
+			a.fusion.manualShow = !a.pl.Playing()
 			if a.fusion.win == nil {
 				a.fusion.win = mygo.NewWindow(mygo.WindowOptions{Title: "MySpotify 歌词", Hidden: true, Frameless: true, Transparent: true, DisableShadow: true, DisableResize: true, AlwaysOnTop: true, SkipTaskbar: true, Width: width, Height: height, X: x, Y: y, Content: ui.View(a.fusionOverlay)})
 				a.fusion.win.OnClose(func(event *mygo.CloseEvent) {
@@ -426,11 +427,15 @@ func (a *app) setFusionMode(mode string) {
 	}
 	if mode == "" {
 		a.fusion.mode = ""
+		a.fusion.pauseHidden = false
+		a.fusion.manualShow = false
 	}
 	a.settings.save()
 	a.ensureFusion(false)
-	a.startFusionHover()
 	a.syncFusionVisibility()
+	if mode != "" && !a.fusion.pauseHidden {
+		a.startFusionHover()
+	}
 	a.redraw()
 }
 

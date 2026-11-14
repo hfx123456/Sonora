@@ -1,21 +1,20 @@
-"""Draws Vinyl's icons. Run on Windows, with Pillow: python tools/icons.py
+"""Draws MySpotify's icons. Run on Windows, with Pillow: python tools/icons.py
 
-The record is drawn here, and every icon made of it:
+Every icon is rendered from clean vector geometry:
 
   resources/icon.svg, icon.png   the app's icon, 1024 px (Linux, macOS's .icns)
-  resources/icon-small.svg       the same record for 16-24 px, two grooves bolder
+  resources/icon-small.svg       bold simplified variant for 16-24 px
   resources/icon.ico             Windows: icon-small for 16-24 px, icon above
   internal/app/tray.png          the notification area's and the menu bar's,
                                  a template: black and clear, which Windows draws
                                  white on a dark taskbar and macOS tints itself
   AppIcon.icon                   the Dock's, an Icon Composer document whose tile
                                  is light or dark as macOS is (mygo.json macos.icon)
-  docs/icon.png                  the README's, 256 px
+  docs/icon.png                  the README's and website's, 256 px
 
 Edge renders the SVGs. Then rsrc_windows_amd64.syso again, as DEVELOPMENT.md says.
 """
 import json
-import math
 import os
 import shutil
 import subprocess
@@ -26,32 +25,74 @@ from PIL import Image
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 C = 512
-INK, RIM, LIGHT = '#0a0a0a', '#5c5c5c', '#ffffff'
 
 
-def arc(r, a0, a1, width, color):
-    x0, y0 = C + r * math.cos(math.radians(a0)), C + r * math.sin(math.radians(a0))
-    x1, y1 = C + r * math.cos(math.radians(a1)), C + r * math.sin(math.radians(a1))
-    large = 1 if (a1 - a0) % 360 > 180 else 0
-    return (f'<path d="M{x0:.1f} {y0:.1f} A{r} {r} 0 {large} 1 {x1:.1f} {y1:.1f}" fill="none" '
-            f'stroke="{color}" stroke-width="{width}" stroke-linecap="round"/>')
-
-
-def grooves(color, small=False):
-    """The light the record catches as it turns: three grooves, each a little
-    further round, and the hole; two, bolder, where pixels are few."""
+def note_emblem(fill, small=False):
+    """Sculpted beamed musical note: bold & legible at every size."""
     if small:
-        return (arc(330, 150, 270, 96, color) + arc(182, 210, 318, 90, color)
-                + f'<circle cx="{C}" cy="{C}" r="64" fill="{color}"/>')
-    return (arc(330, 150, 270, 62, color) + arc(242, 205, 305, 54, color) + arc(156, 255, 335, 46, color)
-            + f'<circle cx="{C}" cy="{C}" r="44" fill="{color}"/>')
+        return (
+            f'<g fill="{fill}" transform="translate(18 14)">'
+            '<ellipse cx="332" cy="692" rx="134" ry="102" transform="rotate(-18 332 692)"/>'
+            '<ellipse cx="660" cy="624" rx="134" ry="102" transform="rotate(-18 660 624)"/>'
+            '<path d="M378 686 L378 308 Q378 264 422 256 L706 202 Q748 194 748 238 '
+            'L748 618 L664 618 L664 338 L462 376 L462 686 Z"/>'
+            '</g>'
+        )
+    return (
+        f'<g fill="{fill}" transform="translate(16 14)">'
+        '<ellipse cx="352" cy="672" rx="112" ry="86" transform="rotate(-18 352 672)"/>'
+        '<ellipse cx="642" cy="614" rx="112" ry="86" transform="rotate(-18 642 614)"/>'
+        '<path d="M394 668 L394 318 Q394 276 436 268 L688 220 Q726 213 726 254 '
+        'L726 610 L656 610 L656 346 L464 382 L464 668 Z"/>'
+        '</g>'
+    )
 
 
-def record(small=False):
-    rim = 36 if small else 22  # the edge a dark taskbar or Dock would otherwise swallow
-    return (f'<circle cx="{C}" cy="{C}" r="448" fill="{INK}"/>'
-            f'<circle cx="{C}" cy="{C}" r="{448 - rim / 2}" fill="none" stroke="{RIM}" stroke-width="{rim}"/>'
-            + grooves(LIGHT, small))
+def app_tile_defs():
+    return (
+        '<linearGradient id="tileBg" x1="12%" y1="6%" x2="88%" y2="96%">'
+        '<stop offset="0%" stop-color="#142d22"/>'
+        '<stop offset="52%" stop-color="#0b1712"/>'
+        '<stop offset="100%" stop-color="#050908"/>'
+        '</linearGradient>'
+        '<radialGradient id="tileGlow" cx="50%" cy="44%" r="54%">'
+        '<stop offset="0%" stop-color="#1ed760" stop-opacity="0.28"/>'
+        '<stop offset="55%" stop-color="#00c7b7" stop-opacity="0.10"/>'
+        '<stop offset="100%" stop-color="#000000" stop-opacity="0"/>'
+        '</radialGradient>'
+        '<linearGradient id="tileRim" x1="0%" y1="0%" x2="100%" y2="100%">'
+        '<stop offset="0%" stop-color="#ffffff" stop-opacity="0.24"/>'
+        '<stop offset="48%" stop-color="#1ed760" stop-opacity="0.20"/>'
+        '<stop offset="100%" stop-color="#00d2c8" stop-opacity="0.16"/>'
+        '</linearGradient>'
+        '<linearGradient id="noteGrad" x1="16%" y1="88%" x2="86%" y2="10%">'
+        '<stop offset="0%" stop-color="#1ed760"/>'
+        '<stop offset="58%" stop-color="#29ef8e"/>'
+        '<stop offset="100%" stop-color="#00d4e6"/>'
+        '</linearGradient>'
+        '<filter id="noteShadow" x="-16%" y="-16%" width="132%" height="136%">'
+        '<feDropShadow dx="0" dy="14" stdDeviation="20" flood-color="#000000" flood-opacity="0.45"/>'
+        '</filter>'
+    )
+
+
+def app_icon(small=False):
+    if small:
+        body = (
+            '<rect x="44" y="44" width="936" height="936" rx="236" fill="url(#tileBg)"/>'
+            '<rect x="44" y="44" width="936" height="936" rx="236" fill="url(#tileGlow)"/>'
+            '<rect x="52" y="52" width="920" height="920" rx="228" fill="none" stroke="url(#tileRim)" stroke-width="18"/>'
+            + note_emblem('url(#noteGrad)', small=True)
+        )
+    else:
+        body = (
+            '<rect x="64" y="64" width="896" height="896" rx="220" fill="url(#tileBg)"/>'
+            '<rect x="64" y="64" width="896" height="896" rx="220" fill="url(#tileGlow)"/>'
+            '<rect x="70" y="70" width="884" height="884" rx="214" fill="none" stroke="url(#tileRim)" stroke-width="10"/>'
+            f'<g filter="url(#noteShadow)">{note_emblem("url(#noteGrad)", small=False)}</g>'
+            '<path d="M236 168 Q512 138 788 168" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="6" stroke-linecap="round"/>'
+        )
+    return svg(body, app_tile_defs())
 
 
 def svg(body, defs=''):
@@ -81,11 +122,25 @@ def sized(im, px):
 
 
 def main():
-    big, small = svg(record()), svg(record(small=True))
-    mask = f'<mask id="m"><rect width="1024" height="1024" fill="#fff"/>{grooves("#000", small=True)}</mask>'
-    tray = svg(f'<circle cx="{C}" cy="{C}" r="448" fill="#000" mask="url(#m)"/>', mask)
-    # The Dock's tile is the whole canvas; the record takes three quarters of it.
-    dock = svg(f'<g transform="translate({C} {C}) scale({384 / 448:.5f}) translate(-{C} -{C})">{record()}</g>')
+    big, small = app_icon(small=False), app_icon(small=True)
+    # Monochrome tray template: bold note silhouette scaled comfortably into the 1024 canvas.
+    tray = svg(
+        f'<g transform="translate({C} {C}) scale(1.18) translate(-{C} -{C})">'
+        f'{note_emblem("#000000", small=True)}</g>'
+    )
+    # macOS Icon Composer document supplies its own light/dark tile, so keep only the emblem.
+    dock_defs = (
+        '<linearGradient id="noteGrad" x1="16%" y1="88%" x2="86%" y2="10%">'
+        '<stop offset="0%" stop-color="#1ed760"/>'
+        '<stop offset="58%" stop-color="#29ef8e"/>'
+        '<stop offset="100%" stop-color="#00d4e6"/>'
+        '</linearGradient>'
+    )
+    dock = svg(
+        f'<g transform="translate({C} {C}) scale(1.06) translate(-{C} -{C})">'
+        f'{note_emblem("url(#noteGrad)", small=False)}</g>',
+        dock_defs,
+    )
     write('resources/icon.svg', big)
     write('resources/icon-small.svg', small)
 

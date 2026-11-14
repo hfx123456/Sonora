@@ -21,7 +21,7 @@ class Hls {
 }
 const session = { handlers: {}, setActionHandler(action, fn) { this.handlers[action] = fn; } };
 const context = vm.createContext({
-  Hls, window: {}, navigator: { mediaSession: session },
+  Hls, window: { handlers: {}, addEventListener(name, fn) { this.handlers[name] = fn; } }, navigator: { mediaSession: session },
   AbortSignal,
   fetch: (url, options) => {
     const event = JSON.parse(options.body);

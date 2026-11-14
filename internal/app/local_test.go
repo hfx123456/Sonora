@@ -53,3 +53,20 @@ func TestLocalConnectIsolation(t *testing.T) {
 		t.Fatal("online playback did not return to Connect")
 	}
 }
+
+func TestLocalSearchChineseVariants(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.profile, a.localLoaded = nil, true
+	a.localTracks = []spotify.Track{
+		{ID: "local:1", LocalPath: "a.mp3", Name: "愛與夢", Artists: []spotify.Artist{{Name: "周杰倫"}}, Album: spotify.Album{Name: "葉惠美"}, Duration: 180000},
+		{ID: "local:2", LocalPath: "b.mp3", Name: "晴天", Artists: []spotify.Artist{{Name: "周杰伦"}}, Album: spotify.Album{Name: "叶惠美"}, Duration: 180000},
+	}
+	a.route = route{page: pageLocal}
+	a.localQuery = "爱与梦 周杰伦"
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+	if !tt.HasText("愛與夢") || tt.HasText("晴天") {
+		t.Fatalf("simplified local search failed: match=%v, unmatched=%v", tt.HasText("愛與夢"), tt.HasText("晴天"))
+	}
+}

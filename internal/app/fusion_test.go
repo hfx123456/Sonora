@@ -476,3 +476,40 @@ func TestFusionPauseHidesFloating(t *testing.T) {
 		t.Fatal("a disabled floating mode was still hidden on pause")
 	}
 }
+
+func TestFusionPausedManualShowStaysVisibleUntilPlayed(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.pl.Changed = func() { a.syncFusionVisibility() }
+	a.pl.Cue([]spotify.Track{{ID: "pause", Name: "歌", Duration: 200000}})
+	out := audio.NewPlayer(&silence{})
+	out.SetVolume(0)
+	out.Play()
+	a.pl.Attach(out)
+	defer out.Close()
+
+	// Pause first so playback is genuinely paused.
+	a.pl.TogglePlay()
+	if a.pl.Playing() {
+		t.Fatal("expected player to be paused")
+	}
+
+	// Enabling desktop/capsule lyrics while paused keeps it visible immediately.
+	a.settings.FusionMode = "capsule"
+	a.fusion.manualShow = true
+	a.fusion.pauseHidden = false
+	a.syncFusionVisibility()
+	if a.fusion.pauseHidden {
+		t.Fatal("floating lyrics hid immediately when enabled while paused")
+	}
+
+	// Playing clears manualShow; a subsequent pause should hide it again.
+	a.pl.TogglePlay()
+	if !a.pl.Playing() || a.fusion.manualShow || a.fusion.pauseHidden {
+		t.Fatalf("after play: playing=%v manualShow=%v pauseHidden=%v", a.pl.Playing(), a.fusion.manualShow, a.fusion.pauseHidden)
+	}
+	a.pl.TogglePlay()
+	if !a.fusion.pauseHidden {
+		t.Fatal("subsequent pause did not hide floating lyrics")
+	}
+}

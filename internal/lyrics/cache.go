@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
+
+var cacheMu sync.Mutex
 
 type Cached struct {
 	Key    string
@@ -18,7 +21,7 @@ func cachePath(dir, key string) string {
 	return filepath.Join(dir, fmt.Sprintf("%x.json", sha256.Sum256([]byte(key))))
 }
 
-func LoadCached(dir, key string) Cached {
+func loadCachedUnlocked(dir, key string) Cached {
 	var cached Cached
 	if dir == "" || key == "" {
 		return cached
@@ -30,11 +33,19 @@ func LoadCached(dir, key string) Cached {
 	return cached
 }
 
+func LoadCached(dir, key string) Cached {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	return loadCachedUnlocked(dir, key)
+}
+
 func SaveCached(dir, key, source string, lines []Line) {
 	if dir == "" || key == "" || len(lines) == 0 {
 		return
 	}
-	previous := LoadCached(dir, key)
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	previous := loadCachedUnlocked(dir, key)
 	quality := func(items []Line) int {
 		score := 0
 		for _, line := range items {

@@ -78,6 +78,8 @@ type app struct {
 	playlistCacheRoot                   string
 	playlistQueries                     map[string]string
 	playlistHeaderHeights               map[string]float32
+	playlistFilterCache                 trackFilterCache
+	localFilterCache                    trackFilterCache
 	playlistSync                        playlistSyncState
 	mine, saved                         []spotify.Playlist   // the listener's playlists: made, and saved
 	followed                            []spotify.ArtistCard // the artists the listener follows
@@ -309,7 +311,7 @@ func Run() error {
 	// What decoding a page of covers takes goes back to the system after,
 	// rather than staying in the heap (20 MB).
 	if os.Getenv("GOMEMLIMIT") == "" {
-		debug.SetMemoryLimit(64 << 20)
+		debug.SetMemoryLimit(256 << 20)
 	}
 	mygo.App.WhenReady(func() {
 		a.settings = loadSettings()
@@ -415,6 +417,8 @@ func Run() error {
 		}
 		if a.settings.FusionMode != "" {
 			a.setFusionMode(a.settings.FusionMode)
+			a.fusion.manualShow = false
+			a.syncFusionVisibility()
 		}
 		if shotHook != nil {
 			shotHook(a)

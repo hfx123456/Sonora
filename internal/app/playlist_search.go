@@ -10,6 +10,38 @@ import (
 	"vinyl/internal/spotify"
 )
 
+type trackFilterCache struct {
+	key     string
+	query   string
+	count   int
+	firstID string
+	lastID  string
+	matches []spotify.Track
+}
+
+func cachedFilterTracks(cache *trackFilterCache, key string, tracks []spotify.Track, query string) []spotify.Track {
+	if strings.TrimSpace(query) == "" {
+		return tracks
+	}
+	firstID, lastID := "", ""
+	if n := len(tracks); n > 0 {
+		firstID, lastID = tracks[0].ID, tracks[n-1].ID
+	}
+	if cache.key == key && cache.query == query && cache.count == len(tracks) && cache.firstID == firstID && cache.lastID == lastID {
+		return cache.matches
+	}
+	matches := filterPlaylistTracks(tracks, query)
+	*cache = trackFilterCache{
+		key:     key,
+		query:   query,
+		count:   len(tracks),
+		firstID: firstID,
+		lastID:  lastID,
+		matches: matches,
+	}
+	return matches
+}
+
 func filterPlaylistTracks(tracks []spotify.Track, query string) []spotify.Track {
 	terms := strings.Fields(strings.ToLower(lyrics.SimplifyText(query)))
 	if len(terms) == 0 {
@@ -56,7 +88,7 @@ func (a *app) playlistSearch(c *ui.Context, playlist *spotify.Playlist) {
 		}
 		field.Background(field.AnimateColor("search-bg", background, ui.Animation{Duration: 120 * time.Millisecond})).Border(1, edge)
 		if query != "" {
-			ui.Text(c, fmt.Sprintf("找到 %d 首", len(filterPlaylistTracks(playlist.Tracks, query)))).FontSize(12).TextColor(a.pal.muted)
+			ui.Text(c, fmt.Sprintf("找到 %d 首", len(cachedFilterTracks(&a.playlistFilterCache, playlist.ID, playlist.Tracks, query)))).FontSize(12).TextColor(a.pal.muted)
 		}
 	})
 }

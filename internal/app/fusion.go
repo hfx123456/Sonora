@@ -37,6 +37,7 @@ type fusionState struct {
 	placing         bool
 	captureOnly     bool
 	pauseHidden     bool
+	manualShow      bool
 }
 
 var fetchFusion = fusion.Fetch
@@ -290,15 +291,35 @@ func (a *app) syncFusionVisibility() {
 		return
 	}
 	playing := a.pl.Playing()
+	if playing {
+		a.fusion.manualShow = false
+	} else if a.fusion.manualShow {
+		if a.fusion.pauseHidden {
+			a.fusion.pauseHidden = false
+			if a.fusion.win != nil {
+				a.fusion.win.ShowInactive()
+			}
+			if a.settings.FusionMode == "capsule" {
+				a.startFusionHover()
+			}
+		}
+		return
+	}
 	if playing == !a.fusion.pauseHidden {
 		return
 	}
 	a.fusion.pauseHidden = !playing
+	if !playing {
+		a.fusion.hoverGeneration++
+	}
 	if a.fusion.win == nil {
 		return
 	}
 	if playing {
 		a.fusion.win.ShowInactive()
+		if a.settings.FusionMode == "capsule" {
+			a.startFusionHover()
+		}
 	} else {
 		a.fusion.win.Hide()
 	}

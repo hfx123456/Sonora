@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"vinyl/internal/lyrics"
@@ -144,11 +146,51 @@ func decode(data []byte) (Result, error) {
 	return result, nil
 }
 
+var (
+	bridgeDigest = sync.OnceValues(func() ([32]byte, string) {
+		sum := sha256.Sum256(bridge)
+		return sum, hex.EncodeToString(sum[:8])
+	})
+	extractMu     sync.Mutex
+	extractedPath = map[string]string{}
+)
+
+func fileMatchesDigest(path string, want [32]byte, size int64) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.Size() != size {
+		return false
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return false
+	}
+	var got [32]byte
+	copy(got[:], h.Sum(nil))
+	return got == want
+}
+
 func extract(dir string) (string, error) {
-	sum := sha256.Sum256(bridge)
-	dir = filepath.Join(dir, "lyricify", hex.EncodeToString(sum[:8]))
+	sum, short := bridgeDigest()
+	dir = filepath.Join(dir, "lyricify", short)
 	path := filepath.Join(dir, "MySpotify.Lyrics.exe")
-	if data, err := os.ReadFile(path); err == nil && sha256.Sum256(data) == sum {
+	size := int64(len(bridge))
+
+	extractMu.Lock()
+	defer extractMu.Unlock()
+
+	if extractedPath[dir] == path {
+		if info, err := os.Stat(path); err == nil && info.Size() == size {
+			return path, nil
+		}
+		delete(extractedPath, dir)
+	}
+	if fileMatchesDigest(path, sum, size) {
+		extractedPath[dir] = path
 		return path, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -168,10 +210,11 @@ func extract(dir string) (string, error) {
 		return "", closeErr
 	}
 	if err := os.Rename(file.Name(), path); err != nil {
-		if data, readErr := os.ReadFile(path); readErr != nil || sha256.Sum256(data) != sum {
+		if !fileMatchesDigest(path, sum, size) {
 			return "", err
 		}
 	}
+	extractedPath[dir] = path
 	return path, nil
 }
 

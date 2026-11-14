@@ -87,6 +87,9 @@ func (a *app) centerFusionIsland() {
 	a.settings.FusionFloatingIsland = false
 	if a.settings.FusionMode != "capsule" {
 		a.setFusionMode("capsule")
+	} else if !a.pl.Playing() {
+		a.fusion.manualShow = true
+		a.syncFusionVisibility()
 	}
 	if a.fusion.win != nil {
 		display := mygo.Screen.PrimaryDisplay()
@@ -133,7 +136,7 @@ func (a *app) startFusionHover() {
 	a.fusion.hover = fusionHover{opacity: 1}
 	var poll func()
 	poll = func() {
-		if a.quitting || generation != a.fusion.hoverGeneration || a.fusion.win == nil || a.settings.FusionMode != "capsule" {
+		if a.quitting || generation != a.fusion.hoverGeneration || a.fusion.win == nil || a.settings.FusionMode != "capsule" || a.fusion.pauseHidden {
 			return
 		}
 		a.updateFusionHover()

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -107,15 +106,7 @@ func (a *app) restoreLocalSession() {
 }
 
 func (a *app) localMusicPage(c *ui.Context) {
-	tracks := a.localTracks
-	if query := strings.ToLower(strings.TrimSpace(a.localQuery)); query != "" {
-		tracks = nil
-		for _, track := range a.localTracks {
-			if strings.Contains(strings.ToLower(track.Name+" "+track.ArtistNames()+" "+track.Album.Name), query) {
-				tracks = append(tracks, track)
-			}
-		}
-	}
+	tracks := cachedFilterTracks(&a.localFilterCache, "local", a.localTracks, a.localQuery)
 	a.trackRows(c, tracks, true, func(c *ui.Context) {
 		a.heading(c, "本地音乐", "电脑上的歌曲")
 		ui.Text(c, "添加音乐文件夹或文件，可直接播放；支持 MP3、FLAC、M4A、WAV、OGG、Opus、AAC 和同名 LRC 歌词。").FontSize(12).TextColor(a.pal.muted).Margin(0, 0, 14, 0)

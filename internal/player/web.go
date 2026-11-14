@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -209,6 +210,9 @@ func (w *Web) eval(js string) {
 		page = w.view.Page
 	}
 	if _, err := page().EvalContext(ctx, js); err != nil {
+		if w.ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			return
+		}
 		log.Printf("player: %s: %v", js, err)
 		w.backendFailed("backendError audio page command failed: " + err.Error())
 	}

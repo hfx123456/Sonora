@@ -118,9 +118,10 @@ type Player struct {
 	// (mediaAhead): its media, and when, as its CDN URLs are signed for a
 	// while.
 	upNext struct {
-		id string
-		m  *spotify.Media
-		at time.Time
+		id    string
+		m     *spotify.Media
+		at    time.Time
+		timer *time.Timer
 	}
 	cover []byte // the cover the system shows of the track, once loaded
 
@@ -924,6 +925,10 @@ func (p *Player) CloseWeb() {
 }
 
 func (p *Player) stop() {
+	if p.upNext.timer != nil {
+		p.upNext.timer.Stop()
+		p.upNext.timer = nil
+	}
 	if out := p.out; out != nil {
 		// Paused first, it fades out over a few milliseconds, rather than
 		// stopping with a click.
@@ -1282,20 +1287,25 @@ func (p *Player) mediaAhead() {
 	if p.upNext.id == next.ID {
 		return
 	}
+	if p.upNext.timer != nil {
+		p.upNext.timer.Stop()
+		p.upNext.timer = nil
+	}
 	p.upNext.id, p.upNext.m = next.ID, nil
 	resolveMedia, web := resolve, p.Web
-	time.AfterFunc(aheadDelay, func() {
+	gen := p.gen
+	p.upNext.timer = time.AfterFunc(aheadDelay, func() {
 		m, err := resolveMedia(next.URI())
 		if err != nil {
 			log.Printf("player: ahead %s: %v", next.URI(), err)
 			return
 		}
 		p.post(func() {
-			if p.upNext.id == next.ID {
+			if p.gen == gen && p.upNext.id == next.ID {
 				p.upNext.m, p.upNext.at = m, time.Now()
+				go web.Prefetch(m)
 			}
 		})
-		web.Prefetch(m)
 	})
 }
 
