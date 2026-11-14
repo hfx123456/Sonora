@@ -197,3 +197,59 @@ func TestFusionMotionMenu(t *testing.T) {
 		t.Fatal("motion controls did not update preferences")
 	}
 }
+
+// Capsule island width tracks lyric length and springs smoothly across line changes when motion is enabled.
+func TestFusionIslandDynamicWidthAndSpringAnimation(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.FusionMode = "capsule"
+	a.pl.Cue([]spotify.Track{{ID: "dyn", Name: "Song", Duration: 200000}})
+	a.fusion.lines = []lyrics.Line{
+		{At: 0, End: 4 * time.Second, Text: "你好", Translation: "Hello"},
+		{At: 4 * time.Second, End: 10 * time.Second, Text: "ありがとう 君がいてくれて本当よかったよ", Translation: "谢谢 有你在身边真好"},
+	}
+
+	width, height := a.fusionWindowSize()
+	tester := ui.NewTester(a.fusionOverlay, width, height)
+
+	a.pl.Hold(time.Second)
+	tester.Frame()
+	shortW := a.fusion.capsuleW
+
+	a.pl.Hold(5 * time.Second)
+	tester.Advance(100 * time.Millisecond)
+	tester.Frame()
+	midW := a.fusion.capsuleW
+	if midW <= shortW {
+		t.Fatalf("island did not begin expanding smoothly: short=%v mid=%v", shortW, midW)
+	}
+
+	tester.Advance(time.Second)
+	tester.Frame()
+	longW := a.fusion.capsuleW
+	if longW <= midW {
+		t.Fatalf("island did not expand further to long lyric: short=%v mid=%v long=%v", shortW, midW, longW)
+	}
+
+	a.settings.FusionStatic = true
+	a.pl.Hold(time.Second)
+	tester.Frame()
+	if a.fusion.capsuleW != shortW {
+		t.Fatalf("static mode did not snap back to short width: got=%v want=%v", a.fusion.capsuleW, shortW)
+	}
+}
+
+// Interactive hover bounds track the centered animated capsule rather than the wider transparent window.
+func TestFusionCapsuleHitBounds(t *testing.T) {
+	full := mygo.Rectangle{X: 300, Y: 0, Width: 680, Height: 68}
+	got := fusionCapsuleHitBounds(full, 240)
+	if got.X != 520 || got.Width != 240 || got.Y != 0 || got.Height != 68 {
+		t.Fatalf("hit bounds = %+v, want X=520 W=240 Y=0 H=68", got)
+	}
+	if same := fusionCapsuleHitBounds(full, 0); same != full {
+		t.Fatalf("zero capsuleW changed bounds: %+v", same)
+	}
+	if clamped := fusionCapsuleHitBounds(full, 900); clamped != full {
+		t.Fatalf("oversized capsuleW escaped bounds: %+v", clamped)
+	}
+}

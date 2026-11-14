@@ -102,6 +102,22 @@ func (a *app) centerFusionIsland() {
 	a.redraw()
 }
 
+func fusionCapsuleHitBounds(bounds mygo.Rectangle, capsuleW float32) mygo.Rectangle {
+	if capsuleW <= 0 {
+		return bounds
+	}
+	w := min(bounds.Width, int(math.Ceil(float64(capsuleW))))
+	if w <= 0 {
+		return bounds
+	}
+	return mygo.Rectangle{
+		X:      bounds.X + (bounds.Width-w)/2,
+		Y:      bounds.Y,
+		Width:  w,
+		Height: bounds.Height,
+	}
+}
+
 func (a *app) updateFusionHover() {
 	if a.fusion.win == nil || a.quitting {
 		return
@@ -113,14 +129,15 @@ func (a *app) updateFusionHover() {
 		return
 	}
 	bounds := a.fusion.win.Bounds()
+	hit := fusionCapsuleHitBounds(bounds, a.fusion.capsuleW)
 	point := fusionCursor()
-	inside := point.X >= bounds.X && point.X < bounds.X+bounds.Width && point.Y >= bounds.Y && point.Y < bounds.Y+bounds.Height
+	inHit := point.X >= hit.X && point.X < hit.X+hit.Width && point.Y >= hit.Y && point.Y < hit.Y+hit.Height
 	previous := a.fusion.hover.opacity
-	opacity, _ := a.fusion.hover.step(time.Now(), inside, !a.settings.FusionNoAvoid)
+	opacity, _ := a.fusion.hover.step(time.Now(), inHit, !a.settings.FusionNoAvoid)
 	if opacity != previous {
 		a.fusion.win.SetOpacity(opacity)
 	}
-	passing := a.settings.FusionLocked || opacity < .99
+	passing := a.settings.FusionLocked || !inHit || opacity < .99
 	if passing != a.fusion.hover.passing {
 		a.fusion.hover.passing = passing
 		a.fusion.win.SetIgnoreMouseEvents(passing)

@@ -29,7 +29,7 @@ func TestFusionOutlineFrames(t *testing.T) {
 		position := 2500 * time.Millisecond
 		view := func(context *ui.Context) {
 			ui.Column(context).Fill().Justify(ui.Center).Padding(20).Background(background.color).Children(func() {
-				application.fusionSingleLine(context, line, position, 64, white, white.Alpha(.55), true, true)
+				application.fusionSingleLine(context, line, position, 64, white, white.Alpha(.55), true, true, 0)
 			})
 		}
 		tester := ui.NewTester(view, 1000, 200)

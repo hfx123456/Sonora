@@ -38,6 +38,8 @@ type fusionState struct {
 	captureOnly     bool
 	pauseHidden     bool
 	manualShow      bool
+	capsuleW        float32
+	measure         fusionLineMeasure
 }
 
 var fetchFusion = fusion.Fetch
@@ -262,7 +264,7 @@ func (a *app) changeFusionScale(delta int) {
 
 func (a *app) fusionIslandWidth() int {
 	if a.settings.FusionIslandWidth == 0 {
-		return 420
+		return 680
 	}
 	return max(300, min(960, a.settings.FusionIslandWidth))
 }

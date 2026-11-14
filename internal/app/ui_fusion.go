@@ -444,48 +444,128 @@ func (a *app) fusionOverlay(c *ui.Context) {
 	theme.Font = a.fusionFont()
 	c.SetTheme(&theme)
 	c.Root().Background(ui.Transparent)
-	if a.fusion.win != nil && a.settings.FusionMode == "capsule" && a.fusion.hover.opacity < .01 {
+	capsule := a.settings.FusionMode == "capsule"
+	if a.fusion.win != nil && capsule && a.fusion.hover.opacity < .01 {
 		return
 	}
 	a.fusionTick(c, true)
 	line, translation := a.fusionCurrent()
 	scale := a.fusionScale()
-	root := ui.Box(c.Key("floating-lyrics")).Fill().Font(a.fusionFont()).DragWindow().ContextMenu(a.fusionMenu)
+	root := ui.Box(c.Key("floating-lyrics")).Fill().Font(a.fusionFont())
+	if !capsule {
+		root.DragWindow().ContextMenu(a.fusionMenu)
+	}
 	root.Children(func() {
-		if a.settings.FusionMode == "capsule" {
+		if capsule {
 			a.fusionIsland(c, line, translation, scale)
-		} else {
-			if root.Hovered() {
-				root.Background(ui.RGBA(16, 16, 18, 0.36)).Radius(12)
-			}
-			ui.Column(c).Fill().Center().Padding(24*scale, 28*scale, 8*scale, 28*scale).Children(func() { a.fusionAnimatedCaption(c, line, translation, 38*scale, 23*scale, true) })
+			return
 		}
 		if root.Hovered() {
-			a.fusionOverlayControls(c, a.settings.FusionMode == "capsule")
+			root.Background(ui.RGBA(16, 16, 18, 0.36)).Radius(12)
+		}
+		ui.Column(c).Fill().Center().Padding(24*scale, 28*scale, 8*scale, 28*scale).Children(func() { a.fusionAnimatedCaption(c, line, translation, 38*scale, 23*scale, true, 0) })
+		if root.Hovered() {
+			a.fusionOverlayControls(c, false)
 		}
 	})
 }
 
+type fusionLineMeasure struct {
+	text, translation   string
+	fontOrig, fontTrans string
+	origSize, transSize float32
+	width               float32
+}
+
+func (a *app) fusionMeasureWidth(line lyrics.Line, translation string, origSize, transSize float32) float32 {
+	if line.Text == fusionWaitingNotes && translation == "" {
+		return 96 * (origSize / 23)
+	}
+	fontOrig := a.fusionFontForText(line.Text)
+	fontTrans := ""
+	if translation != "" {
+		fontTrans = a.fusionFontForText(translation)
+	}
+	m := &a.fusion.measure
+	if m.text == line.Text && m.translation == translation && m.fontOrig == fontOrig && m.fontTrans == fontTrans && m.origSize == origSize && m.transSize == transSize && m.width > 0 {
+		return m.width
+	}
+	w, _ := ui.ShapeText(line.Text, ui.Font{Family: fontOrig, Size: origSize, Weight: 400}, 0).Size()
+	if translation != "" {
+		tw, _ := ui.ShapeText(translation, ui.Font{Family: fontTrans, Size: transSize, Weight: 400}, 0).Size()
+		w = max(w, tw)
+	}
+	*m = fusionLineMeasure{
+		text:        line.Text,
+		translation: translation,
+		fontOrig:    fontOrig,
+		fontTrans:   fontTrans,
+		origSize:    origSize,
+		transSize:   transSize,
+		width:       w,
+	}
+	return w
+}
+
+func (a *app) fusionIslandSizing(line lyrics.Line, translation string, scale, bodyHeight, maxPillW float32) (targetPillW, minPillW, fitTextW float32) {
+	// Horizontal chrome inside the pill: 16*scale padding each side, emblem, and cover art.
+	chromeW := 32*scale + 26*scale + 12*scale
+	if a.pl.Current() != nil {
+		coverSize := min(32*scale, bodyHeight-16*scale)
+		chromeW += 12*scale + coverSize
+	}
+	minPillW = min(maxPillW, chromeW+84*scale)
+	textW := a.fusionMeasureWidth(line, translation, 23*scale, 14*scale)
+	targetPillW = min(maxPillW, max(minPillW, chromeW+textW+16*scale))
+	fitTextW = max(1, maxPillW-chromeW-10*scale)
+	return targetPillW, minPillW, fitTextW
+}
+
 func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, scale float32) {
-	_, height := c.Size()
+	winW, height := c.Size()
 	inset := 18 * scale
 	bodyHeight := height - 3*scale
-	ui.Box(c).Absolute().Fill().Draw(func(painter *ui.Painter, bounds ui.Rect) {
+	maxPillW := max(160*scale, winW-inset*2)
+	targetPillW, minPillW, fitTextW := a.fusionIslandSizing(line, translation, scale, bodyHeight, maxPillW)
+
+	stage := ui.Box(c.Key("island-stage")).Absolute().Fill()
+	var pillW float32
+	if a.settings.FusionStatic || c.Preferences().ReduceMotion {
+		pillW = stage.Jump("pill-w", targetPillW)
+	} else {
+		spring := ui.Animation{Spring: ui.SpringOptions{Duration: 400 * time.Millisecond, Bounce: 0.16}}
+		pillW = max(minPillW, min(maxPillW, stage.AnimateTo("pill-w", targetPillW, spring)))
+	}
+	a.fusion.capsuleW = pillW
+	pillLeft := (winW - pillW) / 2
+
+	stage.Draw(func(painter *ui.Painter, bounds ui.Rect) {
 		if a.settings.FusionFloatingIsland {
-			painter.Fill(ui.Rect{X: bounds.X + inset, Y: bounds.Y + 2*scale, W: bounds.W - inset*2, H: bodyHeight - 2*scale}, ui.RGB(0, 0, 0), (bodyHeight-2*scale)/2)
+			painter.Fill(ui.Rect{X: bounds.X + (bounds.W-pillW)/2, Y: bounds.Y + 2*scale, W: pillW, H: bodyHeight - 2*scale}, ui.RGB(0, 0, 0), (bodyHeight-2*scale)/2)
 		} else {
-			painter.FillPath(shape(bounds.X+bounds.W/2, bounds.W-inset*2, bodyHeight, 16*scale, min(38*scale, bodyHeight*0.5)), ui.RGB(0, 0, 0))
+			painter.FillPath(shape(bounds.X+bounds.W/2, pillW, bodyHeight, 16*scale, min(38*scale, bodyHeight*0.5)), ui.RGB(0, 0, 0))
 		}
 	})
-	ui.Row(c).Absolute().Top(0).Left(inset + 16*scale).Right(inset + 16*scale).Height(bodyHeight).Gap(12 * scale).AlignItems(ui.Center).Children(func() {
-		a.fusionEmblem(c, 26*scale)
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2 * scale).Justify(ui.Center).Children(func() {
-			a.fusionAnimatedCaption(c, line, translation, 23*scale, 14*scale, false)
+	stage.Children(func() {
+		pill := ui.Row(c.Key("island-pill")).Absolute().Top(0).Left(pillLeft).Width(pillW).Height(bodyHeight).
+			Padding(0, 16*scale, 0, 16*scale).Gap(12 * scale).AlignItems(ui.Center).
+			DragWindow().ContextMenu(a.fusionMenu)
+		pill.Children(func() {
+			a.fusionEmblem(c, 26*scale)
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2 * scale).Justify(ui.Center).Children(func() {
+				a.fusionAnimatedCaption(c, line, translation, 23*scale, 14*scale, false, fitTextW)
+			})
+			if track := a.pl.Current(); track != nil {
+				size := min(32*scale, bodyHeight-16*scale)
+				a.fusionCover(c, track.Album.PicURL, size, 7*scale)
+			}
+			if pill.Hovered() {
+				if iconButton(c.Key("close-float"), iconX, 11, white.Alpha(0.65), "关闭桌面歌词").
+					Absolute().Right(5*scale).Top(2).Size(20, 20).Clicked() {
+					a.setFusionMode("")
+				}
+			}
 		})
-		if track := a.pl.Current(); track != nil {
-			size := min(32*scale, bodyHeight-16*scale)
-			a.fusionCover(c, track.Album.PicURL, size, 7*scale)
-		}
 	})
 }
 
@@ -548,11 +628,15 @@ func (a *app) fusionOverlayControls(c *ui.Context, island bool) {
 	})
 }
 
-func (a *app) fusionSingleLine(c *ui.Context, line lyrics.Line, position time.Duration, size float32, lit, dim ui.Color, outline, animate bool) {
+func (a *app) fusionSingleLine(c *ui.Context, line lyrics.Line, position time.Duration, size float32, lit, dim ui.Color, outline, animate bool, fitWidth float32) {
 	box := ui.Box(c).Height(size * 1.5).AlignSelf(ui.Stretch)
 	cache := ui.Local(box, "lyric-layout", func() fusionLineLayout { return fusionLineLayout{} })
 	box.Draw(func(painter *ui.Painter, bounds ui.Rect) {
-		layout := cache.shape(line.Text, a.fusionFontForText(line.Text), size, max(1, bounds.W-10))
+		maxWidth := max(1, bounds.W-10)
+		if fitWidth > 0 {
+			maxWidth = fitWidth
+		}
+		layout := cache.shape(line.Text, a.fusionFontForText(line.Text), size, maxWidth)
 		width, height := layout.Size()
 		origin, y := bounds.X+(bounds.W-width)/2, bounds.Y+(bounds.H-height)/2+2
 		words := line.Words

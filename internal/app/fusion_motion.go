@@ -139,7 +139,7 @@ func (motion *fusionCaptionMotion) phase(now time.Time, still bool) float32 {
 	return clamp01(float32(now.Sub(motion.changed)) / float32(fusionCaptionDuration))
 }
 
-func (a *app) fusionAnimatedCaption(c *ui.Context, line lyrics.Line, translation string, originalSize, translationSize float32, outline bool) {
+func (a *app) fusionAnimatedCaption(c *ui.Context, line lyrics.Line, translation string, originalSize, translationSize float32, outline bool, fitWidth float32) {
 	motion := &a.fusion.caption
 	still := a.settings.FusionStatic || c.Preferences().ReduceMotion
 	motion.update(fusionTrackKey(a.pl.Current())+a.settings.FusionMode, line, translation, a.fusionPosition(), c.Now())
@@ -159,11 +159,11 @@ func (a *app) fusionAnimatedCaption(c *ui.Context, line lyrics.Line, translation
 				if caption.line.Text == fusionWaitingNotes && caption.translation == "" {
 					a.fusionWaitingAnimation(c, originalSize, caption.position, still)
 				} else {
-					a.fusionSingleLine(c, caption.line, caption.position, originalSize, white, dim, outline, !still)
+					a.fusionSingleLine(c, caption.line, caption.position, originalSize, white, dim, outline, !still, fitWidth)
 				}
 				if caption.translation != "" {
 					translated := fusionTranslationLine(caption.line, caption.translation)
-					a.fusionSingleLine(c, translated, caption.position, translationSize, white.Alpha(.86), white.Alpha(.38), outline, !still)
+					a.fusionSingleLine(c, translated, caption.position, translationSize, white.Alpha(.86), white.Alpha(.38), outline, !still, fitWidth)
 				}
 			})
 		}
