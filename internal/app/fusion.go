@@ -39,6 +39,7 @@ type fusionState struct {
 	pauseHidden     bool
 	manualShow      bool
 	capsuleW        float32
+	capsuleH        float32
 	measure         fusionLineMeasure
 }
 

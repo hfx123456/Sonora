@@ -339,7 +339,7 @@ func (a *app) fusionWindowSize() (int, int) {
 	scale := a.fusionScale()
 	width, height := float32(1040), float32(156)
 	if a.settings.FusionMode == "capsule" {
-		width, height = float32(a.fusionIslandWidth()), 68
+		width, height = float32(a.fusionIslandWidth()), 76
 		_, detail := a.fusionCurrent()
 		secondRow := detail != ""
 		chinese := fusionChinese(a.fusion.lines)
@@ -507,47 +507,61 @@ func (a *app) fusionMeasureWidth(line lyrics.Line, translation string, origSize,
 	return w
 }
 
-func (a *app) fusionIslandSizing(line lyrics.Line, translation string, scale, bodyHeight, maxPillW float32) (targetPillW, minPillW, fitTextW float32) {
+func (a *app) fusionIslandSizing(line lyrics.Line, translation string, scale, coverMaxH, targetCapW float32) (targetPillW, minPillW, fitTextW float32) {
 	// Horizontal chrome inside the pill: 16*scale padding each side, emblem, and cover art.
 	chromeW := 32*scale + 26*scale + 12*scale
 	if a.pl.Current() != nil {
-		coverSize := min(32*scale, bodyHeight-16*scale)
+		coverSize := min(32*scale, coverMaxH)
 		chromeW += 12*scale + coverSize
 	}
-	minPillW = min(maxPillW, chromeW+84*scale)
+	minPillW = min(targetCapW, chromeW+84*scale)
 	textW := a.fusionMeasureWidth(line, translation, 23*scale, 14*scale)
-	targetPillW = min(maxPillW, max(minPillW, chromeW+textW+16*scale))
-	fitTextW = max(1, maxPillW-chromeW-10*scale)
+	targetPillW = min(targetCapW, max(minPillW, chromeW+textW+16*scale))
+	fitTextW = max(1, targetCapW-chromeW-10*scale)
 	return targetPillW, minPillW, fitTextW
 }
 
 func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, scale float32) {
-	winW, height := c.Size()
-	inset := 18 * scale
-	bodyHeight := height - 3*scale
-	maxPillW := max(160*scale, winW-inset*2)
-	targetPillW, minPillW, fitTextW := a.fusionIslandSizing(line, translation, scale, bodyHeight, maxPillW)
+	winW, winH := c.Size()
+	inset := 20 * scale
+	maxPillClampW := max(160*scale, winW-inset*2)
+	targetCapW := max(160*scale, maxPillClampW-16*scale)
+	maxPillH := max(40*scale, winH-2*scale)
+	targetPillH := min(maxPillH, 46*scale)
+	if translation != "" {
+		targetPillH = min(maxPillH, 65*scale)
+	}
+	coverMaxH := max(24*scale, targetPillH-16*scale)
+	targetPillW, minPillW, fitTextW := a.fusionIslandSizing(line, translation, scale, coverMaxH, targetCapW)
+
+	still := a.settings.FusionStatic || c.Preferences().ReduceMotion
+	a.fusion.caption.update(fusionTrackKey(a.pl.Current())+a.settings.FusionMode, line, translation, a.fusionPosition(), c.Now())
+	pulse := a.fusion.caption.pulse(c.Now(), still)
 
 	stage := ui.Box(c.Key("island-stage")).Absolute().Fill()
-	var pillW float32
-	if a.settings.FusionStatic || c.Preferences().ReduceMotion {
+	var pillW, pillH float32
+	if still {
 		pillW = stage.Jump("pill-w", targetPillW)
+		pillH = stage.Jump("pill-h", targetPillH)
 	} else {
-		spring := ui.Animation{Spring: ui.SpringOptions{Duration: 400 * time.Millisecond, Bounce: 0.16}}
-		pillW = max(minPillW, min(maxPillW, stage.AnimateTo("pill-w", targetPillW, spring)))
+		spring := ui.Animation{Spring: ui.SpringOptions{Duration: 520 * time.Millisecond, Bounce: 0.40}}
+		pillW = stage.AnimateTo("pill-w", targetPillW, spring) + 10*scale*pulse
+		pillH = stage.AnimateTo("pill-h", targetPillH, spring) + 2.5*scale*pulse
+		pillW = max(max(120*scale, minPillW-24*scale), min(maxPillClampW, pillW))
+		pillH = max(max(36*scale, targetPillH-8*scale), min(maxPillH, pillH))
 	}
-	a.fusion.capsuleW = pillW
+	a.fusion.capsuleW, a.fusion.capsuleH = pillW, pillH
 	pillLeft := (winW - pillW) / 2
 
 	stage.Draw(func(painter *ui.Painter, bounds ui.Rect) {
 		if a.settings.FusionFloatingIsland {
-			painter.Fill(ui.Rect{X: bounds.X + (bounds.W-pillW)/2, Y: bounds.Y + 2*scale, W: pillW, H: bodyHeight - 2*scale}, ui.RGB(0, 0, 0), (bodyHeight-2*scale)/2)
+			painter.Fill(ui.Rect{X: bounds.X + (bounds.W-pillW)/2, Y: bounds.Y + 2*scale, W: pillW, H: pillH - 2*scale}, ui.RGB(0, 0, 0), (pillH-2*scale)/2)
 		} else {
-			painter.FillPath(shape(bounds.X+bounds.W/2, pillW, bodyHeight, 16*scale, min(38*scale, bodyHeight*0.5)), ui.RGB(0, 0, 0))
+			painter.FillPath(shape(bounds.X+bounds.W/2, pillW, pillH, 16*scale, min(38*scale, pillH*0.5)), ui.RGB(0, 0, 0))
 		}
 	})
 	stage.Children(func() {
-		pill := ui.Row(c.Key("island-pill")).Absolute().Top(0).Left(pillLeft).Width(pillW).Height(bodyHeight).
+		pill := ui.Row(c.Key("island-pill")).Absolute().Top(0).Left(pillLeft).Width(pillW).Height(pillH).
 			Padding(0, 16*scale, 0, 16*scale).Gap(12 * scale).AlignItems(ui.Center).
 			DragWindow().ContextMenu(a.fusionMenu)
 		pill.Children(func() {
@@ -556,7 +570,7 @@ func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, 
 				a.fusionAnimatedCaption(c, line, translation, 23*scale, 14*scale, false, fitTextW)
 			})
 			if track := a.pl.Current(); track != nil {
-				size := min(32*scale, bodyHeight-16*scale)
+				size := min(32*scale, pillH-16*scale)
 				a.fusionCover(c, track.Album.PicURL, size, 7*scale)
 			}
 			if pill.Hovered() {

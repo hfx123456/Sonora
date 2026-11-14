@@ -13,7 +13,41 @@ import (
 
 const fusionMotionFrame = time.Second / 60
 const fusionIntroFrame = time.Second / 30
-const fusionCaptionDuration = 360 * time.Millisecond
+const fusionCaptionDuration = 460 * time.Millisecond
+
+// fusionSpringEval evaluates a unit step response for an underdamped spring
+// (normalized over duration), returning a value that smoothly overshoots 1 and settles.
+func fusionSpringEval(phase, bounce float32) float32 {
+	if phase <= 0 {
+		return 0
+	}
+	if phase >= 1 {
+		return 1
+	}
+	// Undamped natural frequency scaled so the spring settles cleanly by phase == 1.
+	t := float64(phase)
+	zeta := max(0.2, min(0.95, 1-float64(bounce)))
+	wn := 2 * math.Pi * 1.15
+	wd := wn * math.Sqrt(1-zeta*zeta)
+	env := math.Exp(-zeta * wn * t)
+	pos := 1 - env*(math.Cos(wd*t)+(zeta/math.Sqrt(1-zeta*zeta))*math.Sin(wd*t))
+	// Smoothly blend the tail to exact 1 over the final 15% so phase==1 is C0-continuous.
+	if phase > 0.85 {
+		blend := float64((phase - 0.85) / 0.15)
+		pos = pos*(1-blend) + 1*blend
+	}
+	return float32(pos)
+}
+
+// fusionIslandPulse returns a brief damped elastic impulse that tapers to 0 by phase == 1.
+func (motion *fusionCaptionMotion) pulse(now time.Time, still bool) float32 {
+	phase := motion.phase(now, still)
+	if still || phase <= 0 || phase >= 1 {
+		return 0
+	}
+	t := float64(phase)
+	return float32(math.Exp(-4.6*t)*math.Sin(2.2*math.Pi*t)) * (1 - phase)
+}
 
 func fusionWordOffsets(text string, words []lyrics.Word) []int {
 	offsets := make([]int, len(words))
@@ -144,7 +178,9 @@ func (a *app) fusionAnimatedCaption(c *ui.Context, line lyrics.Line, translation
 	still := a.settings.FusionStatic || c.Preferences().ReduceMotion
 	motion.update(fusionTrackKey(a.pl.Current())+a.settings.FusionMode, line, translation, a.fusionPosition(), c.Now())
 	phase := motion.phase(c.Now(), still)
-	eased := 1 - float32(math.Pow(float64(1-phase), 3))
+	fade := 1 - float32(math.Pow(float64(clamp01(1-phase*1.25)), 3))
+	leaveFade := clamp01(1 - phase*1.4)
+	springPos := fusionSpringEval(phase, 0.34)
 	height := originalSize * 1.5
 	if translation != "" {
 		height += translationSize*1.4 + 2*a.fusionScale()
@@ -171,9 +207,9 @@ func (a *app) fusionAnimatedCaption(c *ui.Context, line lyrics.Line, translation
 			previous := motion.previous
 			previous.line.Words = nil
 			previous.line.End = previous.line.At
-			draw("leaving", previous, 1-eased, -14*eased, 1-.025*eased)
+			draw("leaving", previous, leaveFade, -14*fade, 1-.05*fade)
 		}
-		draw("entering", motion.current, eased, 14*(1-eased), .975+.025*eased)
+		draw("entering", motion.current, fade, 14*(1-springPos), .92+.08*springPos)
 	})
 	if phase < 1 {
 		c.After(fusionMotionFrame)

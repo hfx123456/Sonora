@@ -102,20 +102,20 @@ func (a *app) centerFusionIsland() {
 	a.redraw()
 }
 
-func fusionCapsuleHitBounds(bounds mygo.Rectangle, capsuleW float32) mygo.Rectangle {
-	if capsuleW <= 0 {
-		return bounds
+func fusionCapsuleHitBounds(bounds mygo.Rectangle, capsuleW, capsuleH float32) mygo.Rectangle {
+	out := bounds
+	if capsuleW > 0 {
+		if w := min(bounds.Width, int(math.Ceil(float64(capsuleW)))); w > 0 {
+			out.X = bounds.X + (bounds.Width-w)/2
+			out.Width = w
+		}
 	}
-	w := min(bounds.Width, int(math.Ceil(float64(capsuleW))))
-	if w <= 0 {
-		return bounds
+	if capsuleH > 0 {
+		if h := min(bounds.Height, int(math.Ceil(float64(capsuleH)))); h > 0 {
+			out.Height = h
+		}
 	}
-	return mygo.Rectangle{
-		X:      bounds.X + (bounds.Width-w)/2,
-		Y:      bounds.Y,
-		Width:  w,
-		Height: bounds.Height,
-	}
+	return out
 }
 
 func (a *app) updateFusionHover() {
@@ -129,7 +129,7 @@ func (a *app) updateFusionHover() {
 		return
 	}
 	bounds := a.fusion.win.Bounds()
-	hit := fusionCapsuleHitBounds(bounds, a.fusion.capsuleW)
+	hit := fusionCapsuleHitBounds(bounds, a.fusion.capsuleW, a.fusion.capsuleH)
 	point := fusionCursor()
 	inHit := point.X >= hit.X && point.X < hit.X+hit.Width && point.Y >= hit.Y && point.Y < hit.Y+hit.Height
 	previous := a.fusion.hover.opacity
