@@ -27,77 +27,48 @@ EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 C = 512
 
 
-def note_emblem(fill, small=False):
-    """Sculpted beamed musical note: bold & legible at every size."""
+def geometric_note(small=False, mono=False):
+    """Flat Bauhaus/Swiss geometric note + acoustic bars."""
+    stem = '#000000' if mono else '#111827'
+    mint = '#000000' if mono else '#18C964'
+    sky = '#000000' if mono else '#0EA5E9'
     if small:
         return (
-            f'<g fill="{fill}" transform="translate(18 14)">'
-            '<ellipse cx="332" cy="692" rx="134" ry="102" transform="rotate(-18 332 692)"/>'
-            '<ellipse cx="660" cy="624" rx="134" ry="102" transform="rotate(-18 660 624)"/>'
-            '<path d="M378 686 L378 308 Q378 264 422 256 L706 202 Q748 194 748 238 '
-            'L748 618 L664 618 L664 338 L462 376 L462 686 Z"/>'
-            '</g>'
+            f'<rect x="466" y="236" width="108" height="432" rx="54" fill="{stem}"/>'
+            f'<path d="M518 236 L752 312 C780 321 791 349 782 377 C773 403 747 416 721 407 L518 342 Z" fill="{stem}"/>'
+            f'<circle cx="416" cy="656" r="158" fill="{mint}"/>'
+            f'<rect x="220" y="408" width="94" height="196" rx="47" fill="{mint}"/>'
+            f'<rect x="708" y="460" width="94" height="258" rx="47" fill="{sky}"/>'
         )
     return (
-        f'<g fill="{fill}" transform="translate(16 14)">'
-        '<ellipse cx="352" cy="672" rx="112" ry="86" transform="rotate(-18 352 672)"/>'
-        '<ellipse cx="642" cy="614" rx="112" ry="86" transform="rotate(-18 642 614)"/>'
-        '<path d="M394 668 L394 318 Q394 276 436 268 L688 220 Q726 213 726 254 '
-        'L726 610 L656 610 L656 346 L464 382 L464 668 Z"/>'
-        '</g>'
-    )
-
-
-def app_tile_defs():
-    return (
-        '<linearGradient id="tileBg" x1="12%" y1="6%" x2="88%" y2="96%">'
-        '<stop offset="0%" stop-color="#142d22"/>'
-        '<stop offset="52%" stop-color="#0b1712"/>'
-        '<stop offset="100%" stop-color="#050908"/>'
-        '</linearGradient>'
-        '<radialGradient id="tileGlow" cx="50%" cy="44%" r="54%">'
-        '<stop offset="0%" stop-color="#1ed760" stop-opacity="0.28"/>'
-        '<stop offset="55%" stop-color="#00c7b7" stop-opacity="0.10"/>'
-        '<stop offset="100%" stop-color="#000000" stop-opacity="0"/>'
-        '</radialGradient>'
-        '<linearGradient id="tileRim" x1="0%" y1="0%" x2="100%" y2="100%">'
-        '<stop offset="0%" stop-color="#ffffff" stop-opacity="0.24"/>'
-        '<stop offset="48%" stop-color="#1ed760" stop-opacity="0.20"/>'
-        '<stop offset="100%" stop-color="#00d2c8" stop-opacity="0.16"/>'
-        '</linearGradient>'
-        '<linearGradient id="noteGrad" x1="16%" y1="88%" x2="86%" y2="10%">'
-        '<stop offset="0%" stop-color="#1ed760"/>'
-        '<stop offset="58%" stop-color="#29ef8e"/>'
-        '<stop offset="100%" stop-color="#00d4e6"/>'
-        '</linearGradient>'
-        '<filter id="noteShadow" x="-16%" y="-16%" width="132%" height="136%">'
-        '<feDropShadow dx="0" dy="14" stdDeviation="20" flood-color="#000000" flood-opacity="0.45"/>'
-        '</filter>'
+        f'<rect x="474" y="256" width="96" height="404" rx="48" fill="{stem}"/>'
+        f'<path d="M522 256 L732 324 C758 332 768 358 760 384 C752 408 728 420 704 412 L522 354 Z" fill="{stem}"/>'
+        f'<circle cx="426" cy="648" r="144" fill="{mint}"/>'
+        f'<rect x="248" y="424" width="80" height="176" rx="40" fill="{mint}"/>'
+        f'<rect x="696" y="472" width="80" height="236" rx="40" fill="{sky}"/>'
     )
 
 
 def app_icon(small=False):
     if small:
         body = (
-            '<rect x="44" y="44" width="936" height="936" rx="236" fill="url(#tileBg)"/>'
-            '<rect x="44" y="44" width="936" height="936" rx="236" fill="url(#tileGlow)"/>'
-            '<rect x="52" y="52" width="920" height="920" rx="228" fill="none" stroke="url(#tileRim)" stroke-width="18"/>'
-            + note_emblem('url(#noteGrad)', small=True)
+            '<rect x="44" y="44" width="936" height="936" rx="236" fill="#F4F6F4"/>'
+            + geometric_note(small=True)
         )
     else:
         body = (
-            '<rect x="64" y="64" width="896" height="896" rx="220" fill="url(#tileBg)"/>'
-            '<rect x="64" y="64" width="896" height="896" rx="220" fill="url(#tileGlow)"/>'
-            '<rect x="70" y="70" width="884" height="884" rx="214" fill="none" stroke="url(#tileRim)" stroke-width="10"/>'
-            f'<g filter="url(#noteShadow)">{note_emblem("url(#noteGrad)", small=False)}</g>'
-            '<path d="M236 168 Q512 138 788 168" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="6" stroke-linecap="round"/>'
+            '<rect x="64" y="64" width="896" height="896" rx="224" fill="#F4F6F4"/>'
+            + geometric_note(small=False)
         )
-    return svg(body, app_tile_defs())
+    return svg(body)
 
 
 def svg(body, defs=''):
+    if defs:
+        return (f'<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">'
+                f'<defs>{defs}</defs>{body}</svg>\n')
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">'
-            f'<defs>{defs}</defs>{body}</svg>\n')
+            f'{body}</svg>\n')
 
 
 def write(path, text):
@@ -123,23 +94,14 @@ def sized(im, px):
 
 def main():
     big, small = app_icon(small=False), app_icon(small=True)
-    # Monochrome tray template: bold note silhouette scaled comfortably into the 1024 canvas.
+    # Monochrome tray template: bold geometric note silhouette scaled for 32 px.
     tray = svg(
-        f'<g transform="translate({C} {C}) scale(1.18) translate(-{C} -{C})">'
-        f'{note_emblem("#000000", small=True)}</g>'
-    )
-    # macOS Icon Composer document supplies its own light/dark tile, so keep only the emblem.
-    dock_defs = (
-        '<linearGradient id="noteGrad" x1="16%" y1="88%" x2="86%" y2="10%">'
-        '<stop offset="0%" stop-color="#1ed760"/>'
-        '<stop offset="58%" stop-color="#29ef8e"/>'
-        '<stop offset="100%" stop-color="#00d4e6"/>'
-        '</linearGradient>'
+        f'<g transform="translate({C} {C}) scale(1.22) translate(-{C} -{C})">'
+        f'{geometric_note(small=True, mono=True)}</g>'
     )
     dock = svg(
         f'<g transform="translate({C} {C}) scale(1.06) translate(-{C} -{C})">'
-        f'{note_emblem("url(#noteGrad)", small=False)}</g>',
-        dock_defs,
+        f'{geometric_note(small=False)}</g>'
     )
     write('resources/icon.svg', big)
     write('resources/icon-small.svg', small)
@@ -165,8 +127,7 @@ def main():
     dock_im.save(os.path.join(icon, 'Assets', 'record.png'))
     doc = {
         'fill-specializations': [
-            {'value': {'solid': 'extended-gray:0.97000,1.00000'}},
-            {'appearance': 'dark', 'value': {'solid': 'extended-gray:0.12000,1.00000'}},
+            {'value': {'solid': 'extended-gray:0.96000,1.00000'}},
         ],
         'groups': [{'layers': [{'image-name': 'record.png', 'name': 'record'}]}],
         'supported-platforms': {'squares': 'shared'},
