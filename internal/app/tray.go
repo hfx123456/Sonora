@@ -3,23 +3,30 @@ package app
 import (
 	_ "embed"
 	"log"
+	"runtime"
 
 	"github.com/egoist/mygo"
 )
 
-// trayIcon is the record, as small as the notification area shows it, and
-// as a template: black and clear, which Windows draws white on a dark
-// taskbar and macOS tints as its menu bar is (tools/icons.py draws it).
+// trayIcon is the full-color badge shown in the Windows notification area;
+// trayTemplate is the black-and-alpha template tinted by macOS's menu bar.
 //
 //go:embed tray.png
 var trayIcon []byte
+
+//go:embed tray-template.png
+var trayTemplate []byte
 
 // newTray puts the app in the notification area, where it stays while its
 // window is closed: a click shows the window, a right click the player's
 // controls and a way to quit. It returns nil where there is none.
 func (a *app) newTray() *mygo.Tray {
 	name := appName
-	t, err := mygo.NewTray(mygo.TrayOptions{ID: "main", Icon: trayIcon, IconIsTemplate: true, ToolTip: name})
+	icon, template := trayIcon, false
+	if runtime.GOOS == "darwin" {
+		icon, template = trayTemplate, true
+	}
+	t, err := mygo.NewTray(mygo.TrayOptions{ID: "main", Icon: icon, IconIsTemplate: template, ToolTip: name})
 	if err != nil {
 		log.Printf("tray: %v", err)
 		return nil

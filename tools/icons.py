@@ -5,9 +5,8 @@ Every icon is rendered from clean vector geometry:
   resources/icon.svg, icon.png   the app's icon, 1024 px (Linux, macOS's .icns)
   resources/icon-small.svg       bold simplified variant for 16-24 px
   resources/icon.ico             Windows: icon-small for 16-24 px, icon above
-  internal/app/tray.png          the notification area's and the menu bar's,
-                                 a template: black and clear, which Windows draws
-                                 white on a dark taskbar and macOS tints itself
+  internal/app/tray.png          Windows notification area full-color badge, 64 px
+  internal/app/tray-template.png macOS menu bar monochrome template, 32 px
   AppIcon.icon                   the Dock's, an Icon Composer document whose tile
                                  is light or dark as macOS is (mygo.json macos.icon)
   docs/icon.png                  the README's and website's, 256 px
@@ -49,15 +48,24 @@ def geometric_note(small=False, mono=False):
     )
 
 
+def tray_template_note():
+    """Clean, well-separated monochrome note silhouette for macOS menu bar."""
+    return (
+        '<rect x="468" y="196" width="112" height="492" rx="56" fill="#000000"/>'
+        '<path d="M524 196 L780 278 C812 288 824 322 814 352 C804 380 774 394 744 384 L524 314 Z" fill="#000000"/>'
+        '<circle cx="404" cy="680" r="176" fill="#000000"/>'
+    )
+
+
 def app_icon(small=False):
     if small:
         body = (
-            '<rect x="44" y="44" width="936" height="936" rx="236" fill="#F4F6F4"/>'
+            '<rect x="44" y="44" width="936" height="936" rx="236" fill="#F4F6F4" stroke="#D7E0DC" stroke-width="18"/>'
             + geometric_note(small=True)
         )
     else:
         body = (
-            '<rect x="64" y="64" width="896" height="896" rx="224" fill="#F4F6F4"/>'
+            '<rect x="64" y="64" width="896" height="896" rx="224" fill="#F4F6F4" stroke="#DFE6E2" stroke-width="8"/>'
             + geometric_note(small=False)
         )
     return svg(body)
@@ -94,11 +102,8 @@ def sized(im, px):
 
 def main():
     big, small = app_icon(small=False), app_icon(small=True)
-    # Monochrome tray template: bold geometric note silhouette scaled for 32 px.
-    tray = svg(
-        f'<g transform="translate({C} {C}) scale(1.22) translate(-{C} -{C})">'
-        f'{geometric_note(small=True, mono=True)}</g>'
-    )
+    # Monochrome template for macOS menu bar: clean single note without overlapping bars.
+    tray = svg(tray_template_note())
     dock = svg(
         f'<g transform="translate({C} {C}) scale(1.06) translate(-{C} -{C})">'
         f'{geometric_note(small=False)}</g>'
@@ -117,10 +122,11 @@ def main():
     frames = [sized(small_im, px) for px in (16, 20, 24)] + [sized(big_im, px) for px in (32, 48, 64, 128, 256)]
     frames[-1].save(os.path.join(ROOT, 'resources/icon.ico'), sizes=[f.size for f in frames], append_images=frames[:-1])
 
-    # A template is black where it shows: only its alpha says where.
+    # Windows tray uses the full-color 64 px badge matching the app icon; macOS uses the monochrome template.
+    sized(small_im, 64).save(os.path.join(ROOT, 'internal/app/tray.png'))
     t = sized(tray_im, 32)
     black = Image.new('L', t.size, 0)
-    Image.merge('RGBA', (black, black, black, t.getchannel('A'))).save(os.path.join(ROOT, 'internal/app/tray.png'))
+    Image.merge('RGBA', (black, black, black, t.getchannel('A'))).save(os.path.join(ROOT, 'internal/app/tray-template.png'))
 
     icon = os.path.join(ROOT, 'AppIcon.icon')
     os.makedirs(os.path.join(icon, 'Assets'), exist_ok=True)
