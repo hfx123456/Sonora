@@ -260,10 +260,14 @@ func (a *app) sidebar(c *ui.Context) {
 		}
 		field.Children(func() {
 			ui.Icon(c, iconSearch).Size(14, 14).TextColor(p.muted)
-			in := ui.TextInputBase(c.Key("search"), &a.query).Bind(&a.searchBox).Grow(1).
+			in := ui.TextInputBase(c.Key("search"), &a.query).Bind(&a.searchBox).Grow(1).MinWidth(0).
 				Placeholder("搜索歌曲、歌手").FontSize(13).Label("搜索")
 			if in.Submitted() && strings.TrimSpace(a.query) != "" {
 				a.search(strings.TrimSpace(a.query))
+			}
+			if a.query != "" && iconButton(c.Key("clear-search"), iconX, 11, p.muted, "清除搜索").Clicked() {
+				a.query = ""
+				a.searchBox.Focus(c)
 			}
 		})
 

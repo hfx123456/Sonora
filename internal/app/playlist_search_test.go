@@ -100,3 +100,25 @@ func TestPlaylistSearchInputAndPlayback(t *testing.T) {
 		t.Fatal("clear did not restore the full playlist")
 	}
 }
+
+// The sidebar search can be cleared with one click instead of deleting each character.
+func TestSidebarSearchClearButton(t *testing.T) {
+	a := newTestApp()
+	tester := ui.NewTester(a.view, 1200, 800)
+	tester.Frame()
+	if err := tester.Click("搜索"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Type("周杰伦")
+	tester.Frame()
+	if a.query != "周杰伦" {
+		t.Fatalf("sidebar query=%q", a.query)
+	}
+	if err := tester.Click("清除搜索"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if a.query != "" {
+		t.Fatalf("clear button did not clear sidebar search: %q", a.query)
+	}
+}
