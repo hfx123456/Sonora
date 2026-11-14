@@ -19,7 +19,7 @@ import (
 // go build, or a copy where it cannot write (still in the disk image), can
 // only point to the releases page.
 
-const releasesPage = "https://github.com/hfx123456/MySpotify/releases"
+const releasesPage = "https://github.com/hfx123456/Sonora/releases"
 
 type updateStage int
 
@@ -209,7 +209,7 @@ func (a *app) aboutRows(c *ui.Context, row func(label, desc string, control func
 	p := a.pal
 	u := &a.upd
 	row(appName+" "+appVersion(), "Windows 和 macOS 上的 Spotify 播放器，和 Spotify 没有关系", func() {
-		ui.Link(c, "GitHub", "https://github.com/hfx123456/MySpotify")
+		ui.Link(c, "GitHub", "https://github.com/hfx123456/Sonora")
 	})
 	switch {
 	case !u.enabled:

@@ -16,7 +16,7 @@
 
 透明桌面歌词和悬浮胶囊可自由拖动、置顶，右键打开相同菜单。锁定后鼠标点击会穿透到后面的窗口，从播放栏菜单或系统托盘可解锁。菜单还提供字号放大/缩小、提前/延后各 0.5 秒、重置、重新查找、导入 LRC / TTML / YRC / QRC / LYS / LYL。点击内部面板的一句可以跳到对应时间。位置、显示方式、字号和译文开关会保存；时间偏移是所有歌曲共用的设置。本地同名 LRC 或内嵌歌词已包含中文时优先使用；本次手工载入的歌词在当前歌曲会话内有效，重新查找会恢复自动检索。
 
-检索与解析使用真实的 [Lyricify Lyrics Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper)，固定源代码提交 `3fc579b029c24a1f54ebb2fd002ee3624c85c7e7`。浮窗和面板由 Sonora 自己绘制，没有复制未公开的 Fusion 界面代码，也不启动 Lyricify Fusion。此功能随 [hfx123456/MySpotify](https://github.com/hfx123456/MySpotify)（Sonora）发布，使用本分支自己的签名更新源；没有因此成为上游的功能。
+检索与解析使用真实的 [Lyricify Lyrics Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper)，固定源代码提交 `3fc579b029c24a1f54ebb2fd002ee3624c85c7e7`。浮窗和面板由 Sonora 自己绘制，没有复制未公开的 Fusion 界面代码，也不启动 Lyricify Fusion。此功能随 [hfx123456/Sonora](https://github.com/hfx123456/Sonora) 发布，使用本仓库自己的签名更新源；没有因此成为上游的功能。
 
 暂停播放时，词岛和透明桌面歌词自动隐藏，继续播放时恢复；内部面板保留显示并停止连续动画。动态模式下，前奏歌名、歌手与作词作曲介绍阶段以每秒 30 帧刷新，避免没有演唱歌词驱动刷新时图标卡顿。菜单「歌词字体设置…」可以分别选择歌词字体和中文字体。
 

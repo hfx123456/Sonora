@@ -10,11 +10,11 @@
 
 **简体中文** · [English](README.en.md)
 
-[![最新版本](https://img.shields.io/github/v/release/hfx123456/MySpotify?style=flat-square&label=release&color=ef3b45)](https://github.com/hfx123456/MySpotify/releases/latest)
+[![最新版本](https://img.shields.io/github/v/release/hfx123456/Sonora?style=flat-square&label=release&color=ef3b45)](https://github.com/hfx123456/Sonora/releases/latest)
 ![Windows x64](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-3a6ea5?style=flat-square)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-c2410c?style=flat-square)](LICENSE)
 
-**[下载定制版](https://github.com/hfx123456/MySpotify/releases/latest)** · [功能详情](FUSION.md) · [更新日志](CHANGELOG.md) · [上游项目](https://github.com/margbug01/MySpotify)
+**[下载 Sonora](https://github.com/hfx123456/Sonora/releases/latest)** · [功能详情](FUSION.md) · [更新日志](CHANGELOG.md) · [上游项目](https://github.com/margbug01/MySpotify)
 
 <img src="docs/screenshots/island.webp" width="960" alt="实际运行截图：屏幕上沿的双语词岛，可在浏览歌曲时继续看词">
 
@@ -99,14 +99,14 @@
 
 ## 下载与开始使用
 
-1. 打开 **[本仓库 Releases](https://github.com/hfx123456/MySpotify/releases/latest)**，下载对应版本的 `Sonora-<版本>-windows-amd64.zip` 或 `sonora-<版本>-windows-amd64.tar.gz`。
+1. 打开 **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**，下载对应版本的 `Sonora-<版本>-windows-amd64.zip` 或 `sonora-<版本>-windows-amd64.tar.gz`。
 2. 完整解压，保留 `Sonora.exe` 旁的 `LICENSE`、`licenses/` 和其他随附文件，再运行 `Sonora.exe`。
 3. 在线 Spotify 登录与播放需要 **Microsoft Edge WebView2 Runtime**。缺少时从[微软官方下载页](https://developer.microsoft.com/microsoft-edge/webview2/)安装。
 4. 听本地歌：侧栏「本地音乐」→「添加文件夹」或「添加歌曲」。开桌面歌词：播放栏最右侧「Fusion 双语歌词」→ 选择模式。
 
 ## Sonora 怎样更新与隔离数据
 
-本分支使用 **`hfx123456/MySpotify` 的发布源和自己的更新签名公钥**。使用本仓库签名构建后，可在「设置 → 关于」检查更新；更新包的签名由程序核验。
+本仓库使用 **`hfx123456/Sonora` 的发布源和自己的更新签名公钥**。使用本仓库签名构建后，可在「设置 → 关于」检查更新；更新包的签名由程序核验。
 
 **Sonora 与上游同名程序互相独立**：拥有独立单实例锁、图标和配置目录，可与原版并行安装运行；首次从原版迁移时会自动平滑复制原有设置、播放记录、缓存和登录态（原目录保留不动）。
 

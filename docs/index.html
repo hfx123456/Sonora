@@ -6,19 +6,19 @@
 <title>Sonora — Spotify 桌面播放器 | Windows/macOS</title>
 <meta name="description" content="Windows/macOS 非官方 Spotify 桌面播放器（Sonora）：原生 MyGo 界面、双语桌面词岛与 MV 播放。免费开源，使用自己的 Spotify 账号。">
 <meta name="theme-color" content="#0d0a09">
-<link rel="canonical" href="https://hfx123456.github.io/MySpotify/">
-<link rel="alternate" hreflang="zh-CN" href="https://hfx123456.github.io/MySpotify/">
-<link rel="alternate" hreflang="en" href="https://hfx123456.github.io/MySpotify/en.html">
-<link rel="alternate" hreflang="x-default" href="https://hfx123456.github.io/MySpotify/">
+<link rel="canonical" href="https://hfx123456.github.io/Sonora/">
+<link rel="alternate" hreflang="zh-CN" href="https://hfx123456.github.io/Sonora/">
+<link rel="alternate" hreflang="en" href="https://hfx123456.github.io/Sonora/en.html">
+<link rel="alternate" hreflang="x-default" href="https://hfx123456.github.io/Sonora/">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://hfx123456.github.io/MySpotify/">
+<meta property="og:url" content="https://hfx123456.github.io/Sonora/">
 <meta property="og:title" content="Sonora — Spotify 桌面播放器 | Windows/macOS">
 <meta property="og:description" content="Windows/macOS 非官方 Spotify 桌面播放器（Sonora）：原生 MyGo 界面、双语桌面词岛与 MV 播放。免费开源，使用自己的 Spotify 账号。">
-<meta property="og:image" content="https://hfx123456.github.io/MySpotify/screenshots/hero.webp">
+<meta property="og:image" content="https://hfx123456.github.io/Sonora/screenshots/hero.webp">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="icon.png">
 <link rel="stylesheet" href="style.css">
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Sonora","url":"https://hfx123456.github.io/MySpotify/","description":"Windows/macOS 非官方 Spotify 桌面播放器（Sonora）：原生 MyGo 界面、双语桌面词岛与 MV 播放。免费开源，使用自己的 Spotify 账号。","operatingSystem":"Windows, macOS","applicationCategory":"MultimediaApplication","downloadUrl":"https://github.com/hfx123456/MySpotify/releases/latest","license":"https://github.com/hfx123456/MySpotify/blob/main/LICENSE","screenshot":"https://hfx123456.github.io/MySpotify/screenshots/hero.webp"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Sonora","url":"https://hfx123456.github.io/Sonora/","description":"Windows/macOS 非官方 Spotify 桌面播放器（Sonora）：原生 MyGo 界面、双语桌面词岛与 MV 播放。免费开源，使用自己的 Spotify 账号。","operatingSystem":"Windows, macOS","applicationCategory":"MultimediaApplication","downloadUrl":"https://github.com/hfx123456/Sonora/releases/latest","license":"https://github.com/hfx123456/Sonora/blob/main/LICENSE","screenshot":"https://hfx123456.github.io/Sonora/screenshots/hero.webp"}</script>
 <script src="site.js" defer></script>
 </head>
 <body>
@@ -29,7 +29,7 @@
   <nav class="links" aria-label="导航">
     <a href="#features">功能</a>
     <a href="#install">下载安装</a>
-    <a href="https://github.com/hfx123456/MySpotify">GitHub</a>
+    <a href="https://github.com/hfx123456/Sonora">GitHub</a>
     <span class="langs">
       <a href="./" hreflang="zh-CN" lang="zh-CN" aria-current="page">中文</a>
       <a href="en.html" hreflang="en" lang="en">EN</a>
@@ -190,7 +190,7 @@
           <li>app 没有经过 Apple 公证，第一次打开会被拦下：到「系统设置 › 隐私与安全性」最下面点「仍要打开」。也可以在终端执行 <code>xattr -dr com.apple.quarantine /Applications/Sonora.app</code>。</li>
           <li>点「登录 Spotify」，在 Spotify 官方登录页里登录。</li>
         </ol>
-        <a class="btn" data-dl="mac" href="https://github.com/hfx123456/MySpotify/releases/latest">下载 .dmg</a>
+        <a class="btn" data-dl="mac" href="https://github.com/hfx123456/Sonora/releases/latest">下载 .dmg</a>
       </div>
       <div>
         <h3>Windows</h3>
@@ -200,7 +200,7 @@
           <li>exe 没有代码签名，可能弹「Windows 已保护你的电脑」：点「更多信息 › 仍要运行」。</li>
           <li>点「登录 Spotify」，在 Spotify 官方登录页里登录。</li>
         </ol>
-        <a class="btn" data-dl="win" href="https://github.com/hfx123456/MySpotify/releases/latest">下载 .zip</a>
+        <a class="btn" data-dl="win" href="https://github.com/hfx123456/Sonora/releases/latest">下载 .zip</a>
       </div>
     </div>
     <p class="note">以后的版本在「设置 › 关于」里点「更新并重启」就行。设置和登录都不跟着程序文件，不会丢。</p>
@@ -223,13 +223,13 @@
       <details><summary>代理怎么设？</summary><p>默认跟随系统代理。也可以在「设置 › 网络 › 代理」填 <code>127.0.0.1:7890</code>、<code>http://…</code>、<code>https://…</code> 或 <code>socks5://…</code>。</p></details>
       <details><summary>关掉窗口怎么还在放歌？怎么真正退出？</summary><p>关窗口只是收进托盘，音乐照常放。要退出：右键托盘图标 › 退出 Sonora。</p></details>
     </div>
-    <p class="note"><a href="https://github.com/hfx123456/MySpotify#配置开发与问题定位">更多问题</a> · <a href="https://github.com/hfx123456/MySpotify/issues">反馈问题</a></p>
+    <p class="note"><a href="https://github.com/hfx123456/Sonora#配置开发与问题定位">更多问题</a> · <a href="https://github.com/hfx123456/Sonora/issues">反馈问题</a></p>
   </section>
 </main>
 
 <footer>
   <p>上游 MySpotify 与相关 MyGo 应用：<a href="https://github.com/margbug01/MySpotify">margbug01/MySpotify</a> · <a href="https://margbug01.github.io/mami/">Mami</a> · <a href="https://margbug01.github.io/ShoesGUI/">MyShoes</a> · <a href="https://margbug01.github.io/Candle/">Candle</a></p>
-  <p><a href="https://github.com/hfx123456/MySpotify">GitHub</a> · <a href="https://github.com/hfx123456/MySpotify/blob/main/LICENSE">AGPL-3.0</a></p>
+  <p><a href="https://github.com/hfx123456/Sonora">GitHub</a> · <a href="https://github.com/hfx123456/Sonora/blob/main/LICENSE">AGPL-3.0</a></p>
   <p>Spotify 是 Spotify AB 的商标，Sonora 与其没有关联。截图里的封面和照片版权归各自的权利人。</p>
 </footer>
 
@@ -239,7 +239,7 @@
     <div><b>Sonora <small data-version></small></b><span data-now>把 Spotify 放进真正的桌面软件</span></div>
   </div>
   <div class="bar-time" aria-hidden="true"><span data-elapsed>0:00</span><div class="bar-track"><i></i></div><span>4:12</span></div>
-  <a class="btn" href="https://github.com/hfx123456/MySpotify/releases/latest">下载</a>
+  <a class="btn" href="https://github.com/hfx123456/Sonora/releases/latest">下载</a>
 </aside>
 </body>
 </html>

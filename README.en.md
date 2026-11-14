@@ -10,11 +10,11 @@ An independent fork of MySpotify with its own identity, custom icon and isolated
 
 [简体中文](README.md) · **English**
 
-[![Latest release](https://img.shields.io/github/v/release/hfx123456/MySpotify?style=flat-square&label=release&color=ef3b45)](https://github.com/hfx123456/MySpotify/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/hfx123456/Sonora?style=flat-square&label=release&color=ef3b45)](https://github.com/hfx123456/Sonora/releases/latest)
 ![Windows x64](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-3a6ea5?style=flat-square)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-c2410c?style=flat-square)](LICENSE)
 
-**[Download this fork](https://github.com/hfx123456/MySpotify/releases/latest)** · [Lyrics guide (Chinese)](FUSION.md) · [Changelog](CHANGELOG.md) · [Upstream](https://github.com/margbug01/MySpotify)
+**[Download Sonora](https://github.com/hfx123456/Sonora/releases/latest)** · [Lyrics guide (Chinese)](FUSION.md) · [Changelog](CHANGELOG.md) · [Upstream](https://github.com/margbug01/MySpotify)
 
 <img src="docs/screenshots/island.webp" width="960" alt="Actual screenshot: bilingual lyric island at the screen's top edge">
 
@@ -95,12 +95,12 @@ Local music does not transfer through Spotify Connect, and protected Apple Music
 
 ## Install and update
 
-1. Download `Sonora-<version>-windows-amd64.zip` or `sonora-<version>-windows-amd64.tar.gz` from **[this repository's Releases](https://github.com/hfx123456/MySpotify/releases/latest)**.
+1. Download `Sonora-<version>-windows-amd64.zip` or `sonora-<version>-windows-amd64.tar.gz` from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**.
 2. Extract the complete archive, retain the accompanying license files and resources alongside `Sonora.exe`, and run `Sonora.exe`.
 3. Online Spotify sign-in and playback need [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
 4. Use **本地音乐** to add local songs, or **Fusion 双语歌词** in the player bar to enable an overlay.
 
-Signed builds use **hfx123456/MySpotify** as their update source and verify updates using this fork's public key. Check for updates under **设置 → 关于**.
+Signed builds use **hfx123456/Sonora** as their update source and verify updates using this repo's public key. Check for updates under **设置 → 关于**.
 
 **Sonora is isolated from upstream MySpotify**: it uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and profile directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), so both apps can coexist side by side. On first launch it automatically migrates existing settings, playback state, caches and sealed login cookies from `Vinyl` without modifying the legacy folder.
 
