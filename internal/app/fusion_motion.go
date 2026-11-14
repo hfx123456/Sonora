@@ -183,7 +183,7 @@ func (a *app) fusionAnimatedCaption(c *ui.Context, line lyrics.Line, translation
 	springPos := fusionSpringEval(phase, 0.34)
 	height := originalSize * 1.5
 	if translation != "" {
-		height += translationSize*1.5 + 6*a.fusionScale()
+		height += translationSize*1.65 + 6*a.fusionScale()
 	}
 	ui.Box(c.Key("caption-motion")).Height(height).AlignSelf(ui.Stretch).Clip().Children(func() {
 		draw := func(key string, caption fusionCaption, opacity, offset, scale float32) {

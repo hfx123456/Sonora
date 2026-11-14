@@ -450,6 +450,9 @@ func (a *app) fusionOverlay(c *ui.Context) {
 	}
 	a.fusionTick(c, true)
 	line, translation := a.fusionCurrent()
+	if capsule {
+		a.resizeFusion()
+	}
 	scale := a.fusionScale()
 	root := ui.Box(c.Key("floating-lyrics")).Fill().Font(a.fusionFont())
 	if !capsule {
@@ -529,7 +532,7 @@ func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, 
 	maxPillH := max(40*scale, winH-2*scale)
 	targetPillH := min(maxPillH, 46*scale)
 	if translation != "" {
-		targetPillH = min(maxPillH, 72*scale)
+		targetPillH = min(maxPillH, 76*scale)
 	}
 	coverMaxH := max(24*scale, targetPillH-18*scale)
 	targetPillW, minPillW, fitTextW := a.fusionIslandSizing(line, translation, scale, coverMaxH, targetCapW)
@@ -562,7 +565,7 @@ func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, 
 	})
 	stage.Children(func() {
 		pill := ui.Row(c.Key("island-pill")).Absolute().Top(0).Left(pillLeft).Width(pillW).Height(pillH).
-			Padding(2*scale, 16*scale, 4*scale, 16*scale).Gap(12 * scale).AlignItems(ui.Center).
+			Padding(2*scale, 16*scale, 6*scale, 16*scale).Gap(12 * scale).AlignItems(ui.Center).
 			DragWindow().ContextMenu(a.fusionMenu)
 		pill.Children(func() {
 			a.fusionEmblem(c, 26*scale)
@@ -601,8 +604,6 @@ func (a *app) fusionEmblem(c *ui.Context, size float32) {
 			}
 			painter.Fill(ui.Rect{X: bounds.X + bar.x*unit, Y: bounds.Y + bar.y*unit, W: bar.w * unit, H: bar.h * unit}, green.Alpha(bar.alpha), 2*unit)
 		}
-	}).Children(func() {
-		ui.Icon(c, iconNote).Absolute().Left(size*5/32).Top(size*8/32).Size(size*15/32, size*16/32).TextColor(white)
 	})
 }
 
@@ -652,7 +653,7 @@ func (a *app) fusionSingleLine(c *ui.Context, line lyrics.Line, position time.Du
 		}
 		layout := cache.shape(line.Text, a.fusionFontForText(line.Text), size, maxWidth)
 		width, height := layout.Size()
-		origin, y := bounds.X+(bounds.W-width)/2, bounds.Y+(bounds.H-height)/2+2
+		origin, y := bounds.X+(bounds.W-width)/2, bounds.Y+(bounds.H-height)/2
 		words := line.Words
 		if len(words) == 0 && !line.Unsynced && !lyrics.IsCredit(line.Text) && line.End > line.At {
 			words = lyrics.SpreadWords(line.Text, line.At, line.End)

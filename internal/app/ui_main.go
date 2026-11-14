@@ -118,6 +118,10 @@ func (a *app) shortcuts(c *ui.Context) {
 			a.playlistSearchBox.Focus(c)
 			return
 		}
+		if a.route.page == pageLocal {
+			a.localSearchBox.Focus(c)
+			return
+		}
 		a.searchBox.Focus(c)
 	})
 	if a.nowPlaying {

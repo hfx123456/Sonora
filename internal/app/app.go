@@ -78,6 +78,7 @@ type app struct {
 	playlistCacheRoot                   string
 	playlistQueries                     map[string]string
 	playlistHeaderHeights               map[string]float32
+	localHeaderHeight                   float32
 	playlistFilterCache                 trackFilterCache
 	localFilterCache                    trackFilterCache
 	playlistSync                        playlistSyncState

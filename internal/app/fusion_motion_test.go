@@ -74,6 +74,24 @@ func TestFusionIslandTranslationSpace(t *testing.T) {
 	}
 }
 
+// Single-line Chinese songs must expand the capsule window height during long interludes/outros when track + artist two-line caption appears.
+func TestFusionChineseInterludeWindowHeight(t *testing.T) {
+	a := newTestApp()
+	a.settings.FusionMode = "capsule"
+	a.pl.Cue([]spotify.Track{{ID: "interlude", Name: "回音(《天师钟馗》电视剧片尾曲)", Artists: []spotify.Artist{{Name: "周定纬"}}, Duration: 151327}})
+	a.fusion.lines = []lyrics.Line{
+		{At: 24 * time.Second, End: 28 * time.Second, Text: "错过的恋情飘零任风去打听"},
+		{At: 123 * time.Second, End: 128 * time.Second, Text: "等爱情我永无止境"},
+	}
+	a.pl.Hold(25 * time.Second)
+	_, singingH := a.fusionWindowSize()
+	a.pl.Hold(132 * time.Second)
+	_, outroH := a.fusionWindowSize()
+	if outroH <= singingH {
+		t.Fatalf("outro two-line caption did not expand capsule height: singing=%d outro=%d", singingH, outroH)
+	}
+}
+
 // Changing island width leaves font scale and playback intact, and resetting restores the compact size.
 func TestFusionIslandWidthControls(t *testing.T) {
 	a := newTestApp()

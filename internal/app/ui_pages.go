@@ -490,12 +490,14 @@ func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, head
 		if a.rowDoubleClicked(c, row, playing) && tr.Playable() {
 			if pid != "" && strings.TrimSpace(a.playlistQueries[pid]) != "" {
 				a.playPlaylistMatch(pid, *tr)
+			} else if a.route.page == pageLocal && strings.TrimSpace(a.localQuery) != "" {
+				a.playLocalMatch(*tr)
 			} else {
 				a.playFrom(a.routeItem(), tracks, i)
 			}
 		}
 	}).Grow(1).Padding(top+pageGap, pagePad-12, bottom+32, pagePad-12).ScrollbarInsets(top, 0, bottom, 0)
-	if a.route.page == pagePlaylist {
+	if a.route.page == pagePlaylist || a.route.page == pageLocal {
 		list.TrackScroll(&a.pageScroll)
 	}
 }

@@ -70,3 +70,42 @@ func TestLocalSearchChineseVariants(t *testing.T) {
 		t.Fatalf("simplified local search failed: match=%v, unmatched=%v", tt.HasText("愛與夢"), tt.HasText("晴天"))
 	}
 }
+
+func TestLocalSearchCapsuleAndFullQueuePlayback(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.profile, a.localLoaded = nil, true
+	a.localTracks = []spotify.Track{
+		{ID: "local:1", LocalPath: "a.mp3", Name: "第一首", Artists: []spotify.Artist{{Name: "歌手A"}}, Duration: 180000},
+		{ID: "local:2", LocalPath: "b.mp3", Name: "回音(《天师钟馗》电视剧片尾曲)", Artists: []spotify.Artist{{Name: "周定纬"}}, Album: spotify.Album{Name: "钟馗传说 电视原声带"}, Duration: 151000},
+		{ID: "local:3", LocalPath: "c.mp3", Name: "第三首", Artists: []spotify.Artist{{Name: "歌手C"}}, Duration: 180000},
+	}
+	a.route = route{page: pageLocal}
+	tester := ui.NewTester(a.view, 1200, 800)
+	tester.Frame()
+	if err := tester.Click("筛选本地音乐"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Type("回音")
+	tester.Frame()
+	tester.Frame()
+	if a.localQuery != "回音" || !tester.HasText("找到 1 首") {
+		t.Fatalf("local search query=%q", a.localQuery)
+	}
+	for range 2 {
+		if err := tester.Click("回音(《天师钟馗》电视剧片尾曲)"); err != nil {
+			t.Fatal(err)
+		}
+		tester.Frame()
+	}
+	if a.pl.Current() == nil || a.pl.Current().ID != "local:2" || len(a.pl.Queue()) != 3 {
+		t.Fatalf("filtered local playback did not preserve full local queue: cur=%v len=%d", a.pl.Current(), len(a.pl.Queue()))
+	}
+	if err := tester.Click("清除搜索"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if a.localQuery != "" {
+		t.Fatal("clear button did not clear local search")
+	}
+}
