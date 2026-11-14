@@ -526,7 +526,7 @@ func (a *app) profileName() string {
 // dropdown to open the settings or sign out, or a way to sign in.
 func (a *app) accountRow(c *ui.Context) {
 	p := a.pal
-	b := ui.ButtonBase(c.Key("account")).Height(40).PaddingX(8).Gap(10).Radius(10).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false)
+	b := ui.ButtonBase(c.Key("account")).Grow(1).Shrink(1).MinWidth(0).Height(40).PaddingX(8).Gap(10).Radius(10).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false)
 	if b.Hovered() || a.accountOpen && a.profile != nil {
 		b.Background(p.hover)
 	}
@@ -565,7 +565,7 @@ func (a *app) accountMenu(c *ui.Context, row ui.Element) {
 			Role(ui.RoleMenu).FocusGroup(ui.Vertical).Label("账户").TransformOrigin(0.5, 1).
 			Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.96, Y: 4}, Exit: &ui.Motion{Scale: 0.98}})
 		if w := row.Bounds().W; w > 0 {
-			panel.Width(w)
+			panel.Width(max(w, 184))
 		}
 		shortcut := "Ctrl+,"
 		if runtime.GOOS == "darwin" {
@@ -578,6 +578,14 @@ func (a *app) accountMenu(c *ui.Context, row ui.Element) {
 		if a.menuItem(c, iconSettings, "设置…", shortcut).Clicked() {
 			a.accountOpen = false
 			a.openSettings()
+		}
+		modeIcon, modeLabel := iconMoon, "黑夜模式"
+		if a.pal.dark {
+			modeIcon, modeLabel = iconSun, "浅色模式"
+		}
+		if a.menuItem(c, modeIcon, modeLabel, "").Clicked() {
+			a.accountOpen = false
+			a.toggleAppearance()
 		}
 		// A box shorter than a device pixel snaps to none of them at a
 		// fractional scale; a Divider keeps one at every scale.

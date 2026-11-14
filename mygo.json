@@ -2,7 +2,7 @@
   "name": "Sonora",
   "identifier": "dev.hfx123456.sonora",
   "slug": "sonora",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "out": "build",
   "resources": ["LICENSE", "licenses", "scripts/install-linux-webview.sh"],
   "macos": { "icon": "AppIcon.icon" },

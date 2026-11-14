@@ -23,6 +23,17 @@ func (a *app) changed() {
 	a.redraw()
 }
 
+// toggleAppearance switches between dark and light mode, keeps the choice, and
+// applies it across the windows.
+func (a *app) toggleAppearance() {
+	if a.pal.dark {
+		a.settings.Appearance = "light"
+	} else {
+		a.settings.Appearance = "dark"
+	}
+	a.changed()
+}
+
 // settingsPage is the settings, a page of the main window like the others.
 // The theme and the palette are the window's, which view set.
 func (a *app) settingsPage(c *ui.Context) {

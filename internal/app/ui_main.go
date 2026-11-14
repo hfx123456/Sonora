@@ -30,6 +30,9 @@ func (a *app) view(c *ui.Context) {
 	a.pal = paletteFor(&t)
 	p := a.pal
 	t.Accent, t.AccentText = p.accent, p.onAccent
+	t.AccentHover = p.accent.Mix(ui.RGB(255, 255, 255), 0.14)
+	t.AccentPressed = p.accent.Mix(ui.RGB(0, 0, 0), 0.14)
+	t.Focus = p.accent.Alpha(0.55)
 	t.Selection = p.accent.Alpha(0.3)
 	t.Font = appFont
 	c.SetTheme(&t)
@@ -276,8 +279,34 @@ func (a *app) sidebar(c *ui.Context) {
 		})
 
 		a.updateBadge(c)
-		a.accountRow(c)
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			a.accountRow(c)
+			a.appearanceButton(c)
+		})
 	})
+}
+
+// appearanceButton toggles between dark and light mode from the sidebar footer.
+func (a *app) appearanceButton(c *ui.Context) {
+	p := a.pal
+	icon, label, tip := iconMoon, "黑夜模式", "切换到黑夜模式"
+	if p.dark {
+		icon, label, tip = iconSun, "浅色模式", "切换到浅色模式"
+	}
+	b := ui.ButtonBase(c.Key("appearance-toggle")).Size(36, 36).Shrink(0).Radius(9).Center().FocusRing(false).Label(label).Tooltip(tip)
+	bg := ui.Transparent
+	fg := p.muted
+	if b.Hovered() {
+		bg = p.hover
+		fg = p.text
+	}
+	b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
+	b.Children(func() {
+		ui.Icon(c, icon).Size(17, 17).TextColor(fg)
+	})
+	if b.Clicked() {
+		a.toggleAppearance()
+	}
 }
 
 func (a *app) navItem(c *ui.Context, icon *ui.SVG, label string, r route) {

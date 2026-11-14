@@ -125,14 +125,18 @@ func (s settings) save() error {
 	return os.WriteFile(path, b, 0o600)
 }
 
+var setThemeSource = func(s mygo.ThemeSource) {
+	mygo.Theme.SetSource(s)
+}
+
 // applyAppearance makes the windows light, dark, or follow the system.
 func (s settings) applyAppearance() {
 	switch s.Appearance {
 	case "light":
-		mygo.Theme.SetSource(mygo.ThemeLight)
+		setThemeSource(mygo.ThemeLight)
 	case "dark":
-		mygo.Theme.SetSource(mygo.ThemeDark)
+		setThemeSource(mygo.ThemeDark)
 	default:
-		mygo.Theme.SetSource(mygo.ThemeSystem)
+		setThemeSource(mygo.ThemeSystem)
 	}
 }
