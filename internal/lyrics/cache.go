@@ -48,6 +48,7 @@ func SaveCached(dir, key, source string, lines []Line) {
 	previous := loadCachedUnlocked(dir, key)
 	quality := func(items []Line) int {
 		score := 0
+		hasTranslation := false
 		for _, line := range items {
 			if !line.Unsynced {
 				score = max(score, 1)
@@ -55,6 +56,12 @@ func SaveCached(dir, key, source string, lines []Line) {
 			if line.Timed {
 				score = max(score, 2)
 			}
+			if line.Translation != "" {
+				hasTranslation = true
+			}
+		}
+		if hasTranslation {
+			score += 4
 		}
 		return score
 	}

@@ -43,7 +43,29 @@ type fusionState struct {
 	measure         fusionLineMeasure
 }
 
-var fetchFusion = fusion.Fetch
+var (
+	fetchFusion        = fusion.Fetch
+	neteaseTranslation = spotify.NetEaseTranslation
+)
+
+func hasFusionTranslation(lines []lyrics.Line) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line.Translation) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func fusionCacheUsable(cached lyrics.Cached) bool {
+	if len(cached.Lines) == 0 || cached.Lines[0].Unsynced {
+		return false
+	}
+	if cached.Source != "" && cached.Source != "播放器歌词" {
+		return true
+	}
+	return fusionChinese(cached.Lines) || hasFusionTranslation(cached.Lines)
+}
 
 const fusionWaitingNotes = "♪ ♫ ♪"
 
@@ -137,7 +159,7 @@ func (a *app) ensureFusion(refresh bool) {
 		defer cancel()
 		if !refresh && !copyTrack.Local() {
 			cached := lyrics.LoadCached(player.LyricsCacheDir, copyTrack.URI())
-			if len(cached.Lines) > 0 {
+			if fusionCacheUsable(cached) {
 				a.post(func() {
 					a.receiveFusion(key, generation, fusion.Result{Lines: cached.Lines, Source: cached.Source}, nil)
 				})
@@ -152,9 +174,21 @@ func (a *app) ensureFusion(refresh bool) {
 		if copyTrack.Local() {
 			input.Raw = localmusic.Lyrics(copyTrack)
 		}
-		result, err := fetchFusion(ctx, filepath.Join(dir, "fusion"), input, refresh)
+		result, err := fetchFusionWithTranslationFallback(ctx, filepath.Join(dir, "fusion"), copyTrack, input, refresh)
 		a.post(func() { a.receiveFusion(key, generation, result, err) })
 	}()
+}
+
+func fetchFusionWithTranslationFallback(ctx context.Context, cacheDir string, track spotify.Track, input fusion.Request, refresh bool) (fusion.Result, error) {
+	result, err := fetchFusion(ctx, cacheDir, input, refresh)
+	if !track.Local() && ctx.Err() == nil && (err != nil || len(result.Lines) == 0 || (!fusionChinese(result.Lines) && !hasFusionTranslation(result.Lines))) {
+		if synced, tr, netErr := neteaseTranslation(track); netErr == nil && synced != "" && tr != "" {
+			if built := lyrics.Build(synced, tr, ""); hasFusionTranslation(built) {
+				return fusion.Result{Source: "网易云 · 翻译", Lines: built}, nil
+			}
+		}
+	}
+	return result, err
 }
 
 func (a *app) receiveFusion(key string, generation int, result fusion.Result, err error) {
@@ -170,7 +204,7 @@ func (a *app) receiveFusion(key string, generation int, result fusion.Result, er
 			return
 		}
 	}
-	if len(result.Lines) > 0 && !a.pl.Current().Local() {
+	if len(result.Lines) > 0 && !a.pl.Current().Local() && result.Source != "播放器歌词" {
 		lyrics.SaveCached(player.LyricsCacheDir, a.pl.Current().URI(), result.Source, result.Lines)
 	}
 	state.lines, state.source = prepareFusionLines(result.Lines), result.Source

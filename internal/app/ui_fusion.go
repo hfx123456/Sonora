@@ -339,7 +339,7 @@ func (a *app) fusionWindowSize() (int, int) {
 	scale := a.fusionScale()
 	width, height := float32(1040), float32(156)
 	if a.settings.FusionMode == "capsule" {
-		width, height = float32(a.fusionIslandWidth()), 76
+		width, height = float32(a.fusionIslandWidth()), 84
 		_, detail := a.fusionCurrent()
 		secondRow := detail != ""
 		chinese := fusionChinese(a.fusion.lines)
@@ -516,7 +516,7 @@ func (a *app) fusionIslandSizing(line lyrics.Line, translation string, scale, co
 	}
 	minPillW = min(targetCapW, chromeW+84*scale)
 	textW := a.fusionMeasureWidth(line, translation, 23*scale, 14*scale)
-	targetPillW = min(targetCapW, max(minPillW, chromeW+textW+16*scale))
+	targetPillW = min(targetCapW, max(minPillW, chromeW+textW+22*scale))
 	fitTextW = max(1, targetCapW-chromeW-10*scale)
 	return targetPillW, minPillW, fitTextW
 }
@@ -525,13 +525,13 @@ func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, 
 	winW, winH := c.Size()
 	inset := 20 * scale
 	maxPillClampW := max(160*scale, winW-inset*2)
-	targetCapW := max(160*scale, maxPillClampW-16*scale)
+	targetCapW := max(160*scale, maxPillClampW-18*scale)
 	maxPillH := max(40*scale, winH-2*scale)
 	targetPillH := min(maxPillH, 46*scale)
 	if translation != "" {
-		targetPillH = min(maxPillH, 65*scale)
+		targetPillH = min(maxPillH, 72*scale)
 	}
-	coverMaxH := max(24*scale, targetPillH-16*scale)
+	coverMaxH := max(24*scale, targetPillH-18*scale)
 	targetPillW, minPillW, fitTextW := a.fusionIslandSizing(line, translation, scale, coverMaxH, targetCapW)
 
 	still := a.settings.FusionStatic || c.Preferences().ReduceMotion
@@ -562,7 +562,7 @@ func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, 
 	})
 	stage.Children(func() {
 		pill := ui.Row(c.Key("island-pill")).Absolute().Top(0).Left(pillLeft).Width(pillW).Height(pillH).
-			Padding(0, 16*scale, 0, 16*scale).Gap(12 * scale).AlignItems(ui.Center).
+			Padding(2*scale, 16*scale, 4*scale, 16*scale).Gap(12 * scale).AlignItems(ui.Center).
 			DragWindow().ContextMenu(a.fusionMenu)
 		pill.Children(func() {
 			a.fusionEmblem(c, 26*scale)
