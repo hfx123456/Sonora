@@ -174,3 +174,34 @@ func TestLyricsSourcesInTurn(t *testing.T) {
 		}
 	}
 }
+
+// AdoptLyrics replaces the current track's lyrics and guards against a slower
+// background lookup overwriting them, while resetting on the next track.
+func TestAdoptLyricsGuardsLateCueResult(t *testing.T) {
+	old := lyricsOf
+	defer func() { lyricsOf = old }()
+	started, release := make(chan struct{}), make(chan struct{})
+	lyricsOf = func(tr spotify.Track) []lyrics.Line {
+		if tr.ID == "one" {
+			close(started)
+			<-release
+		}
+		return []lyrics.Line{{Text: "spotify-" + tr.ID, At: time.Second}}
+	}
+	ch := make(chan func(), 16)
+	p := New(func(fn func()) { ch <- fn })
+	p.Cue([]spotify.Track{{ID: "one"}, {ID: "two"}})
+	p.cue(0, false, 0)
+	<-started
+	p.AdoptLyrics("spotify:track:one", []lyrics.Line{{Text: "fusion-one", Translation: "翻译", At: time.Second}})
+	close(release)
+	next(t, ch) // cue's lyricsOf result arrives late
+	if lines, loaded := p.Lyrics(); !loaded || len(lines) != 1 || lines[0].Translation != "翻译" {
+		t.Fatalf("late lookup overwrote adopted lyrics: loaded=%v lines=%+v", loaded, lines)
+	}
+	p.cue(1, false, 0)
+	next(t, ch)
+	if lines, loaded := p.Lyrics(); !loaded || len(lines) != 1 || lines[0].Text != "spotify-two" {
+		t.Fatalf("next track kept previous override: loaded=%v lines=%+v", loaded, lines)
+	}
+}

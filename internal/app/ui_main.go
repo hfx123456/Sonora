@@ -240,7 +240,6 @@ func (a *app) goForward() {
 }
 
 func (a *app) sidebar(c *ui.Context) {
-	p := a.pal
 	// Under the window buttons where they sit over the sidebar, as the
 	// traffic lights do; elsewhere, as close to the top as to the sides.
 	top := float32(14)
@@ -251,25 +250,14 @@ func (a *app) sidebar(c *ui.Context) {
 	// the title bar it reaches up into would.
 	ui.Column(c).Fill().Padding(top, 14, 14, 14).Gap(4).DragWindow().Children(func() {
 		// The search field.
-		field := ui.Row(c).Height(32).PaddingX(10).Gap(7).Radius(9).AlignItems(ui.Center).Margin(0, 0, 14, 0)
-		focused := c.Focused(a.searchBox)
-		if focused {
-			field.Background(p.bg).Shadow(0, 0, 0, 3, p.accent.Alpha(0.25)).Border(1, p.accent.Alpha(0.6))
-		} else {
-			field.Background(p.hover).Border(1, p.hairline)
+		s := a.searchField(c, "search", "clear-search", &a.searchBox, &a.query, "搜索", "搜索歌曲、歌手")
+		s.row.Margin(0, 0, 14, 0)
+		if s.submitted && strings.TrimSpace(a.query) != "" {
+			a.search(strings.TrimSpace(a.query))
 		}
-		field.Children(func() {
-			ui.Icon(c, iconSearch).Size(14, 14).TextColor(p.muted)
-			in := ui.TextInputBase(c.Key("search"), &a.query).Bind(&a.searchBox).Grow(1).MinWidth(0).
-				Placeholder("搜索歌曲、歌手").FontSize(13).Label("搜索")
-			if in.Submitted() && strings.TrimSpace(a.query) != "" {
-				a.search(strings.TrimSpace(a.query))
-			}
-			if a.query != "" && iconButton(c.Key("clear-search"), iconX, 11, p.muted, "清除搜索").Clicked() {
-				a.query = ""
-				a.searchBox.Focus(c)
-			}
-		})
+		if s.cleared {
+			a.searchBox.Focus(c)
+		}
 
 		ui.Scroll(c.Key("nav")).TrackScroll(&a.navScroll).Grow(1).Margin(0, -6).Padding(0, 6).Gap(4).Children(func() {
 			a.navItem(c, iconHome, "为你推荐", route{page: pageHome})

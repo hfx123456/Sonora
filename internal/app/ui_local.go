@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -174,24 +173,13 @@ func (a *app) localMusicPage(c *ui.Context) {
 
 func (a *app) localSearch(c *ui.Context, tracks []spotify.Track) {
 	query := a.localQuery
-	ui.Row(c.Key("local-search")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 18, 0).Children(func() {
-		field := ui.Row(c.Key("local-search-capsule")).Width(300).Shrink(1).Height(36).PaddingX(12).Gap(8).AlignItems(ui.Center).Radius(18)
-		field.Children(func() {
-			ui.Icon(c, iconSearch).Size(14, 14).TextColor(a.pal.muted)
-			if ui.TextInputBase(c.Key("local-filter"), &query).Bind(&a.localSearchBox).Label("筛选本地音乐").Placeholder("搜索本地音乐").FontSize(12.5).Grow(1).MinWidth(0).Changed() {
-				a.localQuery = query
-				a.trackList.ScrollTo(0, ui.Start)
-			}
-			if query != "" && iconButton(c.Key("clear-local-search"), iconX, 11, a.pal.muted, "清除搜索").Clicked() {
-				a.localQuery = ""
-				a.trackList.ScrollTo(0, ui.Start)
-			}
-		})
-		background, edge := a.pal.hover, ui.Transparent
-		if field.FocusWithin() {
-			background, edge = a.pal.bg, a.pal.accent.Alpha(.35)
+	ui.Row(c.Key("local-search")).Height(54).AlignItems(ui.Center).Gap(12).Padding(0, 0, 18, 0).Children(func() {
+		s := a.searchField(c.Key("local-search-capsule"), "local-filter", "clear-local-search", &a.localSearchBox, &query, "筛选本地音乐", "搜索本地音乐")
+		s.row.Width(300).Shrink(1)
+		if s.changed || s.cleared {
+			a.localQuery = query
+			a.trackList.ScrollTo(0, ui.Start)
 		}
-		field.Background(field.AnimateColor("search-bg", background, ui.Animation{Duration: 120 * time.Millisecond})).Border(1, edge)
 		if query != "" {
 			ui.Text(c, fmt.Sprintf("找到 %d 首", len(tracks))).FontSize(12).TextColor(a.pal.muted)
 		}

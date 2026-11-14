@@ -58,3 +58,36 @@ func TestFusionNetEaseTranslationFallback(t *testing.T) {
 		t.Fatalf("NetEase translation fallback failed: result=%+v err=%v", result, err)
 	}
 }
+
+// Bilingual Fusion lyrics must update the player's in-memory lyrics so Now Playing stays in sync with the island.
+func TestFusionSyncsBilingualLyricsToPlayer(t *testing.T) {
+	application := newTestApp()
+	application.pl.Cue([]spotify.Track{{ID: "kd", Name: "Korean Dream"}})
+	application.pl.SetLyrics([]lyrics.Line{{Text: "Nae mamdaero hallaeyo", At: time.Second, End: 5 * time.Second}})
+	key := fusionTrackKey(application.pl.Current())
+	application.fusion.key, application.fusion.generation = key, 1
+	bilingual := []lyrics.Line{{Text: "내 맘대로 할래요", Translation: "随我心意去做", At: time.Second, End: 5 * time.Second}}
+	application.receiveFusion(key, 1, fusion.Result{Source: "QQ 音乐 · Lyricify", Lines: bilingual}, nil)
+	got, loaded := application.pl.Lyrics()
+	if !loaded || len(got) != 1 || got[0].Text != "내 맘대로 할래요" || got[0].Translation != "随我心意去做" || len(got[0].Words) != 0 {
+		t.Fatalf("Now Playing lyrics did not sync with Fusion: loaded=%v got=%+v", loaded, got)
+	}
+}
+
+func TestShouldSyncFusionLyricsToPlayerGuards(t *testing.T) {
+	translated := []lyrics.Line{{Text: "hello", Translation: "你好", At: time.Second}}
+	untranslated := []lyrics.Line{{Text: "hello", At: time.Second}}
+	unsynced := []lyrics.Line{{Text: "hello", Unsynced: true}}
+	if shouldSyncFusionLyricsToPlayer(translated, true, "LRCLIB", untranslated) {
+		t.Fatal("untranslated Fusion result downgraded translated player lyrics")
+	}
+	if shouldSyncFusionLyricsToPlayer(untranslated, true, "LRCLIB", unsynced) {
+		t.Fatal("unsynced Fusion result downgraded synced player lyrics")
+	}
+	if shouldSyncFusionLyricsToPlayer(untranslated, true, "QQ 音乐", []lyrics.Line{{Text: "纯音乐，请欣赏", At: time.Second}}) {
+		t.Fatal("instrumental notice overwrote real lyrics")
+	}
+	if !shouldSyncFusionLyricsToPlayer(unsynced, true, "QQ 音乐", untranslated) {
+		t.Fatal("synced Fusion result did not upgrade unsynced player lyrics")
+	}
+}

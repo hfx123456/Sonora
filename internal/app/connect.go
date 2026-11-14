@@ -381,7 +381,13 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 		state.playSent = 0
 		if state.ref != nil {
 			state.ref = nil
-			a.pl.StopConnect()
+			// Losing the Connect WebSocket (e.g. proxy node switch) must not
+			// pause or reset local playback; re-register once back online.
+			if !a.pl.IsRemote() {
+				if track := a.pl.Current(); track != nil {
+					state.pendingPlay = track.URI()
+				}
+			}
 		}
 	case "cluster":
 		cluster, err := spotify.ParseConnectCluster(event.Data)

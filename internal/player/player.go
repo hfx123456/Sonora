@@ -122,8 +122,9 @@ type Player struct {
 	offline        int // the times in a row the network was down, likewise
 	networkRetries int // reloads at position after a network error with network up
 
-	lyrics       []lyrics.Line
-	lyricsLoaded bool
+	lyrics         []lyrics.Line
+	lyricsLoaded   bool
+	lyricsOverride bool
 	// ahead are the lyrics of the track after this one, fetched as this
 	// one plays: LRCLIB, busy, can take seconds.
 	ahead struct {
@@ -875,6 +876,17 @@ func (p *Player) Repeat() RepeatMode { return p.repeat }
 // Lyrics returns the current track's lyrics, and whether they have loaded.
 func (p *Player) Lyrics() ([]lyrics.Line, bool) { return p.lyrics, p.lyricsLoaded }
 
+// AdoptLyrics replaces the current track's in-memory lyrics when uri matches,
+// preventing an earlier background lookup from overwriting them later.
+func (p *Player) AdoptLyrics(uri string, lines []lyrics.Line) {
+	if p.track == nil || p.track.URI() != uri || len(lines) == 0 {
+		return
+	}
+	p.lyrics = append([]lyrics.Line(nil), lines...)
+	p.lyricsLoaded = true
+	p.lyricsOverride = true
+}
+
 // PlayOrder returns the queue's indices in play order, and where the
 // current track is among them, -1 for none.
 func (p *Player) PlayOrder() ([]int, int) { return p.order, p.at }
@@ -1468,7 +1480,7 @@ func (p *Player) cue(at int, play bool, from time.Duration) (int, spotify.Track)
 	p.loading, p.playing, p.err = false, play, ""
 	p.media = nil
 	p.awaiting, p.waiting = false, false
-	p.lyrics, p.lyricsLoaded = nil, false
+	p.lyrics, p.lyricsLoaded, p.lyricsOverride = nil, false, false
 	p.pending = from
 	p.cover = nil
 	p.announce(&t, nil)
@@ -1498,8 +1510,10 @@ func (p *Player) cue(at int, play bool, from time.Duration) (int, spotify.Track)
 		lines := lyricsOf(t)
 		p.post(func() {
 			if gen == p.gen {
-				p.lyrics = lines
-				p.lyricsLoaded = true
+				if !p.lyricsOverride {
+					p.lyrics = lines
+					p.lyricsLoaded = true
+				}
 				p.lyricsAhead()
 			}
 		})

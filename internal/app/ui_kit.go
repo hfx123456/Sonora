@@ -327,3 +327,35 @@ func segmented(c *ui.Context, selected *int, labels ...string) bool {
 	})
 	return *selected != before
 }
+
+type searchFieldState struct {
+	row       ui.Element
+	changed   bool
+	submitted bool
+	cleared   bool
+}
+
+// searchField draws a capsule search box matching the playlist search bar's
+// rounded pill shape, soft background, and focus transition.
+func (a *app) searchField(c *ui.Context, inputKey any, clearKey string, box *ui.Handle, value *string, label, placeholder string) searchFieldState {
+	p := a.pal
+	field := ui.Row(c).Height(36).PaddingX(12).Gap(8).AlignItems(ui.Center).Radius(18)
+	out := searchFieldState{row: field}
+	field.Children(func() {
+		ui.Icon(c, iconSearch).Size(14, 14).TextColor(p.muted)
+		in := ui.TextInputBase(c.Key(inputKey), value).Bind(box).Grow(1).MinWidth(0).
+			Placeholder(placeholder).FontSize(12.5).Label(label)
+		out.changed = in.Changed()
+		out.submitted = in.Submitted()
+		if *value != "" && iconButton(c.Key(clearKey), iconX, 11, p.muted, "清除搜索").Clicked() {
+			*value = ""
+			out.cleared = true
+		}
+	})
+	background, edge := p.hover, ui.Transparent
+	if field.FocusWithin() {
+		background, edge = p.bg, p.accent.Alpha(.35)
+	}
+	field.Background(field.AnimateColor("search-bg", background, ui.Animation{Duration: 120 * time.Millisecond})).Border(1, edge)
+	return out
+}

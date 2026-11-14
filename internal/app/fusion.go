@@ -201,8 +201,12 @@ func (a *app) receiveFusion(key string, generation int, result fusion.Result, er
 			return
 		}
 	}
-	if len(result.Lines) > 0 && !a.pl.Current().Local() && result.Source != "播放器歌词" && (fusionChinese(result.Lines) || hasFusionTranslation(result.Lines)) {
-		lyrics.SaveCached(player.LyricsCacheDir, a.pl.Current().URI(), result.Source, result.Lines)
+	rawLines := append([]lyrics.Line(nil), result.Lines...)
+	if len(rawLines) > 0 && !a.pl.Current().Local() && result.Source != "播放器歌词" && (fusionChinese(rawLines) || hasFusionTranslation(rawLines)) {
+		lyrics.SaveCached(player.LyricsCacheDir, a.pl.Current().URI(), result.Source, rawLines)
+	}
+	if cur, loaded := a.pl.Lyrics(); shouldSyncFusionLyricsToPlayer(cur, loaded, result.Source, rawLines) {
+		a.pl.AdoptLyrics(a.pl.Current().URI(), rawLines)
 	}
 	state.lines, state.source = prepareFusionLines(result.Lines), result.Source
 	state.message = ""
@@ -210,6 +214,29 @@ func (a *app) receiveFusion(key string, generation int, result fusion.Result, er
 		state.message = err.Error()
 	}
 	a.resizeFusion()
+	a.redraw()
+}
+
+func shouldSyncFusionLyricsToPlayer(current []lyrics.Line, loaded bool, source string, next []lyrics.Line) bool {
+	if len(next) == 0 || source == "播放器歌词" || fusionInstrumentalNotice(next) {
+		return false
+	}
+	if !loaded || len(current) == 0 {
+		return true
+	}
+	if next[0].Unsynced && !current[0].Unsynced {
+		return false
+	}
+	if current[0].Unsynced && !next[0].Unsynced {
+		return true
+	}
+	if hasFusionTranslation(current) && !hasFusionTranslation(next) {
+		return false
+	}
+	if fusionChinese(current) && !fusionChinese(next) && !hasFusionTranslation(next) {
+		return false
+	}
+	return true
 }
 
 func (a *app) fusionPosition() time.Duration {

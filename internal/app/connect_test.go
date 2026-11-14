@@ -55,16 +55,30 @@ func TestConnectRemoteOwnership(t *testing.T) {
 	}
 }
 
-// A revoked state or disconnected receiver must immediately stop local playback.
+// A revoked state must immediately stop local playback.
 func TestConnectRevokesOwnership(t *testing.T) {
-	for _, kind := range []string{"command", "receiver_offline"} {
-		a := testConnectApp(t)
-		a.pl.Hold(time.Second)
-		a.connect.ref = &spotify.ConnectRef{Index: 0}
-		a.connectEvent(spotify.ConnectEvent{Kind: kind, Data: json.RawMessage(`{"type":"replace_state","state_ref":null}`)})
-		if a.pl.Playing() || a.connect.ref != nil {
-			t.Fatalf("%s did not revoke playback", kind)
-		}
+	a := testConnectApp(t)
+	a.pl.Hold(time.Second)
+	a.connect.ref = &spotify.ConnectRef{Index: 0}
+	a.connectEvent(spotify.ConnectEvent{Kind: "command", Data: json.RawMessage(`{"type":"replace_state","state_ref":null}`)})
+	if a.pl.Playing() || a.connect.ref != nil {
+		t.Fatal("command did not revoke playback")
+	}
+}
+
+// Losing the receiver WebSocket (e.g. proxy node switch) must keep local playback
+// and its position intact, and queue re-registration when it reconnects.
+func TestConnectReceiverOfflineKeepsLocalPlayback(t *testing.T) {
+	a := testConnectApp(t)
+	a.pl.Hold(time.Second)
+	a.pl.Seek(42 * time.Second)
+	a.connect.ref = &spotify.ConnectRef{Index: 0}
+	a.connectEvent(spotify.ConnectEvent{Kind: "receiver_offline"})
+	if !a.pl.Playing() || a.pl.Position() != 42*time.Second {
+		t.Fatalf("receiver_offline interrupted local playback: playing=%v pos=%v", a.pl.Playing(), a.pl.Position())
+	}
+	if a.connect.ref != nil || a.connect.pendingPlay != a.pl.Current().URI() {
+		t.Fatalf("receiver_offline state: ref=%v pendingPlay=%q", a.connect.ref, a.connect.pendingPlay)
 	}
 }
 
