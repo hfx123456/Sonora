@@ -305,16 +305,64 @@ func (a *app) volumeSlider(c *ui.Context, color, track ui.Color, width float32) 
 	})
 }
 
+func (a *app) applySavedPlaybackModes() {
+	if a.pl == nil {
+		return
+	}
+	if a.pl.SmartFeed == nil {
+		a.pl.SmartFeed = a.smartShuffleFeed()
+	}
+	if a.settings.ShuffleMode >= int(player.ShuffleOff) && a.settings.ShuffleMode <= int(player.ShuffleSmart) {
+		a.pl.SetShuffleMode(player.ShuffleMode(a.settings.ShuffleMode))
+	}
+	if a.settings.RepeatMode >= int(player.RepeatOff) && a.settings.RepeatMode <= int(player.RepeatOne) {
+		a.pl.SetRepeatMode(player.RepeatMode(a.settings.RepeatMode))
+	}
+}
+
+func (a *app) setShuffleMode(mode player.ShuffleMode) {
+	a.pl.SetShuffleMode(mode)
+	a.settings.ShuffleMode = int(a.pl.ShuffleMode())
+	a.settings.save()
+	a.keepSession()
+}
+
+func (a *app) enableShuffle() {
+	if !a.pl.Shuffle() {
+		a.setShuffleMode(player.ShuffleOn)
+	}
+}
+
+func (a *app) cycleShuffle() {
+	if a.pl.SmartFeed == nil {
+		a.pl.SmartFeed = a.smartShuffleFeed()
+	}
+	mode := a.pl.CycleShuffle()
+	a.settings.ShuffleMode = int(mode)
+	a.settings.save()
+	a.keepSession()
+}
+
+func (a *app) cycleRepeat() {
+	a.pl.CycleRepeat()
+	a.settings.RepeatMode = int(a.pl.Repeat())
+	a.settings.save()
+	a.keepSession()
+}
+
 // transport is the row of controls: shuffle, previous, play, next, repeat.
 func (a *app) transport(c *ui.Context, color, dim, on ui.Color, size float32) {
 	pl := a.pl
 	ui.Row(c).Gap(size * 0.5).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-		shuffle := dim
-		if pl.Shuffle() {
-			shuffle = on
+		shuffle, sicon, stip := dim, iconShuffle, "随机播放"
+		switch pl.ShuffleMode() {
+		case player.ShuffleOn:
+			shuffle, stip = on, "随机播放（再点开启智能随机推荐）"
+		case player.ShuffleSmart:
+			shuffle, sicon, stip = on, iconSmartShuffle, "智能随机播放（已开启相似新歌推荐）"
 		}
-		if iconButton(c.Key("shuffle"), iconShuffle, size*0.62, shuffle, "随机播放").Clicked() {
-			pl.ToggleShuffle()
+		if iconButton(c.Key("shuffle"), sicon, size*0.62, shuffle, "随机播放").Tooltip(stip).Clicked() {
+			a.cycleShuffle()
 		}
 		if iconButton(c.Key("prev"), iconPrev, size*0.85, color, "上一首").Clicked() {
 			pl.Prev()
@@ -333,7 +381,7 @@ func (a *app) transport(c *ui.Context, color, dim, on ui.Color, size float32) {
 			repeat, ricon = on, iconRepeat1
 		}
 		if iconButton(c.Key("repeat"), ricon, size*0.62, repeat, "循环").Clicked() {
-			pl.CycleRepeat()
+			a.cycleRepeat()
 		}
 	})
 }

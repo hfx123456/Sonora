@@ -68,3 +68,37 @@ func TestEpisodeResolvesByItsURI(t *testing.T) {
 		t.Fatal("not asked")
 	}
 }
+
+// Smart Shuffle interleaves recommended songs ahead of playback and removes unplayed ones when turned off.
+func TestSmartShuffleInterleavesAndRemovesRecommendations(t *testing.T) {
+	p := New(func(fn func()) { fn() })
+	p.SmartFeed = func(seed spotify.Track, got func([]spotify.Track)) {
+		got([]spotify.Track{{ID: "rec1", Name: "Rec 1", Duration: 180000}, {ID: "rec2", Name: "Rec 2", Duration: 180000}})
+	}
+	p.Cue([]spotify.Track{
+		{ID: "1", Name: "One", Duration: 180000},
+		{ID: "2", Name: "Two", Duration: 180000},
+		{ID: "3", Name: "Three", Duration: 180000},
+	})
+	p.at, p.track = 0, &p.queue[0]
+
+	if mode := p.CycleShuffle(); mode != ShuffleOn || !p.Shuffle() || p.SmartShuffle() {
+		t.Fatalf("first cycle: mode=%v shuffle=%v smart=%v", mode, p.Shuffle(), p.SmartShuffle())
+	}
+	if mode := p.CycleShuffle(); mode != ShuffleSmart || !p.Shuffle() || !p.SmartShuffle() {
+		t.Fatalf("second cycle: mode=%v shuffle=%v smart=%v", mode, p.Shuffle(), p.SmartShuffle())
+	}
+	if !p.IsSmartTrack("rec1") || !p.IsSmartTrack("rec2") {
+		t.Fatalf("smart recommendations were not injected: %v", played(p))
+	}
+	if len(p.Queue()) != 5 {
+		t.Fatalf("expected 5 tracks with recommendations, got %d", len(p.Queue()))
+	}
+
+	if mode := p.CycleShuffle(); mode != ShuffleOff || p.Shuffle() || p.SmartShuffle() {
+		t.Fatalf("third cycle: mode=%v shuffle=%v smart=%v", mode, p.Shuffle(), p.SmartShuffle())
+	}
+	if got := played(p); !slices.Equal(got, []string{"1", "2", "3"}) {
+		t.Fatalf("turning off smart shuffle did not clean up recommendations: %v", got)
+	}
+}

@@ -395,7 +395,7 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 		// Playing here, shuffle and repeat are those of the state Spotify
 		// gave this device: the cluster's are what it reported, a step
 		// behind, and set the buttons back after the state had moved on.
-		if cluster.Active != state.client.ID || state.ref == nil {
+		if cluster.Active != "" && (cluster.Active != state.client.ID || (state.ref == nil && a.settings.ShuffleMode == 0 && a.settings.RepeatMode == 0)) {
 			a.connectOptions(cluster.Player.Options)
 		}
 		if cluster.Active != "" && cluster.Active != state.client.ID {
@@ -478,7 +478,15 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 				state.machine = command.Machine
 				state.ref, state.lost = &ref, false
 				state.cluster.Active = state.client.ID
+				localShuffle := a.pl.ShuffleMode()
+				localRepeat := a.pl.Repeat()
 				a.connectOptions(state.machine.Attributes.Options)
+				if localShuffle != player.ShuffleOff && !state.shuffle.on {
+					a.pl.SetShuffleMode(localShuffle)
+				}
+				if localRepeat != player.RepeatOff && !state.repeat.on {
+					a.pl.SetRepeatMode(localRepeat)
+				}
 				a.reportConnect()
 				return
 			}
@@ -716,6 +724,9 @@ func (a *app) connectControl(action string, value any) bool {
 		a.applyConnect(next, &zero)
 		return true
 	case "shuffle", "repeat":
+		if !a.pl.IsRemote() && state.ref == nil && state.cluster.Active == "" {
+			return false
+		}
 		// Shown at once, as Spotify is asked.
 		answered := func(took bool) {}
 		if action == "shuffle" {

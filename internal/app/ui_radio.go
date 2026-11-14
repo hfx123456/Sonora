@@ -57,6 +57,26 @@ func (a *app) radioFeed() func(got func([]spotify.Track)) {
 	}
 }
 
+// smartShuffleFeed fetches recommended songs similar to seed for Smart Shuffle.
+func (a *app) smartShuffleFeed() func(seed spotify.Track, got func([]spotify.Track)) {
+	return func(seed spotify.Track, got func([]spotify.Track)) {
+		uri, id := seed.URI(), seed.ID
+		go func() {
+			tracks, err := radioTracks(uri)
+			if (err != nil || len(tracks) == 0) && id != "" {
+				if pg, detailErr := trackDetail(id); detailErr == nil && pg != nil {
+					for _, t := range pg.Recommended {
+						if t.Playable() {
+							tracks = append(tracks, t)
+						}
+					}
+				}
+			}
+			a.post(func() { got(tracks) })
+		}()
+	}
+}
+
 // startRadio plays Spotify's radio of uri, a song's or an artist's, named
 // label: from the song playing, if it is the radio's.
 func (a *app) startRadio(uri, label string) {

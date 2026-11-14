@@ -1,11 +1,15 @@
 package app
 
 import (
+	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/audio"
+	"github.com/egoist/mygo/ui"
 
+	"vinyl/internal/player"
 	"vinyl/internal/spotify"
 )
 
@@ -40,5 +44,52 @@ func TestSessionRestsWhilePaused(t *testing.T) {
 	due[1]()
 	if len(due) != 2 {
 		t.Errorf("paused, %d more saves due", len(due)-2)
+	}
+}
+
+// Shuffle, Smart Shuffle, and Repeat persist across restarts and survive idle Connect cluster events.
+func TestShuffleAndRepeatPersistAcrossRestartsAndIdleCluster(t *testing.T) {
+	dir := t.TempDir()
+	oldSessionPath := sessionPath
+	sessionPath = func() (string, error) { return filepath.Join(dir, "session.json"), nil }
+	t.Cleanup(func() { sessionPath = oldSessionPath })
+
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.path = filepath.Join(dir, "settings.json")
+	a.pl.SmartFeed = func(spotify.Track, func([]spotify.Track)) {}
+	a.pl.Cue([]spotify.Track{
+		{ID: "1", Name: "Song 1", Duration: 180000},
+		{ID: "2", Name: "Song 2", Duration: 180000},
+	})
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+
+	// Click shuffle twice in transport bar -> Smart Shuffle, and repeat once -> RepeatAll.
+	if err := tt.Click("随机播放"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("随机播放"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("循环"); err != nil {
+		t.Fatal(err)
+	}
+	if a.pl.ShuffleMode() != player.ShuffleSmart || a.pl.Repeat() != player.RepeatAll {
+		t.Fatalf("before save: shuffleMode=%v repeat=%v", a.pl.ShuffleMode(), a.pl.Repeat())
+	}
+	a.saveSession()
+
+	// Simulate app restart with Connect starting up and receiving an idle cluster event.
+	b := connectTestApp()
+	b.settings = a.settings
+	b.applySavedPlaybackModes()
+	b.restoreSession()
+	b.connectEvent(spotify.ConnectEvent{
+		Kind: "cluster",
+		Data: json.RawMessage(`{"active_device_id":"","player_state":{"options":{"shuffling_context":false,"repeating_context":false,"repeating_track":false}}}`),
+	})
+	if b.pl.ShuffleMode() != player.ShuffleSmart || b.pl.Repeat() != player.RepeatAll {
+		t.Fatalf("after restart and idle cluster: shuffleMode=%v repeat=%v", b.pl.ShuffleMode(), b.pl.Repeat())
 	}
 }

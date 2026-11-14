@@ -34,6 +34,9 @@ func (p *Player) ConnectQueue(tracks []spotify.Track) {
 func (p *Player) ConnectOptions(options spotify.ConnectOptions) {
 	if options.Shuffle != nil {
 		p.shuffle = *options.Shuffle
+		if !p.shuffle {
+			p.smartShuffle = false
+		}
 	}
 	if mode, ok := RepeatOf(options); ok {
 		p.repeat = mode

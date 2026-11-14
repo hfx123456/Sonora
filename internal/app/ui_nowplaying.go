@@ -648,6 +648,9 @@ func (a *app) queuePane(c *ui.Context) {
 					if tr.Video {
 						ui.Text(c, mvName(tr)).FontSize(9).FontWeight(800).TextColor(white.Alpha(0.6)).Padding(0, 4).Radius(3).Border(1, white.Alpha(0.35))
 					}
+					if pl.IsSmartTrack(tr.ID) {
+						ui.Text(c, "✦ 推荐").FontSize(9.5).FontWeight(700).TextColor(white.Alpha(0.8)).Padding(1, 5).Radius(4).Background(white.Alpha(0.14))
+					}
 					ui.Text(c, tr.ArtistNames()).FontSize(12.5).TextColor(white.Alpha(0.55)).SingleLine().Shrink(1)
 				})
 			})

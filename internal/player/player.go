@@ -48,6 +48,14 @@ const (
 	RepeatOne
 )
 
+type ShuffleMode int
+
+const (
+	ShuffleOff ShuffleMode = iota
+	ShuffleOn
+	ShuffleSmart
+)
+
 // Player plays a queue of tracks. Its methods run on the main thread;
 // loading happens on goroutines, whose results post brings back there.
 type Player struct {
@@ -69,12 +77,19 @@ type Player struct {
 	Changed func()
 	Control func(string, any) bool
 
-	queue   []spotify.Track
-	order   []int // the queue's indices in play order: shuffled or not
-	at      int   // where in order the current track is, -1 for none
-	shuffle bool
-	repeat  RepeatMode
-	volume  float64
+	queue        []spotify.Track
+	order        []int // the queue's indices in play order: shuffled or not
+	at           int   // where in order the current track is, -1 for none
+	shuffle      bool
+	smartShuffle bool
+	repeat       RepeatMode
+	volume       float64
+
+	// SmartFeed supplies recommended tracks for Smart Shuffle, seeded from a track in the queue.
+	SmartFeed    func(seed spotify.Track, got func([]spotify.Track))
+	smartGen     int
+	smartFeeding bool
+	smartAdded   map[string]bool
 
 	// A radio goes on with the tracks its feed gives, as the queue nears
 	// its end, for as long as nothing else is played.
@@ -257,6 +272,10 @@ func (p *Player) ended() {
 		p.awaitFeed()
 		return
 	}
+	if p.at+1 >= len(p.order) && p.smartShuffle && p.SmartFeed != nil {
+		p.awaitSmartFeed()
+		return
+	}
 	if p.at+1 >= len(p.order) && p.repeat == RepeatOff {
 		p.playing = false
 		p.sync()
@@ -385,6 +404,9 @@ func (p *Player) PlayQueue(tracks []spotify.Track, start int) {
 		return
 	}
 	p.endRadio()
+	p.smartGen++
+	p.smartFeeding = false
+	p.smartAdded = nil
 	start = min(max(start, 0), len(tracks)-1)
 	p.queue = append([]spotify.Track(nil), tracks...)
 	p.order = make([]int, len(p.queue))
@@ -566,9 +588,16 @@ func (p *Player) shuffleOrder(first int) {
 
 func (p *Player) ToggleShuffle() {
 	if p.control("shuffle", !p.shuffle) {
+		if !p.shuffle {
+			p.smartShuffle = false
+		}
 		return
 	}
 	p.shuffle = !p.shuffle
+	if !p.shuffle {
+		p.smartShuffle = false
+		p.removeUnplayedSmartTracks()
+	}
 	if len(p.order) == 0 {
 		return
 	}
@@ -582,6 +611,217 @@ func (p *Player) ToggleShuffle() {
 		}
 		p.at = cur
 	}
+}
+
+// CycleShuffle advances through ShuffleOff -> ShuffleOn -> ShuffleSmart -> ShuffleOff.
+func (p *Player) CycleShuffle() ShuffleMode {
+	switch p.ShuffleMode() {
+	case ShuffleOff:
+		p.smartShuffle = false
+		p.ToggleShuffle()
+	case ShuffleOn:
+		if !p.shuffle {
+			p.ToggleShuffle()
+		}
+		if p.shuffle {
+			p.smartShuffle = true
+			p.refillSmart()
+		}
+	case ShuffleSmart:
+		p.smartShuffle = false
+		p.removeUnplayedSmartTracks()
+		if p.shuffle {
+			p.ToggleShuffle()
+		}
+	}
+	return p.ShuffleMode()
+}
+
+// SetShuffleMode restores or sets the shuffle mode directly without sending a Connect toggle.
+func (p *Player) SetShuffleMode(mode ShuffleMode) {
+	if mode < ShuffleOff || mode > ShuffleSmart {
+		mode = ShuffleOff
+	}
+	wasShuffled := p.shuffle
+	p.shuffle = mode != ShuffleOff
+	p.smartShuffle = mode == ShuffleSmart
+	if !p.smartShuffle {
+		p.removeUnplayedSmartTracks()
+	}
+	if len(p.order) > 0 && p.shuffle != wasShuffled {
+		cur := p.order[max(p.at, 0)]
+		if p.shuffle {
+			p.shuffleOrder(cur)
+			p.at = 0
+		} else {
+			for i := range p.order {
+				p.order[i] = i
+			}
+			p.at = cur
+		}
+	}
+	if p.smartShuffle {
+		p.refillSmart()
+	}
+}
+
+func (p *Player) SetRepeatMode(mode RepeatMode) {
+	if mode < RepeatOff || mode > RepeatOne {
+		mode = RepeatOff
+	}
+	p.repeat = mode
+}
+
+// IsSmartTrack reports whether track id was interleaved by Smart Shuffle.
+func (p *Player) IsSmartTrack(id string) bool {
+	return id != "" && p.smartAdded[id]
+}
+
+func (p *Player) removeUnplayedSmartTracks() {
+	p.smartGen++
+	p.smartFeeding = false
+	if len(p.smartAdded) == 0 || len(p.order) == 0 {
+		p.smartAdded = nil
+		return
+	}
+	curIdx := -1
+	if p.at >= 0 && p.at < len(p.order) {
+		curIdx = p.order[p.at]
+	}
+	keepInQueue := make([]bool, len(p.queue))
+	for pos, qIdx := range p.order {
+		id := p.queue[qIdx].ID
+		if pos <= p.at || !p.smartAdded[id] {
+			keepInQueue[qIdx] = true
+		}
+	}
+	remap := make([]int, len(p.queue))
+	var newQueue []spotify.Track
+	for i, tr := range p.queue {
+		if keepInQueue[i] {
+			remap[i] = len(newQueue)
+			newQueue = append(newQueue, tr)
+		} else {
+			remap[i] = -1
+		}
+	}
+	var newOrder []int
+	newAt := p.at
+	for pos, qIdx := range p.order {
+		if mapped := remap[qIdx]; mapped >= 0 {
+			if qIdx == curIdx {
+				newAt = len(newOrder)
+			}
+			newOrder = append(newOrder, mapped)
+		} else if pos < p.at && newAt > 0 {
+			newAt--
+		}
+	}
+	p.queue = newQueue
+	p.order = newOrder
+	p.at = min(max(newAt, -1), len(newOrder)-1)
+	if p.at >= 0 && p.at < len(p.order) {
+		t := p.queue[p.order[p.at]]
+		p.track = &t
+	}
+	p.smartAdded = nil
+}
+
+func (p *Player) refillSmart() {
+	if !p.smartShuffle || p.SmartFeed == nil || p.smartFeeding || len(p.order) == 0 {
+		return
+	}
+	start := max(p.at, 0)
+	upcomingSmart := 0
+	for i := start + 1; i < min(len(p.order), start+5); i++ {
+		if p.smartAdded[p.queue[p.order[i]].ID] {
+			upcomingSmart++
+		}
+	}
+	if upcomingSmart > 0 && start+1 < len(p.order) {
+		return
+	}
+	seed, ok := p.smartSeedTrack()
+	if !ok {
+		return
+	}
+	p.smartFeeding = true
+	p.smartGen++
+	gen := p.smartGen
+	p.SmartFeed(seed, func(more []spotify.Track) {
+		if gen != p.smartGen || !p.smartShuffle {
+			return
+		}
+		p.smartFeeding = false
+		added := p.injectSmartTracks(more)
+		switch {
+		case !p.awaiting:
+			if added > 0 {
+				p.sync()
+			}
+		case p.at+1 < len(p.order):
+			p.awaiting = false
+			p.load(p.at + 1)
+		default:
+			p.awaiting, p.playing = false, false
+			p.sync()
+		}
+	})
+}
+
+func (p *Player) awaitSmartFeed() {
+	p.awaiting = true
+	p.refillSmart()
+}
+
+func (p *Player) smartSeedTrack() (spotify.Track, bool) {
+	if p.track != nil && !p.track.Local() && !p.track.Episode && p.track.ID != "" {
+		return *p.track, true
+	}
+	for i := max(p.at, 0); i < len(p.order); i++ {
+		t := p.queue[p.order[i]]
+		if !t.Local() && !t.Episode && t.ID != "" && !p.smartAdded[t.ID] {
+			return t, true
+		}
+	}
+	for _, t := range p.queue {
+		if !t.Local() && !t.Episode && t.ID != "" {
+			return t, true
+		}
+	}
+	return spotify.Track{}, false
+}
+
+func (p *Player) injectSmartTracks(tracks []spotify.Track) int {
+	if len(tracks) == 0 || len(p.order) == 0 {
+		return 0
+	}
+	in := make(map[string]bool, len(p.queue))
+	for _, t := range p.queue {
+		in[t.ID] = true
+	}
+	if p.smartAdded == nil {
+		p.smartAdded = map[string]bool{}
+	}
+	insertAt := max(p.at, 0) + 2
+	added := 0
+	for _, t := range tracks {
+		if !t.Playable() || t.ID == "" || in[t.ID] {
+			continue
+		}
+		in[t.ID] = true
+		p.smartAdded[t.ID] = true
+		qIdx := len(p.queue)
+		p.queue = append(p.queue, t)
+		pos := min(insertAt, len(p.order))
+		p.order = slices.Insert(p.order, pos, qIdx)
+		insertAt = pos + 3
+		added++
+		if added >= 4 {
+			break
+		}
+	}
+	return added
 }
 
 func (p *Player) CycleRepeat() {
@@ -610,7 +850,17 @@ func (p *Player) Ready() bool { return p.out != nil }
 // Err returns why the current track did not play, or "".
 func (p *Player) Err() string { return p.err }
 
-func (p *Player) Shuffle() bool      { return p.shuffle }
+func (p *Player) Shuffle() bool     { return p.shuffle }
+func (p *Player) SmartShuffle() bool { return p.smartShuffle }
+func (p *Player) ShuffleMode() ShuffleMode {
+	if p.smartShuffle {
+		return ShuffleSmart
+	}
+	if p.shuffle {
+		return ShuffleOn
+	}
+	return ShuffleOff
+}
 func (p *Player) Repeat() RepeatMode { return p.repeat }
 
 // Lyrics returns the current track's lyrics, and whether they have loaded.
@@ -632,6 +882,11 @@ func (p *Player) Next() {
 		if p.feed != nil {
 			p.stop()
 			p.awaitFeed()
+			return
+		}
+		if p.smartShuffle && p.SmartFeed != nil {
+			p.stop()
+			p.awaitSmartFeed()
 			return
 		}
 		at = 0
@@ -1201,6 +1456,7 @@ func (p *Player) cue(at int, play bool, from time.Duration) (int, spotify.Track)
 	p.cover = nil
 	p.announce(&t, nil)
 	p.refill()
+	p.refillSmart()
 
 	go func() {
 		cover, err := spotify.Fetch(spotify.Sized(t.Album.PicURL, 600))
@@ -1331,13 +1587,15 @@ var (
 
 // Session is where playback was left, to pick up again.
 type Session struct {
-	Queue    []spotify.Track `json:"queue"`
-	Order    []int           `json:"order"`
-	At       int             `json:"at"`
-	Shuffle  bool            `json:"shuffle"`
-	Repeat   RepeatMode      `json:"repeat"`
-	Position int64           `json:"position"` // milliseconds
-	Radio    string          `json:"radio,omitempty"`
+	Queue        []spotify.Track `json:"queue"`
+	Order        []int           `json:"order"`
+	At           int             `json:"at"`
+	Shuffle      bool            `json:"shuffle"`
+	SmartShuffle bool            `json:"smartShuffle,omitempty"`
+	SmartAdded   map[string]bool `json:"smartAdded,omitempty"`
+	Repeat       RepeatMode      `json:"repeat"`
+	Position     int64           `json:"position"` // milliseconds
+	Radio        string          `json:"radio,omitempty"`
 }
 
 // Session returns where playback is, or false with nothing queued.
@@ -1346,13 +1604,15 @@ func (p *Player) Session() (Session, bool) {
 		return Session{}, false
 	}
 	return Session{
-		Queue:    p.queue,
-		Order:    p.order,
-		At:       p.at,
-		Shuffle:  p.shuffle,
-		Repeat:   p.repeat,
-		Position: p.SongPosition().Milliseconds(),
-		Radio:    p.radio,
+		Queue:        p.queue,
+		Order:        p.order,
+		At:           p.at,
+		Shuffle:      p.shuffle,
+		SmartShuffle: p.smartShuffle,
+		SmartAdded:   p.smartAdded,
+		Repeat:       p.repeat,
+		Position:     p.SongPosition().Milliseconds(),
+		Radio:        p.radio,
 	}, true
 }
 
@@ -1372,6 +1632,9 @@ func (p *Player) Restore(s Session) {
 		seen[i] = true
 	}
 	p.queue, p.order = s.Queue, s.Order
-	p.shuffle, p.repeat = s.Shuffle, s.Repeat%3
+	p.shuffle = s.Shuffle || s.SmartShuffle
+	p.smartShuffle = s.SmartShuffle
+	p.smartAdded = s.SmartAdded
+	p.repeat = s.Repeat % 3
 	p.cue(s.At, false, time.Duration(s.Position)*time.Millisecond)
 }

@@ -331,6 +331,8 @@ func Run() error {
 		}
 		player.SimplifyLyrics = !readsTraditional(mygo.App.PreferredLanguages())
 		a.pl = player.New(a.post)
+		a.pl.SmartFeed = a.smartShuffleFeed()
+		a.applySavedPlaybackModes()
 		a.pl.Leads = a.mvLead
 		a.pl.Cache = newPartCache(a.settings.CacheMB)
 		a.pl.NewWeb = func() (*player.Web, error) {
@@ -452,6 +454,10 @@ func Run() error {
 			a.mineTimer.Stop()
 		}
 		a.settings.Volume = a.volume
+		if a.pl != nil {
+			a.settings.ShuffleMode = int(a.pl.ShuffleMode())
+			a.settings.RepeatMode = int(a.pl.Repeat())
+		}
 		a.settings.save()
 		a.saveSession()
 		if a.pl != nil {

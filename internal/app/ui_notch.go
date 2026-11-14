@@ -520,7 +520,7 @@ func (a *app) syncWindows() {
 	if tr := pl.Current(); tr != nil {
 		id = tr.ID
 	}
-	sig := playerSig{id, pl.Playing(), pl.Loading(), pl.Shuffle(), pl.Repeat(), a.volume, a.nowPlaying, pl.Err()}
+	sig := playerSig{id, pl.Playing(), pl.Loading(), pl.ShuffleMode(), pl.Repeat(), a.volume, a.nowPlaying, pl.Err()}
 	if sig != a.sig {
 		a.sig = sig
 		a.redraw()
@@ -534,7 +534,7 @@ type playerSig struct {
 	track      string
 	playing    bool
 	loading    bool
-	shuffle    bool
+	shuffle    player.ShuffleMode
 	repeat     player.RepeatMode
 	volume     float64
 	nowPlaying bool

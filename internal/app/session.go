@@ -95,6 +95,18 @@ func (a *app) restoreSession() {
 	}
 	a.savedSession = string(b)
 	a.pl.Restore(s)
+	if a.settings.ShuffleMode > 0 {
+		a.pl.SetShuffleMode(player.ShuffleMode(a.settings.ShuffleMode))
+	} else if s.SmartShuffle {
+		a.settings.ShuffleMode = int(player.ShuffleSmart)
+	} else if s.Shuffle {
+		a.settings.ShuffleMode = int(player.ShuffleOn)
+	}
+	if a.settings.RepeatMode > 0 {
+		a.pl.SetRepeatMode(player.RepeatMode(a.settings.RepeatMode))
+	} else if s.Repeat > 0 {
+		a.settings.RepeatMode = int(s.Repeat)
+	}
 	if s.Radio != "" && a.pl.Current() != nil {
 		a.pl.AttachRadio(s.Radio, a.radioFeed())
 	}

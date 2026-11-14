@@ -108,6 +108,11 @@ func (a *app) sendLocalConnectPlay() {
 	body := connectPlayBody(request)
 	body["options"].(map[string]any)["seek_to"] = a.pl.Position().Milliseconds()
 	body["options"].(map[string]any)["initially_paused"] = !a.pl.Playing()
+	body["options"].(map[string]any)["player_options_override"] = map[string]bool{
+		"shuffling_context": a.pl.Shuffle(),
+		"repeating_context": a.pl.Repeat() == player.RepeatAll,
+		"repeating_track":   a.pl.Repeat() == player.RepeatOne,
+	}
 	uid, uri := a.pl.Current().UID, a.pl.Current().URI()
 	if queueLatestConnect(&state.playJob, a.connectJob, func() error {
 		if version != state.playVersion.Load() {

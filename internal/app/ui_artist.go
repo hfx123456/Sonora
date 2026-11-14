@@ -177,15 +177,10 @@ func (a *app) artistHeader(c *ui.Context, pg *spotify.ArtistPage) {
 	ui.Row(c).Gap(10).Children(func() {
 		if len(pg.TopTracks) > 0 {
 			if pillButton(c.Key("play"), iconPlay, "播放", p.accent, p.onAccent).Clicked() {
-				if a.pl.Shuffle() {
-					a.pl.ToggleShuffle()
-				}
 				a.playFrom(spotify.HomeItem{Artist: &pg.ArtistCard}, pg.TopTracks, firstPlayable(pg.TopTracks))
 			}
 			if pillButton(c.Key("shuffle"), iconShuffle, "随机播放", p.hover.Over(p.bg), p.text).Clicked() {
-				if !a.pl.Shuffle() {
-					a.pl.ToggleShuffle()
-				}
+				a.enableShuffle()
 				a.playFrom(spotify.HomeItem{Artist: &pg.ArtistCard}, pg.TopTracks, firstPlayable(pg.TopTracks))
 			}
 			label := "电台"

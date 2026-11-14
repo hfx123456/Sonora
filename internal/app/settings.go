@@ -50,6 +50,10 @@ type settings struct {
 	LyricsStage bool `json:"lyricsStage"`
 	// Volume is where the volume was left, from 0 to 1.
 	Volume float64 `json:"volume"`
+	// ShuffleMode (0: off, 1: shuffle, 2: smart shuffle) and RepeatMode
+	// (0: off, 1: repeat all, 2: repeat one) persist across restarts.
+	ShuffleMode int `json:"shuffleMode,omitempty"`
+	RepeatMode  int `json:"repeatMode,omitempty"`
 	// Fog fills Now Playing's backdrop with fog of the cover's color,
 	// rising and swelling with the bass: an experiment the listener turns
 	// on.
