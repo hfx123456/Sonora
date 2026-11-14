@@ -386,8 +386,10 @@ const topBarHeight = 40
 // once it has moved up, content is under the bar at the top.
 func (a *app) startMark(c *ui.Context) {
 	b := ui.Box(c.Key("start-mark")).Height(0).Bounds()
+	a.startMarkW = b.W
 	if b.W > 0 {
 		top, _ := a.insets(c)
+		a.startMarkTop, a.startMarkY = top+pageGap, b.Y
 		a.underTop = b.Y < top+pageGap-0.5
 	}
 }

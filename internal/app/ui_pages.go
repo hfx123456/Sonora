@@ -236,7 +236,7 @@ func (a *app) playlistPage(c *ui.Context) {
 	if headerHeight <= 0 {
 		headerHeight = 238
 	}
-	searchTop := top + pageGap + max(0, headerHeight-a.pageScroll.Y)
+	searchTop := top + pageGap + max(0, headerHeight-a.trackListOffset())
 	ui.Box(c.Key("playlist-search-toolbar")).Absolute().Top(searchTop).Left(0).Right(0).Height(54).PaddingX(pagePad).Background(a.pal.bg).Children(func() {
 		a.playlistSearch(c, pl)
 	})
@@ -497,9 +497,14 @@ func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, head
 			}
 		}
 	}).Grow(1).Padding(top+pageGap, pagePad-12, bottom+32, pagePad-12).ScrollbarInsets(top, 0, bottom, 0)
-	if a.route.page == pagePlaylist || a.route.page == pageLocal {
-		list.TrackScroll(&a.pageScroll)
+	_ = list
+}
+
+func (a *app) trackListOffset() float32 {
+	if a.startMarkW <= 0 {
+		return 0
 	}
+	return max(0, a.startMarkTop-a.startMarkY)
 }
 
 // nowPlayingBars dance in the row of the track playing.

@@ -176,6 +176,9 @@ type app struct {
 	// underTop and underBottom say whether the page has content under its
 	// bars, which show their scroll edges then.
 	underTop, underBottom bool
+	startMarkW            float32
+	startMarkTop          float32
+	startMarkY            float32
 	barScrub              scrubState
 	npScrub               scrubState
 	backdropCache         backdropCache // the backdrop of Now Playing, as last painted

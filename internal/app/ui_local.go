@@ -166,7 +166,7 @@ func (a *app) localMusicPage(c *ui.Context) {
 	if headerHeight <= 0 {
 		headerHeight = 220
 	}
-	searchTop := top + pageGap + max(0, headerHeight-a.pageScroll.Y)
+	searchTop := top + pageGap + max(0, headerHeight-a.trackListOffset())
 	ui.Box(c.Key("local-search-toolbar")).Absolute().Top(searchTop).Left(0).Right(0).Height(54).PaddingX(pagePad).Background(a.pal.bg).Children(func() {
 		a.localSearch(c, tracks)
 	})

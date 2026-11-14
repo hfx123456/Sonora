@@ -495,7 +495,7 @@ func (r *lyricRows) height(i int) float32 {
 		}
 	}
 	room := max(r.width-8-24, 120)
-	h := float32(math.Ceil(float64(max(width, 1)/room)))*37.5 + 20
+	h := float32(math.Ceil(float64(max(width, 1)/room)))*39.9 + 20
 	if r.lines[i].Translation != "" {
 		h += 6 + 22
 	}
