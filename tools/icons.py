@@ -36,14 +36,14 @@ def geometric_note(small=False, mono=False):
             f'<rect x="466" y="236" width="108" height="432" rx="54" fill="{stem}"/>'
             f'<path d="M518 236 L752 312 C780 321 791 349 782 377 C773 403 747 416 721 407 L518 342 Z" fill="{stem}"/>'
             f'<circle cx="416" cy="656" r="158" fill="{mint}"/>'
-            f'<rect x="220" y="408" width="94" height="196" rx="47" fill="{mint}"/>'
+            f'<rect x="182" y="330" width="94" height="196" rx="47" fill="{mint}"/>'
             f'<rect x="708" y="460" width="94" height="258" rx="47" fill="{sky}"/>'
         )
     return (
         f'<rect x="474" y="256" width="96" height="404" rx="48" fill="{stem}"/>'
         f'<path d="M522 256 L732 324 C758 332 768 358 760 384 C752 408 728 420 704 412 L522 354 Z" fill="{stem}"/>'
         f'<circle cx="426" cy="648" r="144" fill="{mint}"/>'
-        f'<rect x="248" y="424" width="80" height="176" rx="40" fill="{mint}"/>'
+        f'<rect x="216" y="356" width="80" height="176" rx="40" fill="{mint}"/>'
         f'<rect x="696" y="472" width="80" height="236" rx="40" fill="{sky}"/>'
     )
 

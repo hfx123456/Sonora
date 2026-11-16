@@ -510,6 +510,11 @@ func (a *app) fusionMeasureWidth(line lyrics.Line, translation string, origSize,
 	return w
 }
 
+const (
+	fusionIslandOrigSize  float32 = 23
+	fusionIslandTransSize float32 = 17
+)
+
 func (a *app) fusionIslandSizing(line lyrics.Line, translation string, scale, coverMaxH, targetCapW float32) (targetPillW, minPillW, fitTextW float32) {
 	// Horizontal chrome inside the pill: 16*scale padding each side, emblem, and cover art.
 	chromeW := 32*scale + 26*scale + 12*scale
@@ -518,7 +523,7 @@ func (a *app) fusionIslandSizing(line lyrics.Line, translation string, scale, co
 		chromeW += 12*scale + coverSize
 	}
 	minPillW = min(targetCapW, chromeW+84*scale)
-	textW := a.fusionMeasureWidth(line, translation, 23*scale, 14*scale)
+	textW := a.fusionMeasureWidth(line, translation, fusionIslandOrigSize*scale, fusionIslandTransSize*scale)
 	targetPillW = min(targetCapW, max(minPillW, chromeW+textW+22*scale))
 	fitTextW = max(1, targetCapW-chromeW-10*scale)
 	return targetPillW, minPillW, fitTextW
@@ -532,7 +537,7 @@ func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, 
 	maxPillH := max(40*scale, winH-2*scale)
 	targetPillH := min(maxPillH, 46*scale)
 	if translation != "" {
-		targetPillH = min(maxPillH, 76*scale)
+		targetPillH = min(maxPillH, 78*scale)
 	}
 	coverMaxH := max(24*scale, targetPillH-18*scale)
 	targetPillW, minPillW, fitTextW := a.fusionIslandSizing(line, translation, scale, coverMaxH, targetCapW)
@@ -570,7 +575,7 @@ func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, 
 		pill.Children(func() {
 			a.fusionEmblem(c, 26*scale)
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2 * scale).Justify(ui.Center).Children(func() {
-				a.fusionAnimatedCaption(c, line, translation, 23*scale, 14*scale, false, fitTextW)
+				a.fusionAnimatedCaption(c, line, translation, fusionIslandOrigSize*scale, fusionIslandTransSize*scale, false, fitTextW)
 			})
 			if track := a.pl.Current(); track != nil {
 				size := min(32*scale, pillH-16*scale)
