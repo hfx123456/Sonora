@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,12 +57,13 @@ type response struct {
 	} `json:"lines"`
 }
 
+var runBridge = runBridgeProcess
+
 func Fetch(ctx context.Context, dir string, request Request, refresh bool) (Result, error) {
 	if dir == "" {
 		return Result{}, errors.New("无法访问歌词缓存目录")
 	}
-	data, err := json.Marshal(request)
-	if err != nil {
+	if _, err := json.Marshal(request); err != nil {
 		return Result{}, err
 	}
 	key := request
@@ -86,6 +88,72 @@ func Fetch(ctx context.Context, dir string, request Request, refresh bool) (Resu
 	if err != nil {
 		return Result{}, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	bestRaw, bestResult, bestErr := runBridge(ctx, executable, request)
+	if !request.ParseOnly && strings.TrimSpace(request.Title) != "" && ctx.Err() == nil && needsAlternateTitle(bestResult, bestErr) {
+		for _, cand := range resolveAlternateTitles(ctx, request) {
+			if ctx.Err() != nil {
+				break
+			}
+			var candRaw []byte
+			var candResult Result
+			var candErr error
+			if cand.ID != "" {
+				if raw, tr, ok := fetchDirectLyrics(ctx, request.Proxy, cand); ok {
+					candRaw, candResult, candErr = runBridge(ctx, executable, Request{Raw: raw, Translation: tr, ParseOnly: true})
+					if candErr == nil && len(candResult.Lines) > 0 && cand.Source != "" {
+						candResult.Source = cand.Source
+						candRaw = withResponseSource(candRaw, cand.Source)
+					}
+				}
+			}
+			if candErr != nil || len(candResult.Lines) == 0 {
+				alt := request
+				alt.Title = cand.Title
+				if cand.ClearAlbum {
+					alt.Album = ""
+				}
+				candRaw, candResult, candErr = runBridge(ctx, executable, alt)
+			}
+			if candErr == nil && len(candResult.Lines) > 0 && (len(bestResult.Lines) == 0 || betterResult(candResult, bestResult)) {
+				bestRaw, bestResult, bestErr = candRaw, candResult, nil
+				if !needsAlternateTitle(bestResult, bestErr) {
+					break
+				}
+			}
+		}
+	}
+	if bestErr != nil || len(bestResult.Lines) == 0 {
+		if bestErr == nil {
+			bestErr = errors.New("未找到匹配歌词，可载入本地双语歌词文件")
+		}
+		return Result{}, bestErr
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
+		os.WriteFile(path, bestRaw, 0o600)
+	}
+	return bestResult, nil
+}
+
+func withResponseSource(raw []byte, source string) []byte {
+	var reply response
+	if json.Unmarshal(raw, &reply) != nil {
+		return raw
+	}
+	reply.Source = source
+	if updated, err := json.Marshal(reply); err == nil {
+		return updated
+	}
+	return raw
+}
+
+func runBridgeProcess(ctx context.Context, executable string, request Request) ([]byte, Result, error) {
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil, Result{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, executable)
@@ -97,18 +165,67 @@ func Fetch(ctx context.Context, dir string, request Request, refresh bool) (Resu
 	command.Stderr = &cappedOutput{}
 	if err := command.Run(); err != nil {
 		if ctx.Err() != nil {
-			return Result{}, fmt.Errorf("歌词请求取消或超时：%w", ctx.Err())
+			return nil, Result{}, fmt.Errorf("歌词请求取消或超时：%w", ctx.Err())
 		}
-		return Result{}, fmt.Errorf("歌词组件无法启动，请检查缓存目录写入权限或重新解压便携包：%w", err)
+		return nil, Result{}, fmt.Errorf("歌词组件无法启动，请检查缓存目录写入权限或重新解压便携包：%w", err)
 	}
-	result, err := decode(output.Bytes())
+	raw := append([]byte(nil), output.Bytes()...)
+	result, err := decode(raw)
 	if err != nil {
-		return Result{}, err
+		return nil, Result{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
-		os.WriteFile(path, output.Bytes(), 0o600)
+	return raw, result, nil
+}
+
+func needsAlternateTitle(result Result, err error) bool {
+	if err != nil || len(result.Lines) == 0 || result.Lines[0].Unsynced {
+		return true
 	}
-	return result, nil
+	return !lyrics.Chinese(result.Lines) && !hasRealTranslation(result.Lines)
+}
+
+func hasRealTranslation(lines []lyrics.Line) bool {
+	for _, line := range lines {
+		if lyrics.IsCredit(line.Text) {
+			continue
+		}
+		tr := strings.TrimSpace(line.Translation)
+		if tr != "" && tr != "//" {
+			return true
+		}
+	}
+	return false
+}
+
+func betterResult(cand, cur Result) bool {
+	score := func(r Result) [4]int {
+		var synced, trans, words int
+		for _, l := range r.Lines {
+			if !l.Unsynced {
+				synced++
+				if !lyrics.IsCredit(l.Text) {
+					if tr := strings.TrimSpace(l.Translation); tr != "" && tr != "//" {
+						trans++
+					}
+				}
+			}
+			if len(l.Words) > 0 {
+				words++
+			}
+		}
+		hasSynced := 0
+		if synced >= 2 {
+			hasSynced = 1
+		}
+		return [4]int{hasSynced, trans, words, synced}
+	}
+	a, b := score(cand), score(cur)
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] > b[i]
+		}
+	}
+	return len(cand.Lines) > len(cur.Lines)
 }
 
 func reusableCache(path string, result Result) bool {

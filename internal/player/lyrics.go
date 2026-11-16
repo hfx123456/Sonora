@@ -25,7 +25,7 @@ func trackLyrics(track spotify.Track) []lyrics.Line {
 			if cached.Lines[0].Unsynced || lyrics.Chinese(cached.Lines) || hasTranslation(cached.Lines) {
 				return cached.Lines
 			}
-			lines := localize(track, cached.Lines, spotify.NetEaseTranslation)
+			lines := localize(track, cached.Lines, netEaseTranslator(cached.Lines))
 			if hasTranslation(lines) {
 				lyrics.SaveCached(LyricsCacheDir, track.URI(), "播放器歌词", lines)
 			}
@@ -63,7 +63,16 @@ func uncachedTrackLyrics(track spotify.Track) []lyrics.Line {
 			return firstTimed(t, spotify.NetEaseLyrics, spotify.LRCLyrics, spotify.LRCSearch)
 		})
 	})
-	return localize(track, lines, spotify.NetEaseTranslation)
+	return localize(track, lines, netEaseTranslator(lines))
+}
+
+func netEaseTranslator(lines []lyrics.Line) func(spotify.Track) (string, string, error) {
+	return func(t spotify.Track) (string, string, error) {
+		return spotify.NetEaseTranslationMatching(t, func(synced, translation string) bool {
+			tl := lyrics.Build(synced, translation, "")
+			return hasTranslation(tl) && sameWords(lines, tl)
+		})
+	}
 }
 
 // SimplifyLyrics has Chinese lyrics show in simplified characters; the app

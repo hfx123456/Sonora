@@ -188,3 +188,27 @@ func TestLiveSakura(t *testing.T) {
 	}
 	t.Logf("%s: %d lines, %d timed translations", result.Source, len(result.Lines), translated)
 }
+
+// Haru Haru by BIGBANG must find timed bilingual lyrics despite Spotify's Romanized title.
+func TestLiveHaruHaru(t *testing.T) {
+	if os.Getenv("LIVE") == "" || runtime.GOOS != "windows" {
+		t.Skip("set LIVE to query lyric providers")
+	}
+	for _, album := range []string{"Stand Up", ""} {
+		req := Request{Title: "Haru Haru", Artists: []string{"BIGBANG"}, Album: album, DurationMs: 256359}
+		result, err := Fetch(context.Background(), t.TempDir(), req, false)
+		if err != nil {
+			t.Fatalf("album=%q: %v", album, err)
+		}
+		translated := 0
+		for _, line := range result.Lines {
+			if !line.Unsynced && !lyrics.IsCredit(line.Text) && line.Translation != "" && line.Translation != "//" {
+				translated++
+			}
+		}
+		if translated < 20 {
+			t.Fatalf("Haru Haru (album=%q) lacks timed Chinese lyrics: %s, %d lines, %d translated", album, result.Source, len(result.Lines), translated)
+		}
+		t.Logf("album=%q => %s: %d lines, %d timed translations", album, result.Source, len(result.Lines), translated)
+	}
+}

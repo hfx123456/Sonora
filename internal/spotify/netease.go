@@ -7,10 +7,14 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+
+	"vinyl/internal/lyrics"
 )
 
 // neteaseURL is NetEase Cloud Music's; tests swap it.
@@ -25,7 +29,7 @@ var lrcTimed = regexp.MustCompile(`(?m)^\[\d+:\d+`)
 // millisecond. Only the name, the artist and the length leave; NetEase's
 // text is in simplified characters.
 func NetEaseLyrics(t Track) (synced, plain string, err error) {
-	lyric, _, err := neteaseLyrics(t)
+	lyric, _, err := neteaseLyrics(t, nil)
 	switch {
 	case err != nil || lyric == "":
 		return "", "", err
@@ -39,33 +43,78 @@ func NetEaseLyrics(t Track) (synced, plain string, err error) {
 // translation into Chinese, timed as they are, when it has one: most songs
 // in other languages have.
 func NetEaseTranslation(t Track) (synced, translation string, err error) {
-	lyric, tr, err := neteaseLyrics(t)
+	return NetEaseTranslationMatching(t, nil)
+}
+
+// NetEaseTranslationMatching behaves like NetEaseTranslation, and when match is
+// non-nil also checks artist- and duration-matched cross-script candidates whose
+// album name differs (such as compilations), accepting the first candidate for
+// which match(synced, translation) returns true.
+func NetEaseTranslationMatching(t Track, match func(synced, translation string) bool) (synced, translation string, err error) {
+	lyric, tr, err := neteaseLyrics(t, match)
 	if err != nil || !lrcTimed.MatchString(lyric) || !lrcTimed.MatchString(tr) {
 		return "", "", err
 	}
 	return lyric, tr, nil
 }
 
+type neteaseSong struct {
+	ID       int64    `json:"id"`
+	Name     string   `json:"name"`
+	Alia     []string `json:"alia"`
+	Tns      []string `json:"tns"`
+	Artists  []struct {
+		Name string `json:"name"`
+	} `json:"ar"`
+	Album struct {
+		Name string `json:"name"`
+	} `json:"al"`
+	Duration int64 `json:"dt"`
+}
+
 // neteaseLyrics gives the lyrics of t on NetEase and their translation,
 // "" for music without words.
-func neteaseLyrics(t Track) (lyric, translation string, err error) {
+func neteaseLyrics(t Track, match func(synced, translation string) bool) (lyric, translation string, err error) {
 	if t.Episode || t.Name == "" || t.Length() <= 0 {
 		return "", "", nil
 	}
-	id, err := searchNetEase(t.Name, t)
-	if err != nil {
-		return "", "", err
+	queries := []string{t.Name}
+	if cleaned := cleanTitle(t.Name); cleaned != "" && cleaned != strings.TrimSpace(t.Name) {
+		queries = append(queries, cleaned)
 	}
-	if id == 0 {
-		if cleaned := cleanTitle(t.Name); cleaned != "" && cleaned != strings.TrimSpace(t.Name) {
-			if id, err = searchNetEase(cleaned, t); err != nil {
+	seen := map[int64]bool{}
+	for _, q := range queries {
+		ids, err := searchNetEaseCandidates(q, t, match != nil)
+		if err != nil {
+			return "", "", err
+		}
+		for _, id := range ids {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			lrc, tr, pure, err := fetchNetEaseSongLyrics(id)
+			if err != nil {
 				return "", "", err
+			}
+			if pure {
+				if match == nil {
+					return "", "", nil
+				}
+				continue
+			}
+			if match == nil {
+				return lrc, tr, nil
+			}
+			if lrcTimed.MatchString(lrc) && lrcTimed.MatchString(tr) && match(lrc, tr) {
+				return lrc, tr, nil
 			}
 		}
 	}
-	if id == 0 {
-		return "", "", nil
-	}
+	return "", "", nil
+}
+
+func fetchNetEaseSongLyrics(id int64) (lyric, translation string, pureMusic bool, err error) {
 	var res struct {
 		Lrc struct {
 			Lyric string `json:"lyric"`
@@ -76,40 +125,111 @@ func neteaseLyrics(t Track) (lyric, translation string, err error) {
 		PureMusic bool `json:"pureMusic"`
 	}
 	if err := netease("/api/song/lyric?id="+strconv.FormatInt(id, 10)+"&lv=1&tv=-1", &res); err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
 	if res.PureMusic {
-		return "", "", nil
+		return "", "", true, nil
 	}
-	return strings.TrimSpace(res.Lrc.Lyric), strings.TrimSpace(res.Tlyric.Lyric), nil
+	return strings.TrimSpace(res.Lrc.Lyric), strings.TrimSpace(res.Tlyric.Lyric), false, nil
 }
 
-func searchNetEase(title string, t Track) (int64, error) {
+func searchNetEaseCandidates(title string, t Track, allowUnmatchedAlbumCrossScript bool) ([]int64, error) {
 	q := title
 	if len(t.Artists) > 0 {
 		q += " " + t.Artists[0].Name
 	}
 	var found struct {
 		Result struct {
-			Songs []struct {
-				ID       int64  `json:"id"`
-				Name     string `json:"name"`
-				Duration int64  `json:"dt"`
-			} `json:"songs"`
+			Songs []neteaseSong `json:"songs"`
 		} `json:"result"`
 	}
 	// Not search/get/web, which turns a fifth search in a few seconds
 	// down for minutes.
 	if err := netease("/api/cloudsearch/pc?"+url.Values{"s": {q}, "type": {"1"}, "limit": {"10"}}.Encode(), &found); err != nil {
-		return 0, err
+		return nil, err
 	}
-	id, nearest := int64(0), int64(2001)
-	for _, s := range found.Result.Songs {
-		if d := max(s.Duration-t.Duration, t.Duration-s.Duration); d < nearest && sameTitle(s.Name, t.Name) {
-			id, nearest = s.ID, d
+	return rankNetEaseSongs(found.Result.Songs, t, allowUnmatchedAlbumCrossScript), nil
+}
+
+func rankNetEaseSongs(songs []neteaseSong, t Track, allowUnmatchedAlbumCrossScript bool) []int64 {
+	var wantArtists []string
+	for _, a := range t.Artists {
+		if a.Name != "" {
+			wantArtists = append(wantArtists, a.Name)
 		}
 	}
-	return id, nil
+	type ranked struct {
+		id   int64
+		tier int
+		diff int64
+	}
+	var cands []ranked
+	for _, s := range songs {
+		d := max(s.Duration-t.Duration, t.Duration-s.Duration)
+		if d >= 2001 {
+			continue
+		}
+		var gotArtists []string
+		for _, a := range s.Artists {
+			if a.Name != "" {
+				gotArtists = append(gotArtists, a.Name)
+			}
+		}
+		artistOK := lyrics.ArtistsMatch(wantArtists, gotArtists)
+		if lyrics.HasExtraVersionTag(t.Name, t.Album.Name, s.Name) {
+			continue
+		}
+
+		tier := -1
+		switch {
+		case sameTitle(s.Name, t.Name):
+			tier = 0
+		case artistOK && func() bool { ok, _ := lyrics.BilingualParenMatch(t.Name, s.Name); return ok }():
+			tier = 1
+		case artistOK && neteaseAliasMatches(t.Name, s.Alia, s.Tns):
+			tier = 1
+		case artistOK && lyrics.CrossScript(t.Name, s.Name):
+			if lyrics.AlbumMatches(t.Album.Name, s.Album.Name) {
+				tier = 2
+			} else if allowUnmatchedAlbumCrossScript {
+				tier = 3
+			}
+		}
+		if tier >= 0 {
+			cands = append(cands, ranked{id: s.ID, tier: tier, diff: d})
+		}
+	}
+	sort.SliceStable(cands, func(i, j int) bool {
+		if cands[i].tier != cands[j].tier {
+			return cands[i].tier < cands[j].tier
+		}
+		return cands[i].diff < cands[j].diff
+	})
+	var ids []int64
+	limit := 1
+	if allowUnmatchedAlbumCrossScript {
+		limit = 3
+	}
+	for _, c := range cands {
+		if !slices.Contains(ids, c.id) {
+			ids = append(ids, c.id)
+			if len(ids) >= limit {
+				break
+			}
+		}
+	}
+	return ids
+}
+
+func neteaseAliasMatches(want string, alia, tns []string) bool {
+	for _, list := range [][]string{alia, tns} {
+		for _, item := range list {
+			if sameTitle(item, want) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // netease gets path from NetEase into out, as its web page does, without
@@ -161,30 +281,5 @@ func sameTitle(a, b string) bool {
 	return a == b || len([]rune(a)) == len([]rune(b)) && strings.IndexFunc(a, han) >= 0 && strings.IndexFunc(b, han) >= 0
 }
 
-func cleanTitle(s string) string {
-	if i := strings.Index(s, " - "); i > 0 {
-		s = s[:i]
-	}
-	var b strings.Builder
-	depth := 0
-	for _, r := range s {
-		switch {
-		case strings.ContainsRune("([（【", r):
-			depth++
-		case strings.ContainsRune(")]）】", r):
-			depth = max(depth-1, 0)
-		case depth == 0:
-			b.WriteRune(r)
-		}
-	}
-	return strings.TrimSpace(b.String())
-}
-
-func foldTitle(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			return unicode.ToLower(r)
-		}
-		return -1
-	}, cleanTitle(s))
-}
+func cleanTitle(s string) string { return lyrics.CleanTitle(s) }
+func foldTitle(s string) string  { return lyrics.FoldTitle(s) }

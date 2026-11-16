@@ -156,3 +156,48 @@ func TestNetEaseTranslationFallsBackToCleanTitle(t *testing.T) {
 		t.Fatalf("queries=%v", queries)
 	}
 }
+
+// A Romanized title such as "Haru Haru" must match NetEase's original Korean
+// entry "하루하루" when artist, album, and duration align, skipping Japanese or
+// live variants; when album differs (compilation), NetEaseTranslationMatching
+// still checks cross-script candidates via the caller's lyric matcher.
+func TestNetEaseCrossScriptAndAlias(t *testing.T) {
+	old := Client
+	defer func() { Client = old }()
+	songs := `{"code":200,"result":{"songs":[` +
+		`{"id":22673344,"name":"Haru Haru (Japanese Version)","ar":[{"name":"BIGBANG"}],"al":{"name":"THE BEST OF BIGBANG"},"dt":255773},` +
+		`{"id":999,"name":"Other Song","ar":[{"name":"BIGBANG"}],"al":{"name":"Stand Up"},"dt":256360},` +
+		`{"id":22673504,"name":"하루하루","alia":["一天一天"],"ar":[{"name":"BIGBANG"}],"al":{"name":"Stand Up"},"dt":256360}` +
+		`]}}`
+	Client = &http.Client{Transport: lyricsTransport(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/cloudsearch/pc":
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(songs))}, nil
+		case "/api/song/lyric":
+			switch req.URL.Query().Get("id") {
+			case "22673504":
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"code":200,"lrc":{"lyric":"[00:01.08]떠나가"},"tlyric":{"lyric":"[00:01.08]离开吧"}}`))}, nil
+			case "22673344":
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"code":200,"lrc":{"lyric":"[00:01.08]Japanese"},"tlyric":{"lyric":"[00:01.08]日语"}}`))}, nil
+			}
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"code":200,"lrc":{"lyric":""},"tlyric":{"lyric":""}}`))}, nil
+	})}
+
+	standUp := Track{Name: "Haru Haru", Artists: []Artist{{Name: "BIGBANG"}}, Album: Album{Name: "Stand Up"}, Duration: 256359}
+	synced, tr, err := NetEaseTranslation(standUp)
+	if err != nil || !strings.Contains(synced, "떠나가") || !strings.Contains(tr, "离开吧") {
+		t.Fatalf("cross-script album match failed: synced=%q tr=%q err=%v", synced, tr, err)
+	}
+
+	compilation := Track{Name: "Haru Haru", Artists: []Artist{{Name: "BIGBANG"}}, Album: Album{Name: "Number 1"}, Duration: 256359}
+	if s, _, _ := NetEaseTranslation(compilation); s != "" {
+		t.Fatalf("unexpected unverified cross-script match on compilation album: %q", s)
+	}
+	synced, tr, err = NetEaseTranslationMatching(compilation, func(s, _ string) bool {
+		return strings.Contains(s, "떠나가")
+	})
+	if err != nil || !strings.Contains(synced, "떠나가") || !strings.Contains(tr, "离开吧") {
+		t.Fatalf("verified cross-script compilation match failed: synced=%q tr=%q err=%v", synced, tr, err)
+	}
+}

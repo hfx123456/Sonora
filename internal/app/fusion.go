@@ -50,7 +50,10 @@ var (
 
 func hasFusionTranslation(lines []lyrics.Line) bool {
 	for _, line := range lines {
-		if strings.TrimSpace(line.Translation) != "" {
+		if lyrics.IsCredit(line.Text) {
+			continue
+		}
+		if tr := strings.TrimSpace(line.Translation); tr != "" && tr != "//" {
 			return true
 		}
 	}
@@ -387,8 +390,8 @@ func (a *app) syncFusionVisibility() {
 }
 
 func (a *app) fusionTick(c *ui.Context, floating bool) {
-	if a.fusion.key == fusionTrackKey(a.pl.Current()) && len(a.fusion.lines) == 0 {
-		if lines, _ := a.pl.Lyrics(); len(lines) > 0 {
+	if a.fusion.key == fusionTrackKey(a.pl.Current()) {
+		if lines, _ := a.pl.Lyrics(); len(lines) > 0 && (len(a.fusion.lines) == 0 || (!a.fusion.loading && !fusionChinese(a.fusion.lines) && !hasFusionTranslation(a.fusion.lines) && hasFusionTranslation(lines))) {
 			a.fusion.lines = prepareFusionLines(append([]lyrics.Line(nil), lines...))
 			a.fusion.loading, a.fusion.message, a.fusion.source = false, "", "播放器歌词"
 		}
