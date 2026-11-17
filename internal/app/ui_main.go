@@ -496,11 +496,16 @@ func (a *app) unifiedBackdrop(c *ui.Context, root ui.Element) {
 
 func (a *app) pageTop(c *ui.Context) {
 	top, _ := a.insets(c)
-	if !a.glassEnabled() {
-		edge := ui.Box(c.Key("top-edge")).Absolute().Top(0).Left(0).Right(0).Height(top).DragWindow().
-			Material(glass.ScrollEdge{Hard: true, Background: a.pal.bg})
-		edge.Opacity(edgeShown(edge, a.underTop))
-	}
+	// The input strip is always present. Glass removes the scroll-edge
+	// background, and an unscrolled page fades it away; neither should
+	// remove the place where the pointer can move the window.
+	ui.Box(c.Key("titlebar-drag")).Absolute().Top(0).Left(0).Right(0).Height(top).DragWindow().Children(func() {
+		if !a.glassEnabled() {
+			edge := ui.Box(c.Key("top-edge")).Absolute().Fill().PassThrough().
+				Material(glass.ScrollEdge{Hard: true, Background: a.pal.bg})
+			edge.Opacity(edgeShown(edge, a.underTop))
+		}
+	})
 	if len(a.history) > 0 || len(a.forward) > 0 {
 		if a.glassEnabled() {
 			ui.Row(c).Absolute().Top(max(6, (topBar(c)-34)/2)).Left(20).Height(34).Gap(8).AlignItems(ui.Center).Children(func() {

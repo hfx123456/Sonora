@@ -74,7 +74,13 @@ func (a *app) nowPlayingLayer(c *ui.Context, open, settled bool) {
 	if genie && !settled {
 		layer.Effect(npGenie{a})
 	}
-	layer.Children(func() { a.nowPlayingView(c) })
+	layer.Children(func() {
+		// Now Playing always sits over album colors. Its glass must follow
+		// that dark canvas even when the library uses the light appearance.
+		theme := *ui.DarkTheme()
+		theme.Font, theme.Accent = c.Theme().Font, c.Theme().Accent
+		ui.Themed(c, &theme).Fill().Background(ui.Transparent).Children(func() { a.nowPlayingView(c) })
+	})
 }
 
 // nowPlayingView fills the window with what plays: its cover over a slow
@@ -242,8 +248,8 @@ const (
 
 func (a *app) paneTabs(c *ui.Context) {
 	if a.glassEnabled() {
-		ui.Row(c).Padding(3, 3).Gap(2).Radius(999).
-			Material(a.liquidGlass(false, ui.Color{})).
+		ui.Row(c).Padding(2).Gap(2).Radius(16).
+			Material(a.nowPlayingGlass()).
 			Children(func() {
 				a.paneTab(c, paneLyrics, lyricsName(a.pl.Current()))
 				a.paneTab(c, paneStage, "律动")
@@ -260,52 +266,52 @@ func (a *app) paneTabs(c *ui.Context) {
 // it is, and the controls.
 func (a *app) stageBar(c *ui.Context, tr *spotify.Track, art *artwork, accent ui.Color) {
 	pl := a.pl
-	bar := ui.Column(c).Padding(0, 48, 28, 48).Gap(10)
+	w, _ := c.Size()
+	bar := ui.Column(c).AlignSelf(ui.Center).Width(min(960, max(0, w-64))).Margin(0, 0, 16, 0).
+		Padding(8, 16, 6, 16).Gap(2).Radius(20)
 	if a.glassEnabled() {
-		bar = ui.Column(c).Margin(0, 28, 20, 28).Padding(14, 24, 14, 24).Gap(10).
-			Radius(26).
-			Material(a.liquidGlass(false, ui.Color{}))
+		bar.Material(a.nowPlayingGlass()).Shadow(0, 8, 24, -8, ui.RGBA(0, 0, 0, .18))
+	} else {
+		bar.Background(ui.RGBA(8, 10, 14, .18)).Border(1, white.Alpha(.08))
 	}
 	bar.Children(func() {
-		a.scrubber(c.Key("stage-scrub"), &a.npScrub, white.Alpha(0.18), white.Alpha(0.9), 14, accent.Mix(white, 0.35))
-		ui.Row(c).Gap(14).AlignItems(ui.Center).Children(func() {
-			ui.Row(c).Grow(1).Basis(0).MinWidth(0).Gap(12).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Grow(1).Basis(0).MinWidth(0).Gap(10).AlignItems(ui.Center).Children(func() {
 				if bmp := bitmap(art); bmp != nil {
-					cov := ui.Box(c.Key(tr.ID)).Size(44, 44)
+					cov := ui.Box(c.Key(tr.ID)).Size(36, 36).Shrink(0)
 					in := artIn(cov, bmp)
 					cov.Children(func() { artImage(c, bmp, 8, in) })
 				}
 				ui.Column(c).Shrink(1).MinWidth(0).Gap(2).Children(func() {
-					ui.Text(c, tr.Name).FontSize(14).FontWeight(700).SingleLine()
-					a.artistLinks(c.Key("by"), tr.Artists, 12, white.Alpha(0.55), white)
+					ui.Text(c, tr.Name).FontSize(13).FontWeight(600).SingleLine()
+					a.artistLinks(c.Key("by"), tr.Artists, 11, white.Alpha(0.55), white)
 				})
 				a.likeButton(c.Key("like"), tr, 17, white.Alpha(0.6))
 				a.songMenu(c.Key("more"), tr, 17, white.Alpha(0.6)).Margin(0, 0, 0, -10)
 			})
 			a.transport(c, white, white.Alpha(0.45), white, 22)
 			ui.Row(c).Grow(1).Basis(0).MinWidth(0).Justify(ui.End).Children(func() {
-				ui.Text(c, clock(pl.Position())+" / "+clock(pl.Duration())).FontSize(11.5).FontFeatures("tnum").TextColor(white.Alpha(0.5))
+				ui.Text(c, clock(pl.Position())+" / "+clock(pl.Duration())).FontSize(11).FontFeatures("tnum").TextColor(white.Alpha(0.6))
 			})
 		})
+		a.scrubber(c.Key("stage-scrub"), &a.npScrub, white.Alpha(0.16), white.Alpha(0.85), 12, accent.Mix(white, 0.35))
 	})
 }
 
 func (a *app) paneTab(c *ui.Context, i int, label string) {
-	b := ui.ButtonBase(c.Key(i)).Padding(6, 14).Radius(999).FocusRing(false).Label(label)
+	b := ui.ButtonBase(c.Key(i)).Padding(4, 12).Radius(12).FocusRing(false).Label(label)
 	bg, fg := ui.Transparent, white.Alpha(0.55)
 	if a.npPane == i {
 		bg, fg = white.Alpha(0.14), white
 	} else if b.Hovered() {
 		bg = white.Alpha(0.06)
 	}
-	if a.glassEnabled() && a.npPane == i {
-		b.Material(a.liquidGlass(true, white.Alpha(0.16)))
-	} else {
-		b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
-	}
+	// One glass surface for the group; the selected tab is a quiet inset
+	// highlight rather than a second opaque-looking lens stacked on it.
+	b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
 	fg = b.AnimateColor("fg", fg, ui.Animation{Duration: 120 * time.Millisecond})
 	b.Children(func() {
-		ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(fg)
+		ui.Text(c, label).FontSize(12.5).FontWeight(600).TextColor(fg)
 	})
 	if b.Clicked() {
 		a.npPane = i
@@ -408,19 +414,15 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 					// than building the view at the display's rate as it does.
 					text := ui.Column(c).AlignItems(ui.Start).Gap(6)
 					text.AnimatePose(ui.Pose{Fade: 1 - alpha}, ui.Animation{Duration: 380 * time.Millisecond})
+					if !on && !line.Hovered() && !c.Preferences().HighContrast && !c.Preferences().ReduceMotion {
+						// Cache the softened inactive lines; only the sung line's
+						// glyphs need to change during playback.
+						text.Blur(min(1.5, float32(math.Abs(float64(i-cur)))*.45)).Cache()
+					}
 					text.Children(func() {
 						if on && len(l.Words) > 0 {
-							// The line sung lights up word by word as it is sung.
-							ui.RichText(c.Key("words")).FontSize(30).FontWeight(800).LineHeight(1.25).LetterSpacing(-0.4).Children(func() {
-								for wi, wd := range l.Words {
-									lit := clamp01(float32((pos - wd.Start).Seconds() / max(0.05, (wd.End-wd.Start).Seconds())))
-									ui.Text(c.Key(wi), wd.Text).TextColor(white.Alpha(0.38 + 0.62*lit))
-								}
-							})
-							if pl.Playing() {
-								// Words brighten smoothly enough at 25 frames a second.
-								c.After(40 * time.Millisecond)
-							}
+							karaokeText(c.Key("words"), l, ui.Font{Family: c.Theme().Font, Size: 30, Weight: 800, LineHeight: 1.25},
+								white.Alpha(.38), white, pl.SongPosition, pl.Playing, c.Preferences().ReduceMotion)
 						} else {
 							ui.Text(c, l.Text).FontSize(30).FontWeight(800).LineHeight(1.25).LetterSpacing(-0.4).TextColor(white)
 						}

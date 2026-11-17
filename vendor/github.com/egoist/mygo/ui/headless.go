@@ -83,6 +83,8 @@ type headless struct {
 	webViews   []placedWebView
 	tabbedInto NativeWebView
 	tabbedBack bool
+	// windowDrags records native move requests without moving a real window.
+	windowDrags int
 
 	// invalidated asks for a frame built anew, as a window's Changed.
 	invalidated atomic.Bool
@@ -114,7 +116,7 @@ func (h *headless) repaintTimer(at time.Time)                  { h.repaintAt = a
 func (h *headless) setCursor(c Cursor)                         { h.cursor = c }
 func (h *headless) setTextInput(t platform.TextInputState)     { h.ime = t }
 func (h *headless) updateAccessibility(t *platform.AccessTree) { h.keepAccess(t) }
-func (h *headless) startDrag()                                 {}
+func (h *headless) startDrag()                                 { h.windowDrags++ }
 func (h *headless) setDropFormats([]transfer.Format)           {}
 func (h *headless) readClipboard() string {
 	if r := h.reading; r != nil {
@@ -1029,6 +1031,9 @@ func (t *Tester) SetClipboardData(d transfer.Data) {
 
 // Cursor returns the pointer shape the view shows.
 func (t *Tester) Cursor() Cursor { return t.h.cursor }
+
+// WindowDragRequests counts presses that asked the host to move the window.
+func (t *Tester) WindowDragRequests() int { return t.h.windowDrags }
 
 // OpenedURLs returns the links the view opened.
 func (t *Tester) OpenedURLs() []string { return t.h.opened }

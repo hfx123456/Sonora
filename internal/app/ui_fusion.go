@@ -268,7 +268,7 @@ func (a *app) fusionLines(c *ui.Context) {
 				}
 				button.Children(func() {
 					if index == current && len(line.Words) > 0 {
-						a.fusionWords(c, line, position, 28, white.Alpha(0.4), white, !a.settings.FusionStatic)
+						a.fusionWords(c, line, 28, 600, white.Alpha(0.4), white, !a.settings.FusionStatic)
 					} else {
 						ui.Text(c, line.Text).Font(a.fusionFontForText(line.Text)).FontSize(28).FontWeight(600).LineHeight(1.3).TextColor(color)
 					}
@@ -278,7 +278,7 @@ func (a *app) fusionLines(c *ui.Context) {
 							translationColor = white.Alpha(0.62)
 						}
 						if index == current && !line.Unsynced {
-							a.fusionWords(c, fusionTranslationLine(line, translation), position, 16, white.Alpha(.30), white.Alpha(.86), !a.settings.FusionStatic).FontWeight(400)
+							a.fusionWords(c, fusionTranslationLine(line, translation), 16, 400, white.Alpha(.30), white.Alpha(.86), !a.settings.FusionStatic)
 						} else {
 							ui.Text(c, translation).Font(a.fusionFontForText(translation)).FontSize(16).FontWeight(400).LineHeight(1.4).TextColor(translationColor)
 						}
@@ -301,17 +301,9 @@ func (a *app) fusionLines(c *ui.Context) {
 	}
 }
 
-func (a *app) fusionWords(c *ui.Context, line lyrics.Line, position time.Duration, size float32, dim, lit ui.Color, animate bool) ui.Element {
-	var spans []ui.Span
-	chinese := lyrics.Chinese([]lyrics.Line{line})
-	for _, word := range line.Words {
-		progress, pulse := fusionWordMotion(word, position)
-		if !animate || chinese || c.Preferences().ReduceMotion {
-			pulse = 0
-		}
-		spans = append(spans, ui.Span{Text: word.Text, Color: dim.Mix(lit, progress), BaselineShift: size * .11 * pulse, Shadow: ui.NewTextShadow(0, 0, size*.18*pulse, lit.Alpha(.22*pulse))})
-	}
-	return ui.RichText(c, spans...).Font(a.fusionFontForText(line.Text)).FontSize(size).FontWeight(600).LineHeight(1.35)
+func (a *app) fusionWords(c *ui.Context, line lyrics.Line, size float32, weight int, dim, lit ui.Color, animate bool) ui.Element {
+	return karaokeText(c, line, ui.Font{Family: a.fusionFontForText(line.Text), Size: size, Weight: weight, LineHeight: 1.35},
+		dim, lit, a.fusionPosition, a.pl.Playing, !animate || c.Preferences().ReduceMotion)
 }
 
 func (a *app) fusionCover(c *ui.Context, url string, size, radius float32) {
@@ -686,8 +678,8 @@ func (a *app) fusionSingleLine(c *ui.Context, line lyrics.Line, position time.Du
 				before = end
 			}
 			if sweep > 0 {
-				painter.Clip(ui.Rect{X: origin - 1, Y: bounds.Y, W: min(width, sweep) + 2, H: bounds.H}, 0, func() {
-					painter.TextLayout(layout, origin, y, lit)
+				lyricSweep(painter, ui.Rect{X: origin, Y: bounds.Y, W: width, H: bounds.H}, false, min(1, sweep/max(1, width)), min(10, size*.3), func(alpha float32) {
+					painter.TextLayout(layout, origin, y, dim.Mix(lit, alpha))
 				})
 			}
 		})

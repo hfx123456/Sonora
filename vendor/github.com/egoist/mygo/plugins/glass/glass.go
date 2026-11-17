@@ -286,11 +286,11 @@ func paneMaterialWithStrength(m, s, strength float32, dark bool) material {
 		t = 0.7
 	}
 	bezel := min(lerp(20, 36, t), m/2)
-	refractMult := lerp(0.85, 1.8, t)
+	refractMult := lerp(0.75, 1.25, t)
 	maxBlur := lerp(1.2, 12.0, t)
 	minBlur := lerp(0.8, 3.5, t)
 	blur := min(max(m*lerp(0.02, 0.065, t), minBlur), maxBlur) * s
-	rim := lerp(0.28, 0.58, t)
+	rim := lerp(0.24, 0.40, t)
 	if dark {
 		rim = lerp(0.14, 0.34, t)
 	}
@@ -306,12 +306,15 @@ func paneMaterialWithStrength(m, s, strength float32, dark bool) material {
 		mat.low = lerp(0.04, 0.16, t)
 		mat.high = lerp(0.95, 0.54, t)
 		mat.curve = lerp(1.05, 2.0, t)
-		mat.saturation = lerp(1.15, 2.2, t)
+		mat.saturation = lerp(1.0, 1.35, t)
 	} else {
-		mat.low = lerp(0.02, 0.14, t)
+		// Light glass lifts dark backdrop pixels toward a neutral frost.
+		// Mapping black almost to black left artwork competing with labels,
+		// forcing callers to hide the optics under an opaque white tint.
+		mat.low = lerp(0.16, 0.541, t)
 		mat.high = 1.0
-		mat.curve = lerp(1.0, 1.12, t)
-		mat.saturation = lerp(1.15, 1.55, t)
+		mat.curve = lerp(1.0, 1.2, t)
+		mat.saturation = lerp(1.0, 1.12, t)
 	}
 	return mat
 }

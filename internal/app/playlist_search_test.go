@@ -8,6 +8,42 @@ import (
 	"vinyl/internal/spotify"
 )
 
+// Scrolling beyond the virtualized header pins search at the top; its stale start mark used to leave the toolbar in the middle of the page.
+func TestPlaylistToolbarPinsAfterHeaderLeaves(t *testing.T) {
+	a := artistApp()
+	pl := a.playlists["42"]
+	for i := range 100 {
+		pl.Tracks = append(pl.Tracks, spotify.Track{ID: fmt.Sprint(i + 2), Name: fmt.Sprintf("歌曲%d", i), Duration: 200000})
+	}
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+	before, ok := tt.Find("歌单内搜索")
+	if !ok {
+		t.Fatal("search is missing before scrolling")
+	}
+	scroll := func(delta float32) ui.Rect {
+		t.Helper()
+		tt.Scroll(900, 550, 0, delta)
+		tt.Advance(time.Second)
+		tt.Frame()
+		r, ok := tt.Find("歌单内搜索")
+		if !ok {
+			t.Fatal("search left the viewport")
+		}
+		return r
+	}
+	pinned := scroll(1600)
+	if pinned.Y >= before.Y-100 {
+		t.Fatalf("toolbar did not move to the top: before=%v, after=%v", before, pinned)
+	}
+	if again := scroll(600); again.Y != pinned.Y {
+		t.Fatalf("toolbar moved after pinning: %v to %v", pinned, again)
+	}
+	if back := scroll(-100000); back.Y != before.Y {
+		t.Fatalf("toolbar did not return below the hero: %v to %v", before, back)
+	}
+}
+
 // The playlist search must remain usable after scrolling, and spaces typed into it must not pause music.
 func TestPlaylistSearchRemainsAfterScrolling(t *testing.T) {
 	application := artistApp()

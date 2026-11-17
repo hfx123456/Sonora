@@ -399,9 +399,9 @@ func (a *app) playerBar(c *ui.Context) {
 	var bar ui.Element
 	if a.glassEnabled() {
 		material := a.liquidGlass(false, ui.Color{})
-		// Keep the controls readable over vivid covers even when the user
-		// prefers clear glass elsewhere in the window.
-		material.Tint = p.bg.Alpha(0.94)
+		// A light neutral tint leaves the refracted backdrop visible. The
+		// material's tone range carries contrast over bright album artwork.
+		material.Tint = p.bg.Alpha(0.28)
 		bar = ui.Row(c).Absolute().Left(11).Right(10).Bottom(6).Height(playerBarHeight - 12).PaddingX(10).Gap(20).AlignItems(ui.Center).
 			Radius(24).
 			Material(material)

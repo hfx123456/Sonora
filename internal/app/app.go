@@ -77,6 +77,8 @@ type app struct {
 	profile                             *spotify.Profile
 	playlistCacheRoot                   string
 	playlistQueries                     map[string]string
+	playlistSorts                       map[string]playlistSort
+	playlistOrderCache                  playlistOrderCache
 	playlistHeaderHeights               map[string]float32
 	localHeaderHeight                   float32
 	playlistFilterCache                 trackFilterCache

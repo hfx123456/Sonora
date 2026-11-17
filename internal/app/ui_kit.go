@@ -74,8 +74,9 @@ func (a *app) glassStrength() float32 {
 func (a *app) liquidGlass(interactive bool, tint ui.Color) glass.Glass {
 	k := a.glassStrength()
 	if tint.A > 0 {
-		alpha := float32(tint.A) / 255 * (0.25 + 0.75*k)
-		tint = tint.Alpha(alpha)
+		// Alpha multiplies the existing alpha; applying it twice made a
+		// subtle accent almost disappear on interactive glass.
+		tint = tint.Alpha(0.25 + 0.75*k)
 	}
 	return glass.Glass{
 		Tint:        tint,
@@ -83,6 +84,14 @@ func (a *app) liquidGlass(interactive bool, tint ui.Color) glass.Glass {
 		Strength:    k,
 		StrengthSet: true,
 	}
+}
+
+// nowPlayingGlass is shared by the pane selector and the stage transport:
+// a restrained neutral lens over artwork, with contrast from the dark theme.
+func (a *app) nowPlayingGlass() glass.Glass {
+	material := a.liquidGlass(false, ui.RGBA(8, 10, 14, .12))
+	material.Strength *= .55
+	return material
 }
 
 // glassGroup creates a glass.Group sharing the user's continuous glass strength.

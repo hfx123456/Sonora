@@ -10,6 +10,54 @@ import (
 	"vinyl/internal/spotify"
 )
 
+// Karaoke sleeps while paused, after the lift settles, and through gaps, with reduced motion updating only at word boundaries.
+func TestKaraokeEffectFrameBudget(t *testing.T) {
+	words := []lyrics.Word{{Start: time.Second, End: 3 * time.Second}, {Start: 8 * time.Second, End: 10 * time.Second}}
+	if got := lyricEffectDelay(words, 2*time.Second, true, false); got != lyricEffectFrame {
+		t.Fatalf("active sweep cadence: %v", got)
+	}
+	if got := lyricEffectDelay(words, 4*time.Second, true, false); got != 4*time.Second {
+		t.Fatalf("gap must sleep until the next word, got %v", got)
+	}
+	if got := lyricEffectDelay(words, 2*time.Second, true, true); got != time.Second {
+		t.Fatalf("reduced motion must wait for the word boundary, got %v", got)
+	}
+	for _, state := range []struct {
+		pos     time.Duration
+		playing bool
+	}{{2 * time.Second, false}, {11 * time.Second, true}} {
+		if got := lyricEffectDelay(words, state.pos, state.playing, false); got != 0 {
+			t.Fatalf("settled or paused lyrics still schedule frames: %v", got)
+		}
+	}
+}
+
+// The timed ink repaints without rebuilding its view and stops its timer as soon as playback pauses.
+func TestKaraokePaintDoesNotRebuild(t *testing.T) {
+	builds, paints := 0, 0
+	playing := true
+	line := lyrics.Line{Text: "Moonlight", Words: []lyrics.Word{{Text: "Moonlight", Start: 0, End: 10 * time.Second}}}
+	tt := ui.NewTester(func(c *ui.Context) {
+		builds++
+		ui.Box(c).Fill().Children(func() {
+			karaokeText(c, line, ui.Font{Size: 30, Weight: 700, LineHeight: 1.25}, white.Alpha(.38), white,
+				func() time.Duration { paints++; return time.Second }, func() bool { return playing }, false)
+		})
+	}, 400, 100)
+	beforeBuilds, beforePaints := builds, paints
+	tt.Advance(time.Second)
+	if builds != beforeBuilds || paints-beforePaints < 25 || paints-beforePaints > 31 {
+		t.Fatalf("a second of ink: %d builds and %d paints", builds-beforeBuilds, paints-beforePaints)
+	}
+	playing = false
+	tt.Advance(time.Second) // the already armed paint observes the pause
+	beforePaints = paints
+	tt.Advance(time.Second)
+	if paints != beforePaints {
+		t.Fatalf("paused ink keeps repainting: %d more paints", paints-beforePaints)
+	}
+}
+
 // Fusion must animate line-only sources during singing, but stop requesting animation frames when paused or finished.
 func TestFusionMotionFrameBudget(t *testing.T) {
 	lines := []lyrics.Line{{At: time.Second, End: 5 * time.Second, Text: "晚风轻轻吹过窗前"}}

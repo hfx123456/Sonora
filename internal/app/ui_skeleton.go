@@ -164,11 +164,11 @@ func (a *app) trackSkeleton(c *ui.Context, s shimmer, covers bool, header func(c
 
 // playlistHeaderSkeleton is playlistHeader while the playlist loads.
 func (a *app) playlistHeaderSkeleton(c *ui.Context, s shimmer) {
-	ui.Row(c).Gap(28).AlignItems(ui.End).Padding(0, 0, 26, 0).Children(func() {
-		s.bone(c, 14).Size(212, 212)
+	ui.Row(c).Gap(24).AlignItems(ui.End).Padding(0, 0, playlistHeaderGap, 0).Children(func() {
+		s.bone(c, 14).Size(playlistCoverSize, playlistCoverSize).Shrink(0)
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(8).Children(func() {
 			s.text(c, 12, 1.3).Width(36)
-			s.text(c, 30, 1.2).WidthPercent(48)
+			s.text(c, 28, 1.2).WidthPercent(48)
 			s.text(c, 13, 1.3).Width(180)
 			ui.Column(c).Margin(2, 0, 0, 0).Children(func() {
 				s.text(c, 12.5, 1.45).WidthPercent(78)
