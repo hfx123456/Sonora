@@ -836,7 +836,8 @@ func (a *app) connectButton(c *ui.Context) {
 	}
 	ui.PopoverBase(c.Key("connect-menu"), button, &state.open, func(panel ui.Element) {
 		pop := popoverColors(a.pal.dark)
-		panel.AttachTo(button, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, 8, 0).Width(270).Padding(12).Radius(10).Background(pop.fill).Border(0.5, pop.edge).Shadow(0, 8, 24, -4, ui.RGBA(0, 0, 0, 0.2))
+		panel.AttachTo(button, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, 8, 0).Width(270).Padding(12)
+		a.styleGlassPanel(panel, 16, pop.fill, pop.edge, 24, 8, ui.RGBA(0, 0, 0, 0.2))
 		panel.Children(func() {
 			ui.Column(c).Gap(8).Children(func() {
 				ui.Text(c, "选择播放设备").FontSize(15).FontWeight(600)

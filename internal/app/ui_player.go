@@ -183,19 +183,21 @@ func (a *app) volumeButton(c *ui.Context, color ui.Color) {
 	ui.PopoverBase(c.Key("volume-popover"), b, &a.volumeOpen, func(panel ui.Element) {
 		const arrow = 7
 		panel.AttachTo(b, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, arrow+3, 0).Width(52).Padding(11, 0, 12, 0).
-			Radius(12).Background(pop.fill).Border(0.5, pop.edge).Shadow(0, 8, 24, -4, ui.RGBA(0, 0, 0, 0.2)).
 			AlignItems(ui.Center).Gap(8).Label("音量")
-		panel.Draw(func(p *ui.Painter, r ui.Rect) {
-			// The arrow pointing at the speaker, its sides edged as the
-			// panel is, over the panel's border.
-			cx, foot := r.X+r.W/2, r.Y+r.H
-			tip := (&ui.Path{}).MoveTo(cx-arrow-1, foot-0.75).LineTo(cx-1.2, foot+arrow-1.2).
-				QuadTo(cx, foot+arrow, cx+1.2, foot+arrow-1.2).LineTo(cx+arrow+1, foot-0.75).Close()
-			p.FillPath(tip, pop.fill)
-			edge := (&ui.Path{}).MoveTo(cx-arrow-1, foot).LineTo(cx-1.2, foot+arrow-1.2).
-				QuadTo(cx, foot+arrow, cx+1.2, foot+arrow-1.2).LineTo(cx+arrow+1, foot)
-			p.StrokePath(edge, 0.5, pop.edge)
-		})
+		a.styleGlassPanel(panel, 16, pop.fill, pop.edge, 24, 8, ui.RGBA(0, 0, 0, 0.2))
+		if !a.glassEnabled() {
+			panel.Draw(func(p *ui.Painter, r ui.Rect) {
+				// The arrow pointing at the speaker, its sides edged as the
+				// panel is, over the panel's border.
+				cx, foot := r.X+r.W/2, r.Y+r.H
+				tip := (&ui.Path{}).MoveTo(cx-arrow-1, foot-0.75).LineTo(cx-1.2, foot+arrow-1.2).
+					QuadTo(cx, foot+arrow, cx+1.2, foot+arrow-1.2).LineTo(cx+arrow+1, foot-0.75).Close()
+				p.FillPath(tip, pop.fill)
+				edge := (&ui.Path{}).MoveTo(cx-arrow-1, foot).LineTo(cx-1.2, foot+arrow-1.2).
+					QuadTo(cx, foot+arrow, cx+1.2, foot+arrow-1.2).LineTo(cx+arrow+1, foot)
+				p.StrokePath(edge, 0.5, pop.edge)
+			})
+		}
 		ui.Textf(c, "%d%%", int(a.volume*100+0.5)).FontSize(11).FontWeight(500).FontFeatures("tnum").TextColor(a.pal.muted)
 		a.nativeVolumeSlider(c, pop)
 	})
@@ -393,16 +395,26 @@ func (a *app) playerBar(c *ui.Context) {
 	pl := a.pl
 	tr := pl.Current()
 	a.tickTimes(c)
-	// Over the foot of the page: while content is under it, its edge frosts
-	// it, with a hairline along the top.
-	edge := ui.Box(c.Key("bottom-edge")).Absolute().Left(0).Right(0).Bottom(0).Height(playerBarHeight).
-		Material(glass.ScrollEdge{Hard: true, Bottom: true, Background: p.bg})
-	edge.Opacity(edgeShown(edge, a.underBottom))
-	// The controls keep the middle, between sides that share what is left:
-	// narrower, the middle gives up to 140 DIPs, and what plays keeps room
-	// for its cover, some of its title and its heart.
 	const controls = 5*32 + 4*4
-	ui.Row(c).Absolute().Left(0).Right(0).Bottom(0).Height(playerBarHeight).PaddingX(20).Gap(20).AlignItems(ui.Center).Children(func() {
+	var bar ui.Element
+	if a.glassEnabled() {
+		material := a.liquidGlass(false, ui.Color{})
+		// Keep the controls readable over vivid covers even when the user
+		// prefers clear glass elsewhere in the window.
+		material.Tint = p.bg.Alpha(0.94)
+		bar = ui.Row(c).Absolute().Left(11).Right(10).Bottom(6).Height(playerBarHeight - 12).PaddingX(10).Gap(20).AlignItems(ui.Center).
+			Radius(24).
+			Material(material)
+		if !p.dark {
+			bar.Shadow(0, 3, 14, -3, ui.RGBA(0, 0, 0, 0.08))
+		}
+	} else {
+		edge := ui.Box(c.Key("bottom-edge")).Absolute().Left(0).Right(0).Bottom(0).Height(playerBarHeight).
+			Material(glass.ScrollEdge{Hard: true, Bottom: true, Background: p.bg})
+		edge.Opacity(edgeShown(edge, a.underBottom))
+		bar = ui.Row(c).Absolute().Left(0).Right(0).Bottom(0).Height(playerBarHeight).PaddingX(20).Gap(20).AlignItems(ui.Center)
+	}
+	bar.Children(func() {
 		// What plays.
 		ui.Row(c).Grow(1).Basis(0).MinWidth(150).Children(func() {
 			if tr == nil {
@@ -448,9 +460,9 @@ func (a *app) playerBar(c *ui.Context) {
 		ui.Column(c).Width(440).Shrink(1).MinWidth(240).Gap(0).AlignItems(ui.Stretch).Children(func() {
 			a.transport(c, p.text, p.muted, p.accent, 18)
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Margin(-4, 0, 0, 0).Children(func() {
-				ui.Text(c, clock(pl.Position())).FontSize(10.5).FontFeatures("tnum").TextColor(p.faint).Width(34).TextAlign(ui.End)
+				ui.Text(c, clock(pl.Position())).FontSize(11).FontFeatures("tnum").TextColor(p.muted).Width(34).TextAlign(ui.End)
 				a.scrubber(c.Key("bar-scrub"), &a.barScrub, p.press, p.text.Alpha(0.75), 14, p.accent).Grow(1)
-				ui.Text(c, clock(pl.Duration())).FontSize(10.5).FontFeatures("tnum").TextColor(p.faint).Width(34)
+				ui.Text(c, clock(pl.Duration())).FontSize(11).FontFeatures("tnum").TextColor(p.muted).Width(34)
 			})
 		})
 

@@ -77,7 +77,11 @@ func (px *pixels) Color(x, y float32, b *scene.BackdropImage) [4]float32 {
 	if m.rim > 0 && t < 3*m.rimWidth {
 		q := t / m.rimWidth
 		a := m.rim * float32(math.Exp(float64(-q*q)))
-		l := abs(nx*px.lx + ny*px.ly)
+		spec := abs(nx*px.lx + ny*px.ly)
+		l := 0.14 + 0.38*spec
+		if px.m.high >= 0.95 {
+			l = 0.76 + 0.24*spec
+		}
 		for i := range c {
 			c[i] += (l - c[i]) * a
 		}

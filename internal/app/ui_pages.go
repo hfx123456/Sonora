@@ -217,7 +217,8 @@ func (a *app) playlistPage(c *ui.Context) {
 		a.trackSkeleton(c, s, false, func(c *ui.Context) { a.playlistHeaderSkeleton(c, s) })
 		return
 	}
-	tracks := cachedFilterTracks(&a.playlistFilterCache, id, pl.Tracks, a.playlistQueries[id])
+	ordered := a.orderedPlaylistTracks(pl)
+	tracks := cachedFilterTracks(&a.playlistFilterCache, id, ordered, a.playlistQueries[id])
 	if a.playlistHeaderHeights == nil {
 		a.playlistHeaderHeights = map[string]float32{}
 	}
@@ -226,7 +227,7 @@ func (a *app) playlistPage(c *ui.Context) {
 		if height := header.LayoutBounds().H; height > 0 {
 			a.playlistHeaderHeights[id] = height
 		}
-		ui.Box(c.Key("playlist-search-space")).Height(54)
+		ui.Box(c.Key("playlist-search-space")).Height(playlistToolbarHeight)
 		if len(tracks) == 0 && strings.TrimSpace(a.playlistQueries[id]) != "" {
 			ui.Text(c, "此歌单中没有匹配的歌曲").FontSize(14).TextColor(a.pal.muted).Padding(30, 12)
 		}
@@ -234,18 +235,36 @@ func (a *app) playlistPage(c *ui.Context) {
 	top, _ := a.insets(c)
 	headerHeight := a.playlistHeaderHeights[id]
 	if headerHeight <= 0 {
-		headerHeight = 238
+		headerHeight = playlistCoverSize + playlistHeaderGap
 	}
-	searchTop := top + pageGap + max(0, headerHeight-a.trackListOffset())
-	ui.Box(c.Key("playlist-search-toolbar")).Absolute().Top(searchTop).Left(0).Right(0).Height(54).PaddingX(pagePad).Background(a.pal.bg).Children(func() {
-		a.playlistSearch(c, pl)
+	offset, headerVisible := a.trackHeaderOffset()
+	if !headerVisible {
+		offset = headerHeight
+	}
+	searchTop := top + pageGap + max(0, headerHeight-offset)
+	bar := ui.Column(c.Key("playlist-search-toolbar")).Absolute().Top(searchTop).Left(0).Right(0).Height(playlistToolbarHeight).PaddingX(pagePad - 12)
+	// The sticky controls cover the rows scrolling beneath them, including
+	// in glass mode, so text from two rows never competes for attention.
+	if offset >= headerHeight {
+		ui.Box(c.Key("playlist-top-cover")).Absolute().Top(0).Left(0).Right(0).Height(top + pageGap).Background(a.pal.bg)
+		bar.Background(a.pal.bg)
+	}
+	bar.Children(func() {
+		ui.Box(c).PaddingX(12).Children(func() { a.playlistSearch(c, pl) })
+		a.playlistColumns(c, pl)
 	})
 }
 
+const (
+	playlistCoverSize = 176
+	playlistHeaderGap = 18
+)
+
 func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 	p := a.pal
-	ui.Row(c).Gap(28).AlignItems(ui.End).Padding(0, 0, 26, 0).Children(func() {
-		ui.Box(c).Size(212, 212).Radius(14).Shadow(0, 18, 40, -10, p.cardShade).Children(func() {
+	tracks := a.orderedPlaylistTracks(pl)
+	ui.Row(c).Gap(24).AlignItems(ui.End).Padding(0, 0, playlistHeaderGap, 0).Children(func() {
+		ui.Box(c).Size(playlistCoverSize, playlistCoverSize).Shrink(0).Radius(14).Shadow(0, 12, 28, -10, p.cardShade).Children(func() {
 			a.listArt(c, pl, 600, 14)
 		})
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(8).Children(func() {
@@ -257,7 +276,7 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 				kind, unit = "播客", "集"
 			}
 			ui.Text(c, kind).FontSize(12).FontWeight(600).TextColor(p.accent)
-			ui.Text(c, pl.Name).FontSize(30).FontWeight(800).LetterSpacing(-0.6).MaxLines(2).LineHeight(1.2)
+			ui.Text(c, pl.Name).FontSize(28).FontWeight(700).LetterSpacing(-0.5).MaxLines(2).LineHeight(1.2)
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
 				if len(pl.Artists) > 0 {
 					a.artistLinks(c.Key("by"), pl.Artists, 13, p.muted, p.text)
@@ -282,18 +301,26 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 			}
 			ui.Row(c).Gap(10).Margin(10, 0, 0, 0).Children(func() {
 				if pillButton(c.Key("play"), iconPlay, "播放", p.accent, p.onAccent).Clicked() {
-					a.playFrom(spotify.HomeItem{List: pl}, pl.Tracks, firstPlayable(pl.Tracks))
+					a.playFrom(spotify.HomeItem{List: pl}, tracks, firstPlayable(tracks))
 				}
-				if pillButton(c.Key("shuffle"), iconShuffle, "随机播放", p.hover.Over(p.bg), p.text).Clicked() {
+				shuffle := pillButton(c.Key("shuffle"), iconShuffle, "随机播放", p.hover.Over(p.bg), p.text)
+				if a.glassEnabled() {
+					shuffle.Material(a.liquidGlass(true, ui.Color{}))
+				}
+				if shuffle.Clicked() {
 					a.enableShuffle()
-					a.playFrom(spotify.HomeItem{List: pl}, pl.Tracks, firstPlayable(pl.Tracks))
+					a.playFrom(spotify.HomeItem{List: pl}, tracks, firstPlayable(tracks))
 				}
 				if a.profile != nil && !pl.Liked() && a.editable(pl.ID) == nil {
 					icon, label := iconPlus, "收藏"
 					if a.isSaved(pl.ID) {
 						icon, label = iconCheck, "已收藏"
 					}
-					if pillButton(c.Key("save"), icon, label, p.hover.Over(p.bg), p.text).Clicked() {
+					save := pillButton(c.Key("save"), icon, label, p.hover.Over(p.bg), p.text)
+					if a.glassEnabled() {
+						save.Material(a.liquidGlass(true, ui.Color{}))
+					}
+					if save.Clicked() {
 						a.toggleSaved(pl)
 					}
 				}
@@ -500,11 +527,16 @@ func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, head
 	_ = list
 }
 
-func (a *app) trackListOffset() float32 {
-	if a.startMarkW <= 0 {
-		return 0
+func (a *app) trackHeaderOffset() (offset float32, visible bool) {
+	// Once row zero leaves the virtualized list, its start mark stops
+	// updating. The list's visible range still tells the toolbar to pin.
+	if first, _ := a.trackList.Visible(); first > 0 {
+		return 0, false
 	}
-	return max(0, a.startMarkTop-a.startMarkY)
+	if a.startMarkW <= 0 {
+		return 0, true
+	}
+	return max(0, a.startMarkTop-a.startMarkY), true
 }
 
 // nowPlayingBars dance in the row of the track playing.

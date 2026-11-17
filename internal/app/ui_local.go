@@ -165,17 +165,29 @@ func (a *app) localMusicPage(c *ui.Context) {
 	if headerHeight <= 0 {
 		headerHeight = 220
 	}
-	searchTop := top + pageGap + max(0, headerHeight-a.trackListOffset())
-	ui.Box(c.Key("local-search-toolbar")).Absolute().Top(searchTop).Left(0).Right(0).Height(54).PaddingX(pagePad).Background(a.pal.bg).Children(func() {
+	offset, headerVisible := a.trackHeaderOffset()
+	searchTop := top + pageGap
+	if headerVisible {
+		searchTop += max(0, headerHeight-offset)
+	}
+	bar := ui.Box(c.Key("local-search-toolbar")).Absolute().Top(searchTop).Left(0).Right(0).Height(54).PaddingX(pagePad)
+	if !a.glassEnabled() {
+		bar.Background(a.pal.bg)
+	}
+	bar.Children(func() {
 		a.localSearch(c, tracks)
 	})
 }
 
 func (a *app) localSearch(c *ui.Context, tracks []spotify.Track) {
 	query := a.localQuery
-	ui.Row(c.Key("local-search")).Height(54).AlignItems(ui.Center).Gap(12).Padding(0, 0, 18, 0).Children(func() {
-		s := a.searchField(c.Key("local-search-capsule"), "local-filter", "clear-local-search", &a.localSearchBox, &query, "筛选本地音乐", "搜索本地音乐")
-		s.row.Width(300).Shrink(1)
+	row := ui.Row(c.Key("local-search")).Height(54).AlignItems(ui.Center).Gap(12)
+	if !a.glassEnabled() {
+		row.Padding(0, 0, 18, 0)
+	}
+	row.Children(func() {
+		field, s := a.searchField(c.Key("local-search-capsule"), "local-filter", "clear-local-search", &a.localSearchBox, &query, "筛选本地音乐", "搜索本地音乐")
+		field.Width(300).Shrink(1)
 		if s.changed || s.cleared {
 			a.localQuery = query
 			a.trackList.ScrollTo(0, ui.Start)

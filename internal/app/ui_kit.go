@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 
 	"vinyl/internal/player"
@@ -33,8 +34,8 @@ func paletteFor(t *ui.Theme) palette {
 			bg:        ui.Hex("#141416"),
 			sidebar:   ui.Hex("#1c1c1f"),
 			text:      ui.Hex("#f5f5f7"),
-			muted:     ui.RGBA(235, 235, 245, 0.56),
-			faint:     ui.RGBA(235, 235, 245, 0.3),
+			muted:     ui.RGBA(235, 235, 245, 0.68),
+			faint:     ui.RGBA(235, 235, 245, 0.5),
 			hairline:  ui.RGBA(255, 255, 255, 0.07),
 			hover:     ui.RGBA(255, 255, 255, 0.06),
 			press:     ui.RGBA(255, 255, 255, 0.1),
@@ -47,8 +48,8 @@ func paletteFor(t *ui.Theme) palette {
 		bg:        ui.Hex("#ffffff"),
 		sidebar:   ui.Hex("#f4f4f6"),
 		text:      ui.Hex("#1d1d1f"),
-		muted:     ui.RGBA(60, 60, 67, 0.62),
-		faint:     ui.RGBA(60, 60, 67, 0.32),
+		muted:     ui.RGBA(60, 60, 67, 0.72),
+		faint:     ui.RGBA(60, 60, 67, 0.54),
 		hairline:  ui.RGBA(0, 0, 0, 0.07),
 		hover:     ui.RGBA(0, 0, 0, 0.04),
 		press:     ui.RGBA(0, 0, 0, 0.08),
@@ -56,6 +57,41 @@ func paletteFor(t *ui.Theme) palette {
 		onAccent:  ui.Hex("#ffffff"),
 		cardShade: ui.RGBA(0, 0, 0, 0.16),
 	}
+}
+
+// glassEnabled reports whether iOS-style Liquid Glass surfaces are enabled.
+func (a *app) glassEnabled() bool {
+	return a.settings.Glass
+}
+
+// glassStrength returns the clamped Liquid Glass strength in [0, 1].
+func (a *app) glassStrength() float32 {
+	return float32(min(max(a.settings.GlassStrength, 0), 1))
+}
+
+// liquidGlass builds a glass.Glass material scaled continuously by the user's
+// glass strength setting across all pane sizes.
+func (a *app) liquidGlass(interactive bool, tint ui.Color) glass.Glass {
+	k := a.glassStrength()
+	if tint.A > 0 {
+		alpha := float32(tint.A) / 255 * (0.25 + 0.75*k)
+		tint = tint.Alpha(alpha)
+	}
+	return glass.Glass{
+		Tint:        tint,
+		Interactive: interactive,
+		Strength:    k,
+		StrengthSet: true,
+	}
+}
+
+// glassGroup creates a glass.Group sharing the user's continuous glass strength.
+func (a *app) glassGroup(c *ui.Context, radius float32) *glass.Group {
+	g := glass.NewGroup(c)
+	g.Radius = radius
+	g.Strength = a.glassStrength()
+	g.StrengthSet = true
+	return g
 }
 
 // iconButton is a borderless button showing an icon, which a soft circle
@@ -329,7 +365,6 @@ func segmented(c *ui.Context, selected *int, labels ...string) bool {
 }
 
 type searchFieldState struct {
-	row       ui.Element
 	changed   bool
 	submitted bool
 	cleared   bool
@@ -337,10 +372,10 @@ type searchFieldState struct {
 
 // searchField draws a capsule search box matching the playlist search bar's
 // rounded pill shape, soft background, and focus transition.
-func (a *app) searchField(c *ui.Context, inputKey any, clearKey string, box *ui.Handle, value *string, label, placeholder string) searchFieldState {
+func (a *app) searchField(c *ui.Context, inputKey any, clearKey string, box *ui.Handle, value *string, label, placeholder string) (ui.Element, searchFieldState) {
 	p := a.pal
 	field := ui.Row(c).Height(36).PaddingX(12).Gap(8).AlignItems(ui.Center).Radius(18)
-	out := searchFieldState{row: field}
+	var out searchFieldState
 	field.Children(func() {
 		ui.Icon(c, iconSearch).Size(14, 14).TextColor(p.muted)
 		in := ui.TextInputBase(c.Key(inputKey), value).Bind(box).Grow(1).MinWidth(0).
@@ -356,6 +391,27 @@ func (a *app) searchField(c *ui.Context, inputKey any, clearKey string, box *ui.
 	if field.FocusWithin() {
 		background, edge = p.bg, p.accent.Alpha(.35)
 	}
-	field.Background(field.AnimateColor("search-bg", background, ui.Animation{Duration: 120 * time.Millisecond})).Border(1, edge)
-	return out
+	if a.glassEnabled() {
+		var tint ui.Color
+		if field.FocusWithin() {
+			tint = p.accent.Alpha(0.08)
+		}
+		field.Material(a.liquidGlass(true, tint)).Border(1, edge)
+		if !p.dark {
+			field.Shadow(0, 2, 10, -3, ui.RGBA(0, 0, 0, 0.07))
+		}
+	} else {
+		field.Background(field.AnimateColor("search-bg", background, ui.Animation{Duration: 120 * time.Millisecond})).Border(1, edge)
+	}
+	return field, out
+}
+
+// styleGlassPanel applies Liquid Glass to a floating panel (popover or dialog)
+// when glass is enabled, or falls back to the classic solid fill, border, and shadow.
+func (a *app) styleGlassPanel(panel ui.Element, radius float32, fill, edge ui.Color, shadowBlur, shadowY float32, shadowColor ui.Color) {
+	if a.glassEnabled() {
+		panel.Radius(radius).Material(a.liquidGlass(false, ui.Color{}))
+		return
+	}
+	panel.Radius(radius).Background(fill).Border(0.5, edge).Shadow(0, shadowY, shadowBlur, -4, shadowColor)
 }

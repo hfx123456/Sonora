@@ -30,6 +30,9 @@ type Group struct {
 	Tint ui.Color
 	// Clarity makes large groups clearer, as Glass's.
 	Clarity float32
+	// Strength, when StrengthSet is true, continuously interpolates the glass.
+	Strength    float32
+	StrengthSet bool
 	// Radius is the corners of each element's pane, in DIPs.
 	Radius float32
 	// Merge is how smoothly panes blend into one surface, in DIPs: 24 by
@@ -86,7 +89,12 @@ func (g *Group) PaintMaterial(p *ui.Painter, box ui.Rect, _ [4]float32) {
 		}
 		return
 	}
-	mat := paneMaterial(minSide, p.Scale(), g.Clarity, g.Style == Clear, p.Theme().Dark)
+	var mat material
+	if g.StrengthSet {
+		mat = paneMaterialWithStrength(minSide, p.Scale(), g.Strength, p.Theme().Dark)
+	} else {
+		mat = paneMaterial(minSide, p.Scale(), g.Clarity, g.Style == Clear, p.Theme().Dark)
+	}
 	if p.Preferences().HighContrast {
 		mat.rim = min(mat.rim+0.15, 1)
 		mat.rimWidth = max(mat.rimWidth, 1.5)
@@ -245,7 +253,11 @@ func Fragment(dst vec4, pos vec2) vec4 {
 	if Rim > 0.0 && t < 3.0*RimWidth {
 		r := t / RimWidth
 		lit := Rim * exp(-r*r)
-		l := abs(dot(n, Light))
+		spec := abs(dot(n, Light))
+		l := mix(0.14, 0.52, spec)
+		if High >= 0.95 {
+			l = mix(0.76, 1.0, spec)
+		}
 		c = c + (vec3(l, l, l) - c) * lit
 	}
 	return vec4(c.x*a, c.y*a, c.z*a, a)

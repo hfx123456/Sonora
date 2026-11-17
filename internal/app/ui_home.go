@@ -46,7 +46,9 @@ func (a *app) homePage(c *ui.Context) {
 	}
 	top, bottom := a.insets(c)
 	page := ui.Scroll(c.Key("home")).TrackScroll(&a.pageScroll).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0)
-	a.homeWash(c, page, top)
+	if !a.glassEnabled() {
+		a.homeWash(c, page, top)
+	}
 	page.Children(func() {
 		a.startMark(c)
 		defer a.endMark(c)
@@ -117,7 +119,11 @@ func (a *app) homeChips(c *ui.Context) {
 			case b.Hovered():
 				bg = p.text.Alpha(0.13)
 			}
-			b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 140 * time.Millisecond}))
+			if a.glassEnabled() && !on {
+				b.Material(a.liquidGlass(true, ui.Color{}))
+			} else {
+				b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 140 * time.Millisecond}))
+			}
 			b.Children(func() {
 				ui.Text(c, f.label).FontSize(13).FontWeight(500).TextColor(fg).SingleLine()
 			})
@@ -215,17 +221,25 @@ func (a *app) shortcutColumns(c *ui.Context) int {
 // cover's color, once loaded, and whether the pointer is on it.
 func (a *app) shortcutTile(c *ui.Context, it *spotify.HomeItem) (ui.Color, bool) {
 	name := itemName(it)
-	b := ui.ButtonBase(c).Height(56).Radius(6).Gap(12).Padding(0, 10, 0, 0).AlignItems(ui.Center).FocusRing(false).Label(name)
+	b := ui.ButtonBase(c).Height(56).Radius(14).Clip().Gap(12).Padding(6, 12, 6, 6).AlignItems(ui.Center).FocusRing(false).Label(name)
 	hovered := b.Hovered()
-	bg := a.pal.text.Alpha(0.06)
-	if hovered {
-		bg = a.pal.text.Alpha(0.12)
+	var bg ui.Color
+	if a.glassEnabled() {
+		bg = ui.Transparent
+		if hovered {
+			bg = a.pal.text.Alpha(0.06)
+		}
+	} else {
+		bg = a.pal.text.Alpha(0.06)
+		if hovered {
+			bg = a.pal.text.Alpha(0.12)
+		}
 	}
 	b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 140 * time.Millisecond}))
 	var tint ui.Color
 	b.Children(func() {
-		ui.Box(c).Size(56, 56).Shrink(0).Radius(6).Shadow(0, 4, 12, -4, a.pal.cardShade).Children(func() {
-			tint = a.itemArt(c, it, 120, 6)
+		ui.Box(c).Size(44, 44).Shrink(0).Radius(8).Children(func() {
+			tint = a.itemArt(c, it, 120, 8)
 		})
 		ui.Text(c, name).FontSize(14).FontWeight(700).MaxLines(2).LineHeight(1.3).Grow(1).Shrink(1).MinWidth(0)
 		a.greenPlay(c, ui.ButtonBase(c.Key("play")).Shrink(0), it, 32, hovered)

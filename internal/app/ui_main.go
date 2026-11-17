@@ -57,6 +57,9 @@ func (a *app) view(c *ui.Context) {
 	}
 	npOpen, npSettled := a.npState(c)
 	a.syncFullScreen(npOpen)
+	if a.glassEnabled() && !(npOpen && npSettled) {
+		a.unifiedBackdrop(c, root)
+	}
 	root.Children(func() {
 		page := ui.Row(c).Fill().AlignItems(ui.Stretch)
 		page.Children(func() {
@@ -68,13 +71,17 @@ func (a *app) view(c *ui.Context) {
 				return
 			}
 			side := ui.Column(c).Width(sidebarWidth)
-			if !c.Vibrancy() {
+			if !c.Vibrancy() && !a.glassEnabled() {
 				side.Background(p.sidebar)
 			}
 			side.Children(func() { a.sidebar(c) })
+			main := ui.Box(c.Key("main")).Grow(1)
+			if !a.glassEnabled() {
+				main.Background(p.bg).BorderWidth(0, 0, 0, 1).BorderColor(p.hairline)
+			}
 			// Keyed, so that a popover of the sidebar opening or closing
 			// keeps what the page and its bars hold, their edges' fades.
-			ui.Box(c.Key("main")).Grow(1).Background(p.bg).BorderWidth(0, 0, 0, 1).BorderColor(p.hairline).Children(func() {
+			main.Children(func() {
 				a.content(c)
 				// The bars float over the page, which scrolls under them:
 				// positioned, they paint over it.
@@ -250,8 +257,8 @@ func (a *app) sidebar(c *ui.Context) {
 	// the title bar it reaches up into would.
 	ui.Column(c).Fill().Padding(top, 14, 14, 14).Gap(4).DragWindow().Children(func() {
 		// The search field.
-		s := a.searchField(c, "search", "clear-search", &a.searchBox, &a.query, "搜索", "搜索歌曲、歌手")
-		s.row.Margin(0, 0, 14, 0)
+		field, s := a.searchField(c, "search", "clear-search", &a.searchBox, &a.query, "搜索", "搜索歌曲、歌手")
+		field.Margin(0, 0, 14, 0)
 		if s.submitted && strings.TrimSpace(a.query) != "" {
 			a.search(strings.TrimSpace(a.query))
 		}
@@ -259,7 +266,13 @@ func (a *app) sidebar(c *ui.Context) {
 			a.searchBox.Focus(c)
 		}
 
-		ui.Scroll(c.Key("nav")).TrackScroll(&a.navScroll).Grow(1).Margin(0, -6).Padding(0, 6).Gap(4).Children(func() {
+		nav := ui.Scroll(c.Key("nav")).TrackScroll(&a.navScroll).Grow(1).Gap(4)
+		if a.glassEnabled() {
+			nav.Margin(0, -8, 0, -6).Padding(0, 14, 0, 6)
+		} else {
+			nav.Margin(0, -6).Padding(0, 6)
+		}
+		nav.Children(func() {
 			a.navItem(c, iconHome, "为你推荐", route{page: pageHome})
 			a.navItem(c, iconDaily, "每日推荐", route{page: pageDaily})
 			a.navItem(c, iconCharts, "排行榜", route{page: pageCharts})
@@ -308,15 +321,26 @@ func (a *app) appearanceButton(c *ui.Context) {
 func (a *app) navItem(c *ui.Context, icon *ui.SVG, label string, r route) {
 	p := a.pal
 	selected := a.route.page == r.page && !a.nowPlaying
-	b := ui.ButtonBase(c.Key(label)).Height(34).PaddingX(10).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false)
-	bg := ui.Transparent
-	switch {
-	case selected:
-		bg = p.press
-	case b.Hovered():
-		bg = p.hover
+	b := ui.ButtonBase(c.Key(label)).Height(34).PaddingX(10).Gap(10).Radius(10).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false)
+	if a.glassEnabled() && (selected || b.Hovered()) {
+		var tint ui.Color
+		if selected {
+			tint = p.accent.Alpha(0.14)
+		}
+		b.Material(a.liquidGlass(true, tint))
+		if !p.dark && selected {
+			b.Shadow(0, 2, 8, -2, ui.RGBA(0, 0, 0, 0.06))
+		}
+	} else {
+		bg := ui.Transparent
+		switch {
+		case selected:
+			bg = p.press
+		case b.Hovered():
+			bg = p.hover
+		}
+		b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
 	}
-	b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
 	color := p.text
 	if selected {
 		color = p.accent
@@ -406,12 +430,104 @@ func edgeShown(el ui.Element, under bool) float32 {
 // pageTop is the strip over the top of a page, frosting what scrolls under
 // it as macOS 26's hard scroll edge does: it drags the window, and holds
 // the back button once there is a page to go back to.
+// unifiedBackdrop paints one continuous window-wide canvas behind both the
+// floating sidebar and the main content area so there is never a seam between them.
+func (a *app) unifiedBackdrop(c *ui.Context, root ui.Element) {
+	p := a.pal
+	top, _ := a.insets(c)
+	var washColor ui.Color
+	var washStrength float32
+	switch a.route.page {
+	case pageHome:
+		if a.homeTint != (ui.Color{}) {
+			washColor = root.AnimateColor("home-wash", a.homeTint, ui.Animation{Duration: 600 * time.Millisecond})
+			washStrength = 0.22
+			if p.dark {
+				washStrength = 0.42
+			}
+			washStrength *= max(0, 1-a.pageScroll.Y/400)
+		}
+	case pagePlaylist:
+		if pl := a.playlists[a.route.playlist]; pl != nil {
+			washColor = ui.Hex("#5E46E8")
+			if !pl.Liked() && pl.Cover() != "" {
+				if art := a.art.get(spotify.Sized(pl.Cover(), 600), true); art != nil && art.tint.A > 0 {
+					washColor = art.tint
+				} else {
+					washColor = p.accent
+				}
+			}
+			washStrength = 0.16
+			if p.dark {
+				washStrength = 0.28
+			}
+			if offset, visible := a.trackHeaderOffset(); visible {
+				washStrength *= max(0, 1-offset/360)
+			} else {
+				washStrength = 0
+			}
+		}
+	default:
+		washColor = p.accent
+		if tr := a.pl.Current(); tr != nil {
+			if art := a.art.get(spotify.Sized(tr.Album.PicURL, 600), true); art != nil && art.tint.A > 0 {
+				washColor = art.tint
+			}
+		}
+		washStrength = 0.08
+		if p.dark {
+			washStrength = 0.16
+		}
+	}
+	root.Draw(func(dp *ui.Painter, r ui.Rect) {
+		dp.Fill(r, p.bg, 0)
+		if washColor.A > 0 && washStrength > 0.005 {
+			dp.FillGradient(r, ui.LinearGradient{
+				Angle: 180,
+				Oklab: true,
+				Stops: []ui.GradientStop{
+					{Color: washColor.Alpha(washStrength), At: 0},
+					{Color: washColor.Alpha(0), At: min(1, (top+360)/max(r.H, 1))},
+				},
+			}, 0)
+		}
+	})
+}
+
 func (a *app) pageTop(c *ui.Context) {
 	top, _ := a.insets(c)
-	edge := ui.Box(c.Key("top-edge")).Absolute().Top(0).Left(0).Right(0).Height(top).DragWindow().
-		Material(glass.ScrollEdge{Hard: true, Background: a.pal.bg})
-	edge.Opacity(edgeShown(edge, a.underTop))
+	if !a.glassEnabled() {
+		edge := ui.Box(c.Key("top-edge")).Absolute().Top(0).Left(0).Right(0).Height(top).DragWindow().
+			Material(glass.ScrollEdge{Hard: true, Background: a.pal.bg})
+		edge.Opacity(edgeShown(edge, a.underTop))
+	}
 	if len(a.history) > 0 || len(a.forward) > 0 {
+		if a.glassEnabled() {
+			ui.Row(c).Absolute().Top(max(6, (topBar(c)-34)/2)).Left(20).Height(34).Gap(8).AlignItems(ui.Center).Children(func() {
+				back := iconButton(c.Key("back"), iconBack, 16, a.pal.muted, "返回").Disabled(len(a.history) == 0).
+					Material(a.liquidGlass(true, ui.Color{}))
+				if !a.pal.dark {
+					back.Shadow(0, 2, 8, -2, ui.RGBA(0, 0, 0, 0.08))
+				}
+				if len(a.history) == 0 {
+					back.Opacity(0.35)
+				}
+				if back.Clicked() {
+					a.back()
+				}
+				if len(a.forward) > 0 {
+					fwd := iconButton(c.Key("forward"), iconForward, 16, a.pal.muted, "前进").
+						Material(a.liquidGlass(true, ui.Color{}))
+					if !a.pal.dark {
+						fwd.Shadow(0, 2, 8, -2, ui.RGBA(0, 0, 0, 0.08))
+					}
+					if fwd.Clicked() {
+						a.goForward()
+					}
+				}
+			})
+			return
+		}
 		ui.Row(c).Absolute().Top(0).Left(20).Height(topBar(c)).AlignItems(ui.Center).Children(func() {
 			back := iconButton(c.Key("back"), iconBack, 18, a.pal.muted, "返回").Disabled(len(a.history) == 0)
 			if len(a.history) == 0 {

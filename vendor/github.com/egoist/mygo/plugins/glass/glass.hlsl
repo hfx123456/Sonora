@@ -55,7 +55,8 @@ float4 effect(float2 p, Effect e) {
 	if (e.p0.z > 0 && t < 3 * rimWidth) {
 		float r = t / rimWidth;
 		float a = e.p0.z * exp(-r * r);
-		float l = abs(n.x * e.p3.x + n.y * e.p3.y);
+		float spec = abs(n.x * e.p3.x + n.y * e.p3.y);
+		float l = e.p2.y >= 0.95 ? lerp(0.76, 1.0, spec) : lerp(0.14, 0.52, spec);
 		c += (l - c) * a;
 	}
 	return float4(c, 1);

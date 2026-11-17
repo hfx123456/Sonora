@@ -241,6 +241,16 @@ const (
 )
 
 func (a *app) paneTabs(c *ui.Context) {
+	if a.glassEnabled() {
+		ui.Row(c).Padding(3, 3).Gap(2).Radius(999).
+			Material(a.liquidGlass(false, ui.Color{})).
+			Children(func() {
+				a.paneTab(c, paneLyrics, lyricsName(a.pl.Current()))
+				a.paneTab(c, paneStage, "律动")
+				a.paneTab(c, paneQueue, "列表")
+			})
+		return
+	}
 	a.paneTab(c, paneLyrics, lyricsName(a.pl.Current()))
 	a.paneTab(c, paneStage, "律动")
 	a.paneTab(c, paneQueue, "列表")
@@ -250,7 +260,13 @@ func (a *app) paneTabs(c *ui.Context) {
 // it is, and the controls.
 func (a *app) stageBar(c *ui.Context, tr *spotify.Track, art *artwork, accent ui.Color) {
 	pl := a.pl
-	ui.Column(c).Padding(0, 48, 28, 48).Gap(10).Children(func() {
+	bar := ui.Column(c).Padding(0, 48, 28, 48).Gap(10)
+	if a.glassEnabled() {
+		bar = ui.Column(c).Margin(0, 28, 20, 28).Padding(14, 24, 14, 24).Gap(10).
+			Radius(26).
+			Material(a.liquidGlass(false, ui.Color{}))
+	}
+	bar.Children(func() {
 		a.scrubber(c.Key("stage-scrub"), &a.npScrub, white.Alpha(0.18), white.Alpha(0.9), 14, accent.Mix(white, 0.35))
 		ui.Row(c).Gap(14).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Grow(1).Basis(0).MinWidth(0).Gap(12).AlignItems(ui.Center).Children(func() {
@@ -282,7 +298,11 @@ func (a *app) paneTab(c *ui.Context, i int, label string) {
 	} else if b.Hovered() {
 		bg = white.Alpha(0.06)
 	}
-	b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
+	if a.glassEnabled() && a.npPane == i {
+		b.Material(a.liquidGlass(true, white.Alpha(0.16)))
+	} else {
+		b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
+	}
 	fg = b.AnimateColor("fg", fg, ui.Animation{Duration: 120 * time.Millisecond})
 	b.Children(func() {
 		ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(fg)

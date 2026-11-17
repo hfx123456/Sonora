@@ -2,6 +2,8 @@ package app
 
 import (
 	"cmp"
+	"fmt"
+	"math"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -43,14 +45,23 @@ func (a *app) settingsPage(c *ui.Context) {
 	// Tinted as the window the settings had to themselves, so their cards
 	// stand from the page as they did there.
 	top, bottom := a.insets(c)
-	ui.Scroll(c.Key("settings")).TrackScroll(&a.pageScroll).Grow(1).
-		Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0).
-		Background(p.sidebar).Gap(8).Children(func() {
+	scroll := ui.Scroll(c.Key("settings")).TrackScroll(&a.pageScroll).Grow(1).
+		Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0).Gap(8)
+	if !a.glassEnabled() {
+		scroll.Background(p.sidebar)
+	}
+	scroll.Children(func() {
 		a.startMark(c)
 		defer a.endMark(c)
 		group := func(title string, rows func()) {
 			ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(p.muted).Margin(14, 4, 4, 4)
-			ui.Column(c).Radius(12).Background(p.bg).Border(1, p.hairline).Dividers(1, p.hairline).Children(rows)
+			card := ui.Column(c).Radius(12).Dividers(1, p.hairline)
+			if a.glassEnabled() {
+				card.Material(a.liquidGlass(false, ui.Color{}))
+			} else {
+				card.Background(p.bg).Border(1, p.hairline)
+			}
+			card.Children(rows)
 		}
 		row := func(label, desc string, control func()) {
 			ui.Row(c).Padding(12, 16).Gap(16).AlignItems(ui.Center).MinHeight(48).Children(func() {
@@ -132,6 +143,18 @@ func (a *app) settingsPage(c *ui.Context) {
 					s.MyPlaylistGrid = i == 1
 					a.changed()
 				}
+			})
+			strengthPct := int(math.Round(min(max(s.GlassStrength, 0), 1) * 100))
+			row("液态玻璃", "启用 iOS 风格液态玻璃折射与磨砂质感，并调节强度", func() {
+				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, fmt.Sprintf("%d%%", strengthPct)).FontSize(12.5).FontFeatures("tnum").TextColor(p.muted).Width(36)
+					if ui.Slider(c.Key("glass-strength"), &s.GlassStrength, 0, 1).Label("玻璃强度").Width(140).Disabled(!s.Glass).Changed() {
+						a.changed()
+					}
+					if ui.Switch(c.Key("glass"), &s.Glass).Label("液态玻璃").Changed() {
+						a.changed()
+					}
+				})
 			})
 		})
 

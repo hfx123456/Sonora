@@ -49,6 +49,11 @@ type Glass struct {
 	// 200. On Clear glass, which barely tones already, it only lights the
 	// rim and curves the bezel.
 	Clarity float32
+	// Strength, when StrengthSet is true, continuously interpolates the glass
+	// material from 0 (clear, light refraction) to 1 (frosted, strong
+	// refraction and rim) regardless of pane size.
+	Strength    float32
+	StrengthSet bool
 	// hover follows the pointer over an interactive glass, from 0 to 1.
 	hover float32
 }
@@ -188,7 +193,12 @@ func paint(p *ui.Painter, box ui.Rect, radii [4]float32, g Glass) {
 		paintOpaque(p, box, radii, g)
 		return
 	}
-	mat := paneMaterial(min(box.W, box.H), p.Scale(), g.Clarity, g.Style == Clear, p.Theme().Dark)
+	var mat material
+	if g.StrengthSet {
+		mat = paneMaterialWithStrength(min(box.W, box.H), p.Scale(), g.Strength, p.Theme().Dark)
+	} else {
+		mat = paneMaterial(min(box.W, box.H), p.Scale(), g.Clarity, g.Style == Clear, p.Theme().Dark)
+	}
 	if p.Preferences().HighContrast {
 		mat.rim = min(mat.rim+0.15, 1)
 		mat.rimWidth = max(mat.rimWidth, 1.5)
@@ -261,6 +271,47 @@ func paneMaterial(m, s, k float32, clear, dark bool) material {
 	default:
 		mat.blur = min(max(m*0.035, 1), at(paneBlur)) * s
 		mat.low, mat.high, mat.curve, mat.saturation = at(paneLightLow), 1, 1.2, 1
+	}
+	return mat
+}
+
+func lerp(a, b, t float32) float32 { return a + (b-a)*t }
+
+// paneMaterialWithStrength continuously interpolates Liquid Glass parameters
+// from 0 (ultra-clear, subtle refraction) to 1 (rich frosted Liquid Glass)
+// across all pane sizes, without an abrupt Regular/Clear switch.
+func paneMaterialWithStrength(m, s, strength float32, dark bool) material {
+	t := min(max(strength, 0), 1)
+	if t != t {
+		t = 0.7
+	}
+	bezel := min(lerp(20, 36, t), m/2)
+	refractMult := lerp(0.85, 1.8, t)
+	maxBlur := lerp(1.2, 12.0, t)
+	minBlur := lerp(0.8, 3.5, t)
+	blur := min(max(m*lerp(0.02, 0.065, t), minBlur), maxBlur) * s
+	rim := lerp(0.28, 0.58, t)
+	if dark {
+		rim = lerp(0.14, 0.34, t)
+	}
+	mat := material{
+		blur:       blur,
+		bezel:      bezel * s,
+		refraction: refractMult * bezel * s,
+		rim:        rim,
+		rimWidth:   1,
+		light:      math.Pi / 4,
+	}
+	if dark {
+		mat.low = lerp(0.04, 0.16, t)
+		mat.high = lerp(0.95, 0.54, t)
+		mat.curve = lerp(1.05, 2.0, t)
+		mat.saturation = lerp(1.15, 2.2, t)
+	} else {
+		mat.low = lerp(0.02, 0.14, t)
+		mat.high = 1.0
+		mat.curve = lerp(1.0, 1.12, t)
+		mat.saturation = lerp(1.15, 1.55, t)
 	}
 	return mat
 }

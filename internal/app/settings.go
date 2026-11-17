@@ -39,6 +39,10 @@ type settings struct {
 	NotchGreeted bool `json:"notchGreeted"`
 	// Appearance is light, dark, or system to follow the system.
 	Appearance string `json:"appearance"`
+	// Glass enables iOS-style Liquid Glass surfaces across bars and floating controls.
+	Glass bool `json:"glass"`
+	// GlassStrength controls the intensity of Liquid Glass, from 0 (clear) to 1 (frosted).
+	GlassStrength float64 `json:"glassStrength"`
 	// MyPlaylistGrid shows the listener's own and saved playlists in the
 	// sidebar as a two-column grid of covers rather than a list.
 	MyPlaylistGrid bool `json:"myPlaylistGrid"`
@@ -89,7 +93,17 @@ type settings struct {
 }
 
 func defaultSettings() settings {
-	return settings{NotchActivity: true, Appearance: "system", Volume: 0.8, CacheMB: 1024, MVLyrics: true, MVQueue: true, AutoUpdate: true}
+	return settings{
+		NotchActivity: true,
+		Appearance:    "system",
+		Glass:         true,
+		GlassStrength: 0.7,
+		Volume:        0.8,
+		CacheMB:       1024,
+		MVLyrics:      true,
+		MVQueue:       true,
+		AutoUpdate:    true,
+	}
 }
 
 func settingsPath() (string, error) {
@@ -109,6 +123,7 @@ func loadSettings() settings {
 		}
 		s.path = path
 	}
+	s.GlassStrength = min(max(s.GlassStrength, 0), 1)
 	return s
 }
 
