@@ -100,6 +100,157 @@ func Fragment(dst vec4, pos vec2) vec4 {
 
 var fogShader = sync.OnceValue(func() *shader.Shader { return shader.MustCompile(fogSource) })
 
+// flowSource paints an Apple Music-style fluid background adapted from
+// Lyricify-Backgrounds: multiple counter-rotating, translating layers of the
+// blurred cover with liquid domain warping, saturation boost, and bass glow.
+const flowSource = `package main
+
+var Time float
+var Bass float
+var C0 vec4
+var C1 vec4
+var C2 vec4
+var C3 vec4
+
+func hash(p vec2) float {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453)
+}
+
+func rotate(value vec2, angle float) vec2 {
+	c := cos(angle)
+	s := sin(angle)
+	return vec2(c*value.x-s*value.y, s*value.x+c*value.y)
+}
+
+func saturation(color vec3, amount float) vec3 {
+	luma := dot(color, vec3(0.299, 0.587, 0.114))
+	return vec3(luma) + (color-vec3(luma))*amount
+}
+
+func sampleCover(uv vec2) vec3 {
+	return image0Sample(clamp(uv, vec2(0.02), vec2(0.98)) * image0Size()).rgb
+}
+
+func Fragment(dst vec4, pos vec2) vec4 {
+	size := rectSize()
+	uv := pos / size
+	t := Time
+
+	// Liquid domain warp so the cover's colors melt and flow like silk.
+	wuv := uv
+	wuv.x += 0.065*sin(uv.y*2.6+t*0.55) + 0.035*cos(uv.x*3.1-t*0.42)
+	wuv.y += 0.065*cos(uv.x*2.4-t*0.48) + 0.035*sin(uv.y*2.9+t*0.58)
+
+	// Base layer: zoomed and gently drifting cover.
+	baseUV := (wuv-vec2(0.5))*0.72 + vec2(0.5) + vec2(0.06*sin(t*0.25), 0.06*cos(t*0.21))
+	color := sampleCover(baseUV)
+
+	// Three counter-rotating, translating cover layers (Lyricify-Backgrounds style,
+	// tuned for smooth, clearly visible Apple Music-like motion).
+	point := (wuv - vec2(0.5)) * 2.0
+	for layer := 0; layer < 3; layer++ {
+		period := 24.0
+		translation := vec2(0.25*sin(t*0.20), 0.20*cos(t*0.17))
+		zoom := 1.45
+		weight := 0.58
+		if layer == 1 {
+			period = -19.0
+			translation = vec2(-0.42+0.18*cos(t*0.24), 0.55+0.16*sin(t*0.19))
+			zoom = 1.65
+			weight = 0.54
+		}
+		if layer == 2 {
+			period = 14.5
+			translation = vec2(-0.75+0.22*sin(t*0.28), -0.55+0.20*cos(t*0.22))
+			zoom = 1.55
+			weight = 0.50
+		}
+		angle := t * 6.283185307179586 / period
+		local := point
+		if layer == 1 {
+			local = rotate(local, angle*0.65)
+		}
+		local = rotate(local/zoom-translation, angle)
+		local = local*0.5 + vec2(0.5)
+		edge := min(min(local.x, 1.0-local.x), min(local.y, 1.0-local.y))
+		color = mix(color, sampleCover(local), smoothstep(0.0, 0.34, edge)*weight)
+	}
+
+	// Subtle palette accent sheen & bass-reactive breathing.
+	sheen := 0.5 + 0.5*sin((wuv.x*1.3+wuv.y*1.1)*2.4-t*0.75)
+	sheen = smoothstep(0.30, 0.95, sheen)
+	color = mix(color, max(color, C2.rgb), sheen*(0.16+0.18*Bass))
+
+	// Lyricify-style vibrancy boost + dark-mode legibility clamping.
+	color = saturation(color, 1.45+0.25*Bass)
+	color = clamp(color*0.82, vec3(0.04), vec3(0.76))
+
+	// Gentle vignette + foot darkening under player controls.
+	g := length((uv - vec2(0.45, 0.45)) * vec2(0.95, 1.15))
+	color *= 1.04 - 0.30*smoothstep(0.28, 0.95, g)
+	color *= 1.0 - 0.14*smoothstep(0.58, 1.0, uv.y)
+
+	// Tiny dither to eliminate 8-bit gradient banding.
+	color += (hash(pos) - 0.5) / 255.0
+	return vec4(clamp(color, 0.0, 1.0), 1.0)
+}
+`
+
+// flowFallbackSource renders the 4-color fluid mesh when no blurred cover
+// bitmap is available yet.
+const flowFallbackSource = `package main
+
+var Time float
+var Bass float
+var C0 vec4
+var C1 vec4
+var C2 vec4
+var C3 vec4
+
+func hash(p vec2) float {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453)
+}
+
+func Fragment(dst vec4, pos vec2) vec4 {
+	size := rectSize()
+	uv := pos / size
+	aspect := size.x / max(size.y, 1.0)
+	t := Time * 0.65
+
+	wuv := uv
+	wuv.x += 0.09*sin(uv.y*2.6+t*1.1) + 0.05*cos(uv.x*3.1-t*0.8)
+	wuv.y += 0.09*cos(uv.x*2.4-t*0.9) + 0.05*sin(uv.y*2.9+t*1.2)
+
+	p0 := vec2(0.5+0.36*sin(t*0.70+0.2), 0.5+0.36*cos(t*0.55+1.1))
+	p1 := vec2(0.5+0.38*cos(t*0.62+2.4), 0.5+0.34*sin(t*0.78+0.6))
+	p2 := vec2(0.5+0.34*sin(t*0.85+4.1), 0.5+0.38*cos(t*0.68+3.3))
+	p3 := vec2(0.5+0.36*cos(t*0.52+5.0), 0.5+0.32*sin(t*0.90+2.1))
+
+	scale := vec2(aspect, 1.0)
+	d0 := length((wuv - p0) * scale)
+	d1 := length((wuv - p1) * scale)
+	d2 := length((wuv - p2) * scale)
+	d3 := length((wuv - p3) * scale)
+
+	pulse := 1.0 + 0.14*Bass
+	w0 := exp(-d0 * d0 * (3.2 / pulse))
+	w1 := exp(-d1 * d1 * (3.5 / pulse))
+	w2 := exp(-d2 * d2 * (3.8 / pulse))
+	w3 := exp(-d3 * d3 * (3.4 / pulse))
+
+	sum := w0 + w1 + w2 + w3 + 0.001
+	c := (C0.rgb*w0 + C1.rgb*w1 + C2.rgb*w2 + C3.rgb*w3) / sum
+
+	g := length((uv - vec2(0.45, 0.45)) * vec2(0.95, 1.15))
+	c *= 1.02 - 0.34*smoothstep(0.25, 0.95, g)
+	c += (hash(pos) - 0.5) / 255.0
+	return vec4(clamp(c, 0.0, 1.0), 1.0)
+}
+`
+
+var flowShader = sync.OnceValue(func() *shader.Shader { return shader.MustCompile(flowSource) })
+var flowFallbackShader = sync.OnceValue(func() *shader.Shader { return shader.MustCompile(flowFallbackSource) })
+
 // backdropFrame is how often the fog is painted while it moves.
 const backdropFrame = time.Second / 30
 
@@ -115,6 +266,7 @@ type backdropCache struct {
 	art    *artwork
 	tint   ui.Color
 	fog    bool
+	flow   bool
 	at     time.Time // when it was painted
 	drift  float64   // the clouds' time, in seconds, which stops on pause
 	speed  float64   // how fast drift goes: 1 playing, 0 paused
@@ -122,16 +274,20 @@ type backdropCache struct {
 	last   time.Time
 }
 
-// backdrop paints the backdrop behind Now Playing, still or fog.
+// backdrop paints the backdrop behind Now Playing, still, fog, or flow.
 func (a *app) backdrop(c *ui.Context, art *artwork, tint ui.Color) {
 	pl := a.pl
-	fog, still := a.settings.Fog, c.Preferences().ReduceMotion
+	fog, flow, still := a.settings.Fog, a.settings.Flow, c.Preferences().ReduceMotion
+	if flow {
+		fog = false
+	}
+	effect := fog || flow
 	ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
-		// The CPU, drawing the fog for want of a GPU, paints far fewer
-		// pixels, and those once a song: the fog stays still.
+		// The CPU, drawing the animated backdrop for want of a GPU, paints far
+		// fewer pixels, and those once a song: the backdrop stays still.
 		gpu := p.Accelerated()
 		div := float32(8)
-		if fog && gpu {
+		if effect && gpu {
 			div = 2
 		}
 		cw, ch := int(r.W/div)+1, int(r.H/div)+1
@@ -146,21 +302,24 @@ func (a *app) backdrop(c *ui.Context, art *artwork, tint ui.Color) {
 			// Another song: the last one's stays as it was, fading out.
 			bd.canvas, bd.before, bd.fadeAt = bd.before, bd.canvas, now
 		}
-		moving := fog && gpu && !still
+		moving := effect && gpu && !still
 		lv, live := pl.Levels()
 		moved := bd.step(now, pl.Playing() && moving, lv, live && moving)
 		due := now.Sub(bd.at) >= backdropFrame-2*time.Millisecond
-		if bd.canvas == nil || bd.art != art || bd.tint != tint || bd.fog != fog || moved && due {
+		if bd.canvas == nil || bd.art != art || bd.tint != tint || bd.fog != fog || bd.flow != flow || moved && due {
 			if bd.canvas == nil {
 				bd.canvas = ui.NewCanvas(cw, ch)
 			}
-			bd.art, bd.tint, bd.fog, bd.at = art, tint, fog, now
+			bd.art, bd.tint, bd.fog, bd.flow, bd.at = art, tint, fog, flow, now
 			bass := bd.level.group(0, 6)
 			bd.canvas.Draw(p, func(cp *ui.Painter) {
 				box := ui.Rect{W: float32(cw), H: float32(ch)}
-				if fog {
+				switch {
+				case flow:
+					drawFlow(cp, box, art, tint, float32(bd.drift), bass)
+				case fog:
 					drawFog(cp, box, tint, float32(bd.drift), bass)
-				} else {
+				default:
 					drawBackdrop(cp, box, art, tint)
 				}
 			})
@@ -244,6 +403,46 @@ func drawFog(p *ui.Painter, r ui.Rect, tint ui.Color, drift, bass float32) {
 	fogShader().Draw(p, r, shader.Options{Uniforms: map[string]any{
 		"Time": drift, "Bass": min(bass, 1), "Deep": deep, "Fog": fog,
 	}})
+}
+
+// drawFlow paints an Apple Music-style fluid background from art's blurred
+// cover and palette (falling back to tintPalette) at drift seconds, lit by bass.
+func drawFlow(p *ui.Painter, r ui.Rect, art *artwork, tint ui.Color, drift, bass float32) {
+	var pal [4]ui.Color
+	if art != nil && art.palette != ([4]ui.Color{}) {
+		pal = art.palette
+	} else {
+		pal = tintPalette(tint)
+	}
+	opts := shader.Options{Uniforms: map[string]any{
+		"Time": drift, "Bass": min(bass, 1),
+		"C0": pal[0], "C1": pal[1], "C2": pal[2], "C3": pal[3],
+	}}
+	if art != nil && art.backdrop != nil {
+		opts.Images = [4]*ui.Bitmap{art.backdrop}
+		flowShader().Draw(p, r, opts)
+		return
+	}
+	flowFallbackShader().Draw(p, r, opts)
+}
+
+// tintPalette builds four harmonious flow colors from a single tint.
+func tintPalette(tint ui.Color) [4]ui.Color {
+	h, s, _ := hsv(float64(tint.R)/255, float64(tint.G)/255, float64(tint.B)/255)
+	shifts := [4]float64{0, 24, -28, 48}
+	targetV := [4]float64{0.28, 0.52, 0.68, 0.44}
+	grayV := [4]float64{0.18, 0.34, 0.48, 0.26}
+	var out [4]ui.Color
+	for i := range 4 {
+		hh := math.Mod(h+shifts[i]+360, 360)
+		if s > 0.12 {
+			ss := min(max(s*1.25, 0.50), 0.88)
+			out[i] = hsvColor(hh, ss, targetV[i])
+		} else {
+			out[i] = hsvColor(hh, min(s*1.1, 0.18), grayV[i])
+		}
+	}
+	return out
 }
 
 // fogColors returns the deep shade behind the fog and the fog's own for a

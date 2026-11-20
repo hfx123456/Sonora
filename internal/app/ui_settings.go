@@ -233,6 +233,17 @@ func (a *app) settingsPage(c *ui.Context) {
 			})
 			row("烟雾背景", "播放页的背景化作封面色调的烟雾，缓缓升起，随低音起伏；仍在打磨，会多用一些电量", func() {
 				if ui.Switch(c.Key("fog"), &s.Fog).Label("烟雾背景").Changed() {
+					if s.Fog {
+						s.Flow = false
+					}
+					a.changed()
+				}
+			})
+			row("流光背景", "播放页的背景化作 Apple Music 风格的封面多色流光，如丝绸般缓缓交融流动，随低音呼吸；会多用一些电量", func() {
+				if ui.Switch(c.Key("flow"), &s.Flow).Label("流光背景").Changed() {
+					if s.Flow {
+						s.Fog = false
+					}
 					a.changed()
 				}
 			})

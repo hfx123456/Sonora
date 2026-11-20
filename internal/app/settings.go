@@ -62,6 +62,10 @@ type settings struct {
 	// rising and swelling with the bass: an experiment the listener turns
 	// on.
 	Fog bool `json:"fog"`
+	// Flow fills Now Playing's backdrop with an Apple Music-style fluid
+	// backdrop from the cover's blurred artwork and palette, drifting and
+	// breathing with the music.
+	Flow bool `json:"flow"`
 	// MVFill has music videos fill Now Playing, rather than show where
 	// the cover goes; and MVLyrics shows the lines sung over them then.
 	MVFill   bool `json:"mvFill"`

@@ -25,7 +25,8 @@ import (
 type artwork struct {
 	bmp      *ui.Bitmap
 	backdrop *ui.Bitmap
-	tint     ui.Color // the cover's most vivid color
+	tint     ui.Color    // the cover's most vivid color
+	palette  [4]ui.Color // four harmonious colors for the flowing backdrop
 	failed   bool
 	retryAt  time.Time
 	used     time.Time // when it was last asked for
@@ -94,10 +95,12 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 		<-c.sem
 		var blurred *image.RGBA
 		var tint ui.Color
+		var palette [4]ui.Color
 		if err == nil {
 			tint = dominantColor(img)
 			if backdrop {
 				blurred = blurImage(img)
+				palette = extractPalette(img, tint)
 			}
 		}
 		c.post(func() {
@@ -106,7 +109,7 @@ func (c *artCache) get(url string, backdrop bool) *artwork {
 				c.art[key] = &artwork{failed: true, used: c.now(), retryAt: c.now().Add(30 * time.Second)}
 				return
 			}
-			a := &artwork{bmp: bmp, tint: tint, used: c.now()}
+			a := &artwork{bmp: bmp, tint: tint, palette: palette, used: c.now()}
 			if blurred != nil {
 				a.backdrop = ui.NewBitmap(blurred)
 			}
@@ -323,6 +326,89 @@ func dominantColor(img image.Image) ui.Color {
 	}
 	w := weight[best]
 	return ui.RGB(uint8(sum[best][0]/w*255), uint8(sum[best][1]/w*255), uint8(sum[best][2]/w*255))
+}
+
+// extractPalette picks four distinct, balanced colors from img for the
+// Apple Music-style flowing backdrop, falling back to harmonious variations
+// of fallback when the cover has fewer distinct saturated hues.
+func extractPalette(img image.Image, fallback ui.Color) [4]ui.Color {
+	small := shrink(img, 24)
+	const buckets = 18
+	var weight [buckets]float64
+	var sum [buckets][3]float64
+	for i := 0; i < len(small.Pix); i += 4 {
+		r, g, b := float64(small.Pix[i])/255, float64(small.Pix[i+1])/255, float64(small.Pix[i+2])/255
+		h, s, v := hsv(r, g, b)
+		if s < 0.14 || v < 0.12 {
+			continue
+		}
+		w := s * s * v
+		k := int(h/360*buckets) % buckets
+		weight[k] += w
+		sum[k][0], sum[k][1], sum[k][2] = sum[k][0]+r*w, sum[k][1]+g*w, sum[k][2]+b*w
+	}
+
+	var picked []ui.Color
+	var used [buckets]bool
+	for len(picked) < 4 {
+		best := -1
+		for k := range buckets {
+			if weight[k] < 1.0 {
+				continue
+			}
+			tooClose := false
+			for u := range buckets {
+				if !used[u] {
+					continue
+				}
+				d := k - u
+				if d < 0 {
+					d = -d
+				}
+				if d > buckets/2 {
+					d = buckets - d
+				}
+				if d < 2 {
+					tooClose = true
+					break
+				}
+			}
+			if !tooClose && (best < 0 || weight[k] > weight[best]) {
+				best = k
+			}
+		}
+		if best < 0 {
+			break
+		}
+		used[best] = true
+		w := weight[best]
+		picked = append(picked, ui.RGB(uint8(sum[best][0]/w*255), uint8(sum[best][1]/w*255), uint8(sum[best][2]/w*255)))
+	}
+
+	if len(picked) == 0 {
+		picked = append(picked, fallback)
+	}
+	baseH, baseS, _ := hsv(float64(picked[0].R)/255, float64(picked[0].G)/255, float64(picked[0].B)/255)
+	shifts := []float64{0, 24, -28, 48}
+	for len(picked) < 4 {
+		idx := len(picked)
+		h := math.Mod(baseH+shifts[idx]+360, 360)
+		picked = append(picked, hsvColor(h, baseS, 0.55))
+	}
+
+	targetV := [4]float64{0.28, 0.52, 0.68, 0.44}
+	grayV := [4]float64{0.18, 0.34, 0.48, 0.26}
+	var out [4]ui.Color
+	for i := range 4 {
+		h, s, _ := hsv(float64(picked[i].R)/255, float64(picked[i].G)/255, float64(picked[i].B)/255)
+		if s > 0.12 {
+			s = min(max(s*1.25, 0.50), 0.88)
+			out[i] = hsvColor(h, s, targetV[i])
+		} else {
+			out[i] = hsvColor(h, min(s*1.1, 0.18), grayV[i])
+		}
+	}
+	return out
 }
 
 func hsv(r, g, b float64) (h, s, v float64) {

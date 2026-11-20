@@ -2,6 +2,7 @@ package app
 
 import (
 	"image"
+	"image/color"
 	"image/draw"
 	"image/png"
 	"os"
@@ -91,4 +92,47 @@ func TestBackdropDriftFrames(t *testing.T) {
 	f, _ := os.Create(filepath.Join(dir, "drift.png"))
 	defer f.Close()
 	png.Encode(f, out)
+}
+
+func TestFlowBackdropRenders(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 24, 24))
+	for y := range 24 {
+		for x := range 24 {
+			switch {
+			case x < 12 && y < 12:
+				img.SetRGBA(x, y, color.RGBA{210, 60, 80, 255})
+			case x >= 12 && y < 12:
+				img.SetRGBA(x, y, color.RGBA{45, 130, 220, 255})
+			case x < 12 && y >= 12:
+				img.SetRGBA(x, y, color.RGBA{230, 175, 50, 255})
+			default:
+				img.SetRGBA(x, y, color.RGBA{90, 40, 160, 255})
+			}
+		}
+	}
+	art := &artwork{
+		backdrop: ui.NewBitmap(blurImage(img)),
+		tint:     dominantColor(img),
+		palette:  extractPalette(img, dominantColor(img)),
+	}
+	for _, tc := range []struct {
+		name string
+		art  *artwork
+	}{
+		{"cover", art},
+		{"fallback", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tt := ui.NewTester(func(c *ui.Context) {
+				ui.Box(c).Fill().Draw(func(p *ui.Painter, r ui.Rect) {
+					drawFlow(p, r, tc.art, art.tint, 1.5, 0.4)
+				})
+			}, 120, 80)
+			tt.Frame()
+			shot := tt.Image()
+			if shot.Bounds().Dx() != 120 || shot.Bounds().Dy() != 80 {
+				t.Fatalf("unexpected size: %v", shot.Bounds())
+			}
+		})
+	}
 }
