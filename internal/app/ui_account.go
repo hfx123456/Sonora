@@ -664,14 +664,6 @@ func (a *app) accountMenu(c *ui.Context, row ui.Element) {
 			a.accountOpen = false
 			a.openSettings()
 		}
-		modeIcon, modeLabel := iconMoon, "黑夜模式"
-		if a.pal.dark {
-			modeIcon, modeLabel = iconSun, "浅色模式"
-		}
-		if a.menuItem(c, modeIcon, modeLabel, "").Clicked() {
-			a.accountOpen = false
-			a.toggleAppearance()
-		}
 		// A box shorter than a device pixel snaps to none of them at a
 		// fractional scale; a Divider keeps one at every scale.
 		ui.Divider(c).Background(pop.edge).Margin(4, 8)
