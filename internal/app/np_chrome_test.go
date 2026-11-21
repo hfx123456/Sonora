@@ -163,3 +163,22 @@ func TestV1FeatureFrames(t *testing.T) {
 	deskTest.Advance(600 * time.Millisecond)
 	savePNG("v1-desktop-locked-unlock", deskTest)
 }
+
+// During a mid-song instrumental break, the stage keeps the last sung line visible above the breathing interlude dots.
+func TestStageInterludeKeepsPreviousLine(t *testing.T) {
+	a := newTestApp()
+	track := spotify.Track{ID: "stage-interlude", Duration: 60000}
+	a.pl.Cue([]spotify.Track{track})
+	a.pl.SetLyrics([]lyrics.Line{
+		{At: time.Second, End: 4 * time.Second, Text: "Last sung line", Words: lyrics.SpreadWords("Last sung line", time.Second, 4*time.Second)},
+		{At: 14 * time.Second, End: 18 * time.Second, Text: "Next line"},
+	})
+	a.pl.Hold(7 * time.Second)
+	tt := ui.NewTester(func(c *ui.Context) {
+		a.stage(c, &track, white)
+	}, 880, 580)
+	tt.Frame()
+	if !tt.HasText("Last") || !tt.HasText("line") {
+		t.Fatal("stage hid the last sung line during a mid-song interlude")
+	}
+}

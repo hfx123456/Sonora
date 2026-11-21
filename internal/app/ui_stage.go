@@ -226,10 +226,12 @@ func (a *app) stage(c *ui.Context, tr *spotify.Track, accent ui.Color) {
 			}
 			switch {
 			case cur < 0:
-				a.interlude(c, pos, 0, lines[0].At)
+				a.interlude(c, pos, 0, lines[0].At, 1, false)
 			case cur+1 < len(lines) && pos > lines[cur].End+time.Second && lines[cur+1].At-lines[cur].End > 4*time.Second:
-				// A long break before the next line.
-				a.interlude(c, pos, lines[cur].End, lines[cur+1].At)
+				// Keep the last sung line softly visible while the interlude dots breathe below.
+				fade := clamp01(float32(pos-(lines[cur].End+time.Second)) / float32(stageLineFade))
+				a.stageLine(c, lines, cur, pos, f, w, h, lerp(1, 0.48, easeOutCubic(fade)), accent)
+				a.interlude(c, pos, lines[cur].End, lines[cur+1].At, easeOutCubic(fade), true)
 			default:
 				a.stageLine(c, lines, cur, pos, f, w, h, 1, accent)
 			}
@@ -370,11 +372,17 @@ func (a *app) stageWord(c *ui.Context, word lyrics.Word, s wordShape, pos time.D
 }
 
 // interlude shows three dots breathing through a break, filling as the
-// next line nears.
-func (a *app) interlude(c *ui.Context, pos, from, to time.Duration) {
+// next line nears. When footed is true, it sits below the last sung line.
+func (a *app) interlude(c *ui.Context, pos, from, to time.Duration, opacity float32, footed bool) {
 	progress := clamp01(float32((pos - from).Seconds() / max(0.1, (to-from).Seconds())))
 	breath := 1 + 0.12*float32(math.Sin(float64(c.Now().UnixMilli())/420))
-	ui.Row(c.Key("interlude")).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Gap(18).PassThrough().Children(func() {
+	row := ui.Row(c.Key("interlude")).Absolute().Left(0).Right(0).Justify(ui.Center).AlignItems(ui.Center).Gap(18).Opacity(opacity).PassThrough()
+	if footed {
+		row.Bottom(112)
+	} else {
+		row.Top(0).Bottom(0)
+	}
+	row.Children(func() {
 		for i := range 3 {
 			lit := clamp01(progress*3 - float32(i))
 			ui.Box(c.Key(i)).Size(16, 16).Radius(8).Background(white.Alpha(0.2+0.7*lit)).Scale(breath, breath)
