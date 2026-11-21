@@ -99,11 +99,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           cd artifacts
           sha256sum * > SHA256SUMS
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" * --clobber
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" * -R "$REPO" --clobber
           else
-            gh release create "$TAG" * --title "Sonora $TAG" --generate-notes
+            gh release create "$TAG" * -R "$REPO" --title "Sonora $TAG" --generate-notes
           fi
