@@ -142,7 +142,7 @@ func (a *app) trackColumns(c *ui.Context, isShow, covers bool) {
 }
 
 func (a *app) playlistColumns(c *ui.Context, pl *spotify.Playlist) {
-	a.trackColumns(c, strings.HasPrefix(pl.ID, "spotify:show:"), false)
+	a.trackColumns(c, strings.HasPrefix(pl.ID, "spotify:show:"), a.settings.PlaylistTrackCovers)
 }
 
 // pinTrackToolbar keeps the track-list search bar and column header aligned

@@ -26,8 +26,11 @@ type Album struct {
 }
 
 type Track struct {
-	LocalPath   string   `json:"localPath,omitempty"`
-	LocalLyrics string   `json:"localLyrics,omitempty"`
+	LocalPath      string   `json:"localPath,omitempty"`
+	CloudURL       string   `json:"cloudUrl,omitempty"`
+	CloudLyricsURL string   `json:"cloudLyricsUrl,omitempty"`
+	CloudSource    string   `json:"cloudSource,omitempty"`
+	LocalLyrics    string   `json:"localLyrics,omitempty"`
 	LocalURI    string   `json:"localURI,omitempty"`
 	LocalError  string   `json:"localError,omitempty"`
 	ID          string   `json:"id"` // base62, as in spotify:track:<ID>
@@ -77,6 +80,9 @@ func (t *Track) URI() string {
 
 // URL is the track's page on the web player.
 func (t *Track) URL() string {
+	if t.CloudURL != "" {
+		return t.CloudURL
+	}
 	if t.Local() {
 		return FileURL(t.LocalPath)
 	}

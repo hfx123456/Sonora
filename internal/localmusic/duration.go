@@ -3,11 +3,16 @@ package localmusic
 import (
 	"encoding/binary"
 	"io"
-	"os"
 	"time"
 )
 
-func duration(file *os.File, size int64, ext string) time.Duration {
+type readAtSeeker interface {
+	io.Reader
+	io.ReaderAt
+	io.Seeker
+}
+
+func duration(file readAtSeeker, size int64, ext string) time.Duration {
 	header := make([]byte, 64)
 	if _, err := file.ReadAt(header, 0); err != nil {
 		return 0
@@ -49,7 +54,7 @@ func duration(file *os.File, size int64, ext string) time.Duration {
 	return mp3Duration(file, size, header)
 }
 
-func mp4Duration(file *os.File, start, end int64, depth int) time.Duration {
+func mp4Duration(file readAtSeeker, start, end int64, depth int) time.Duration {
 	if depth > 4 {
 		return 0
 	}
@@ -91,7 +96,7 @@ func mp4Duration(file *os.File, start, end int64, depth int) time.Duration {
 	return 0
 }
 
-func mp3Duration(file *os.File, size int64, header []byte) time.Duration {
+func mp3Duration(file readAtSeeker, size int64, header []byte) time.Duration {
 	start := int64(0)
 	if string(header[:3]) == "ID3" {
 		for _, value := range header[6:10] {

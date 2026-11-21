@@ -104,21 +104,33 @@
 
 ---
 
-## 5. 不登录也能播放本地音乐
+## 5. 本地音乐与「音乐云盘」（跨设备同步）
 
-侧栏提供 **「本地音乐」**，支持递归导入文件夹或单个音频文件：
+侧栏提供 **「本地音乐」**，同时支持本机曲库与网易云风格的 **个人音乐云盘**：
 
-- 支持扫描 `MP3 / FLAC / M4A / WAV / OGG / Opus / AAC`，读取内嵌封面、标签、内嵌歌词及同名 `.lrc`。
-- 共用同一套播放队列、随机/智能随机、循环、音量与桌面/律动双语歌词；播放本地音乐无需登录 Spotify。
-- 支持将 Spotify 歌单中的 `spotify:local:` 条目按元数据唯一匹配到已导入的本地文件。
+- **本机曲库**：递归扫描 `MP3 / FLAC / M4A / WAV / OGG / Opus / AAC`，读取内嵌封面、标签、内嵌歌词及同名 `.lrc`；无需登录 Spotify 即可播放。
+- **6 大云盘直连**：原生支持 **OneDrive / Microsoft 365**、**Google Drive**、**百度网盘**、**夸克网盘**、**115网盘** 与 **WebDAV**（内置坚果云 / 123云盘 / Alist 快捷预设，支持群晖 / 飞牛 NAS）。
+- **极速扫盘 + 边播边缓存**：启动秒读本地索引缓存；点播云盘歌曲时边播边自动缓存到本机，再次播放与拖进度条零延迟；支持自动点亮 Spotify 歌单中的 `spotify:local:` 灰歌，以及本机歌曲右键一键上传到云盘。
+- **隐私安全**：所有云盘凭据与刷新令牌均使用系统钥匙串（Windows DPAPI / macOS Keychain）加密保存在本机，不经过任何第三方服务器。
+
+### 云盘快速配置说明（全部免费，不绑卡）
+
+- **夸克网盘 / 115网盘**：无需申请任何 API，点「添加云盘」→ 选对应网盘 → 点击 **「扫码登录」**，在弹出的官网窗口扫码即可自动完成连接。
+- **WebDAV（坚果云 / 123云盘 / Alist / NAS）**：点「添加云盘 → WebDAV」，选用快捷预设或填入 WebDAV 地址与账号密码即可。
+- **OneDrive / Microsoft 365**（每人免费申请自己的 Client ID，1 分钟搞定）：
+  1. 打开 [Azure 应用注册](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → 点 **「新注册」**（无需开通 Azure 付费订阅或绑卡）。
+  2. 名称填 `Sonora`，受支持的账户类型选 **「任何组织目录中的账户和个人 Microsoft 账户」**，重定向 URI 平台选 **「公共客户端/本机（移动和桌面）」** 并填 `http://127.0.0.1`。
+  3. 复制生成的 **「应用程序(客户端) ID」** 填入 Sonora 即可一键浏览器授权。
+- **Google Drive**：在 [Google Cloud Console](https://console.cloud.google.com/apis/dashboard) 启用 Google Drive API → 在「OAuth 同意屏幕」添加自己的 Gmail 为测试用户 → 创建 **「桌面应用」** OAuth 客户端 ID，将 Client ID 与 Secret 填入 Sonora 即可。
+- **百度网盘**：在百度网盘开放平台免费创建应用（回调地址填 `http://127.0.0.1`），将 `AppKey` 与 `SecretKey` 填入 Sonora 即可。
 
 ---
 
 ## 下载与开始使用
 
 1. 打开 **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**：
-   - **Windows**：推荐下载一键安装包 `sonora-setup-1.0.0-amd64.exe`（自动创建快捷方式并按需安装 WebView2）；或下载便携版 `Sonora-1.0.0-windows-amd64.zip` 解压运行。
-   - **macOS**：下载通用镜像 `sonora-1.0.0-universal.dmg`（支持 Apple Silicon 与 Intel），拖入「应用程序」即可使用；因未进行 Apple 公证，首次打开请右键「打开」或在「系统设置 → 隐私与安全性」中允许运行。
+   - **Windows**：推荐下载一键安装包 `sonora-setup-1.0.1-amd64.exe`（自动创建快捷方式并按需安装 WebView2）；或下载便携版 `Sonora-1.0.1-windows-amd64.zip` 解压运行。
+   - **macOS**：下载通用镜像 `sonora-1.0.1-universal.dmg`（支持 Apple Silicon 与 Intel），拖入「应用程序」即可使用；因未进行 Apple 公证，首次打开请右键「打开」或在「系统设置 → 隐私与安全性」中允许运行。
 2. 两个平台均已内嵌 Lyricify 歌词助手与 .NET 运行时，**无需额外配置任何环境**。
 
 ## 数据隔离与更新

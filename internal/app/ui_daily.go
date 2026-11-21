@@ -518,5 +518,5 @@ func (a *app) dailyPage(c *ui.Context) {
 		a.trackSkeleton(c, s, true, header)
 		return
 	}
-	a.trackRows(c, songs, true, header, nil)
+	a.trackRows(c, songs, a.settings.PlaylistTrackCovers, header, nil)
 }

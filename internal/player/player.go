@@ -1,6 +1,7 @@
 package player
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"log"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/egoist/mygo"
 
+	"vinyl/internal/localmusic"
 	"vinyl/internal/lyrics"
 	"vinyl/internal/spotify"
 )
@@ -1377,7 +1379,28 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.loading, p.skipped = true, skipped
 	p.updateIdle()
 	resolveMedia := resolve
-	if t.Local() {
+	if t.Cloud() {
+		resolveMedia = func(string) (*spotify.Media, error) {
+			if t.CloudURL == "" {
+				return nil, errors.New("云盘歌曲地址无效")
+			}
+			if cached := localmusic.CachedCloudAudio(t.ID); cached != "" {
+				return &spotify.Media{LocalPath: cached, Duration: t.Length()}, nil
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			streamURL, headers, err := localmusic.ResolveCloudMedia(ctx, t.CloudURL)
+			if err != nil {
+				return nil, err
+			}
+			localmusic.CacheCloudAudioAsync(t, streamURL, headers)
+			return &spotify.Media{
+				File:     streamURL,
+				Headers:  headers,
+				Duration: t.Length(),
+			}, nil
+		}
+	} else if t.Local() {
 		resolveMedia = func(string) (*spotify.Media, error) {
 			file, err := os.Open(t.LocalPath)
 			if err != nil {

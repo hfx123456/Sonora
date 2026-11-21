@@ -128,7 +128,7 @@ func (a *app) artistPage(c *ui.Context) {
 		a.trackSkeleton(c, s, true, func(c *ui.Context) { a.playlistHeaderSkeleton(c, s) })
 		return
 	}
-	a.trackRows(c, pg.TopTracks, true,
+	a.trackRows(c, pg.TopTracks, a.settings.PlaylistTrackCovers,
 		func(c *ui.Context) { a.artistHeader(c, pg) },
 		func(c *ui.Context) { a.artistFooter(c, pg) })
 }

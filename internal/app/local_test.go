@@ -1,14 +1,17 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 
+	"vinyl/internal/localmusic"
 	"vinyl/internal/player"
 	"vinyl/internal/spotify"
 )
@@ -213,5 +216,87 @@ func TestLocalSortAndSearchPlayback(t *testing.T) {
 	}
 	if a.pl.Current() == nil || a.pl.Current().ID != "local:b" || !slices.Equal(playlistTrackIDs(a.pl.Queue()), []string{"local:a", "local:b", "local:c"}) {
 		t.Fatalf("filtered local playback lost sorted queue: cur=%v queue=%v", a.pl.Current(), playlistTrackIDs(a.pl.Queue()))
+	}
+}
+
+// Adding a WebDAV cloud source saves it, triggers cloud scanning, and allows filtering between local and cloud tracks.
+func TestCloudSourceFormAddAndFilter(t *testing.T) {
+	prevScan := scanCloudSources
+	defer func() { scanCloudSources = prevScan }()
+
+	scanned := make(chan []localmusic.CloudSource, 1)
+	scanCloudSources = func(_ context.Context, sources []localmusic.CloudSource, _, _ string) ([]spotify.Track, []string) {
+		scanned <- slices.Clone(sources)
+		return []spotify.Track{{
+			ID:          "cloud:demo",
+			CloudURL:    "https://dav.example.com/dav/Music/CloudTrack.flac",
+			CloudSource: "我的云盘",
+			Name:        "Cloud Track",
+			Duration:    195000,
+		}}, nil
+	}
+
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.path = filepath.Join(t.TempDir(), "settings.json")
+	a.profile, a.localLoaded = nil, true
+	a.route = route{page: pageLocal}
+
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+
+	if err := tt.Click("添加云盘"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !a.cloudFormOpen {
+		t.Fatal("cloud form did not open")
+	}
+
+	if err := tt.Click("云盘名称"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Type("我的云盘")
+	if err := tt.Click("WebDAV 地址"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Type("https://dav.example.com/dav/Music")
+	tt.Frame()
+	tt.Frame()
+
+	if err := tt.Click("保存并扫描"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+
+	select {
+	case got := <-scanned:
+		if len(got) != 1 || got[0].Name != "我的云盘" || got[0].URL != "https://dav.example.com/dav/Music" {
+			t.Fatalf("unexpected scanned cloud sources: %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("saving WebDAV cloud source did not trigger ScanCloud")
+	}
+
+	if a.cloudFormOpen || len(a.settings.CloudSources) != 1 {
+		t.Fatalf("cloud source not saved cleanly: open=%v count=%d", a.cloudFormOpen, len(a.settings.CloudSources))
+	}
+
+	// Verify scope filtering between local and cloud tracks.
+	a.localTracks = []spotify.Track{
+		{ID: "local:one", LocalPath: "local.mp3", Name: "Local Track", Duration: 180000},
+		{ID: "cloud:demo", CloudURL: "https://dav.example.com/dav/Music/CloudTrack.flac", CloudSource: "我的云盘", Name: "Cloud Track", Duration: 195000},
+	}
+	tt.Frame()
+	if err := tt.Click("仅云盘"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.localScope != 2 {
+		t.Fatalf("expected cloud scope 2, got %d", a.localScope)
+	}
+	filtered := a.filterLocalScope(a.orderedLocalTracks())
+	if len(filtered) != 1 || !filtered[0].Cloud() {
+		t.Fatalf("expected only cloud track, got %+v", filtered)
 	}
 }

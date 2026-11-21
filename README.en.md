@@ -69,11 +69,13 @@ The **Fusion 双语歌词** menu at the right of the player bar provides three o
 
 ---
 
-## 3. Embedded Bilingual Lookup, Playlist Search & Local Music
+## 3. Embedded Bilingual Lookup, Playlist Search, Local & Cloud Music Disk
 
 - **Embedded Lyricify Lyrics Helper**: Searches **NetEase Cloud Music, QQ Music, and LRCLIB** with cross-script alias matching, QRC/YRC/LRC/TTML/LYS/LYL import, ±0.5s global timing offset, and bundled .NET runtime (no separate installation required).
 - **Sticky Playlist & Local Search**: Capsule search bar sticks to the top while scrolling, supports Simplified/Traditional Chinese matching, space-separated multi-term filtering, consistent playlist sorting, and preserves the full queue when playing a filtered track.
-- **Local Music**: Recursive folder or single-file scanning (`MP3 / FLAC / M4A / WAV / OGG / Opus / AAC`) with embedded tags, artwork, and `.lrc` support without requiring Spotify sign-in.
+- **Local & Cloud Music Disk**: Scan local folders (`MP3 / FLAC / M4A / WAV / OGG / Opus / AAC`) or connect **OneDrive / Microsoft 365, Google Drive, Baidu Netdisk, Quark Drive, 115 Drive, and WebDAV** (Alist / NAS / Jianguoyun / 123Pan). Features instant startup cache, auto-caching to disk on play, automatic `spotify:local:` playlist matching across devices, right-click upload to cloud, and OS keystore encryption (Windows DPAPI / macOS Keychain).
+  - **OneDrive / Google Drive / Baidu OAuth**: Free to set up with your own personal OAuth Client ID (no credit card required; redirect URI `http://127.0.0.1` for OneDrive/Baidu, Desktop App for Google Drive).
+  - **Quark / 115 / WebDAV**: No developer registration needed—Quark & 115 support built-in QR code sign-in; WebDAV connects directly with URL and credentials.
 
 <img src="docs/screenshots/playlist-search.webp" width="860" alt="Sticky playlist search">
 
@@ -82,8 +84,8 @@ The **Fusion 双语歌词** menu at the right of the player bar provides three o
 ## Install, Isolation & Build
 
 1. Download from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**:
-   - **Windows**: Run `sonora-setup-1.0.0-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.0-windows-amd64.zip`.
-   - **macOS**: Download `sonora-1.0.0-universal.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
+   - **Windows**: Run `sonora-setup-1.0.1-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.1-windows-amd64.zip`.
+   - **macOS**: Download `sonora-1.0.1-universal.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
    Both platforms bundle the Lyricify helper and .NET runtime—no extra setup needed.
 2. **Isolated from upstream MySpotify**: Uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), migrating existing settings on first launch without altering the legacy folder.
 

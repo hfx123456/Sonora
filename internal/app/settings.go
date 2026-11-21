@@ -1,12 +1,99 @@
 package app
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 
 	"github.com/egoist/mygo"
+
+	"vinyl/internal/localmusic"
 )
+
+// cloudSourceSetting persists a cloud music source (WebDAV, OneDrive, or
+// Google Drive) in settings.json. Passwords and OAuth tokens are sealed with
+// the OS keystore (Windows DPAPI / macOS Keychain).
+type cloudSourceSetting struct {
+	ID            string `json:"id"`
+	Type          string `json:"type,omitempty"` // "", "webdav", "onedrive", "googledrive"
+	Name          string `json:"name"`
+	URL           string `json:"url,omitempty"`
+	Folder        string `json:"folder,omitempty"`
+	FolderPending bool   `json:"folderPending,omitempty"`
+	Username      string `json:"username,omitempty"`
+	ClientID      string `json:"clientId,omitempty"`
+	SealedPass    string `json:"sealedPass,omitempty"`
+	PlainPass     string `json:"plainPass,omitempty"` // fallback only on OSes without seal()
+	SealedSecret  string `json:"sealedSecret,omitempty"`
+	PlainSecret   string `json:"plainSecret,omitempty"`
+	SealedRefresh string `json:"sealedRefresh,omitempty"`
+	PlainRefresh  string `json:"plainRefresh,omitempty"`
+}
+
+func sealCloudPassword(pass string) (sealed, plain string) {
+	if pass == "" {
+		return "", ""
+	}
+	if b, err := seal([]byte(pass)); err == nil {
+		return base64.StdEncoding.EncodeToString(b), ""
+	}
+	return "", pass
+}
+
+func unsealCloudSecret(sealed, plain string) string {
+	if sealed != "" {
+		if raw, err := base64.StdEncoding.DecodeString(sealed); err == nil {
+			if opened, err := unseal(raw); err == nil {
+				return string(opened)
+			}
+		}
+	}
+	return plain
+}
+
+func (c cloudSourceSetting) effectiveType() string {
+	switch c.Type {
+	case localmusic.CloudTypeOneDrive, localmusic.CloudTypeGoogleDrive, localmusic.CloudTypeBaidu, localmusic.CloudTypeQuark, localmusic.CloudType115:
+		return c.Type
+	default:
+		return localmusic.CloudTypeWebDAV
+	}
+}
+
+func (c cloudSourceSetting) toCloudSource() localmusic.CloudSource {
+	return localmusic.CloudSource{
+		ID:           c.ID,
+		Type:         c.effectiveType(),
+		Name:         c.Name,
+		URL:          c.URL,
+		Folder:       c.Folder,
+		Username:     c.Username,
+		Password:     unsealCloudSecret(c.SealedPass, c.PlainPass),
+		ClientID:     c.ClientID,
+		ClientSecret: unsealCloudSecret(c.SealedSecret, c.PlainSecret),
+		RefreshToken: unsealCloudSecret(c.SealedRefresh, c.PlainRefresh),
+	}
+}
+
+func (s *settings) cloudSources() []localmusic.CloudSource {
+	out := make([]localmusic.CloudSource, 0, len(s.CloudSources))
+	for _, c := range s.CloudSources {
+		if c.FolderPending {
+			continue
+		}
+		out = append(out, c.toCloudSource())
+	}
+	return out
+}
+
+func (s *settings) allCloudSources() []localmusic.CloudSource {
+	out := make([]localmusic.CloudSource, 0, len(s.CloudSources))
+	for _, c := range s.CloudSources {
+		out = append(out, c.toCloudSource())
+	}
+	return out
+}
 
 // settings are the listener's choices, kept in settings.json in the user
 // data directory.
@@ -24,7 +111,9 @@ type settings struct {
 	FusionIslandWidth     int               `json:"fusionIslandWidth,omitempty"`
 	FusionStatic          bool              `json:"fusionStatic,omitempty"`
 	FusionNoAvoid         bool              `json:"fusionNoAvoid,omitempty"`
-	LocalSources          []string          `json:"localSources,omitempty"`
+	LocalSources          []string             `json:"localSources,omitempty"`
+	CloudSources          []cloudSourceSetting `json:"cloudSources,omitempty"`
+	HiddenLocalIDs        []string             `json:"hiddenLocalIds,omitempty"`
 	// Notch shows the quick player around the notch: the listener turns
 	// it on.
 	Notch bool `json:"notch"`
@@ -46,6 +135,9 @@ type settings struct {
 	// MyPlaylistGrid shows the listener's own and saved playlists in the
 	// sidebar as a two-column grid of covers rather than a list.
 	MyPlaylistGrid bool `json:"myPlaylistGrid"`
+	// PlaylistTrackCovers shows per-row album thumbnails in playlists, Liked
+	// Songs, and Local/Cloud music lists.
+	PlaylistTrackCovers bool `json:"playlistTrackCovers"`
 	// Smoke makes the progress bars comets trailing smoke as music plays,
 	// for a few percent of a core: the listener turns it on.
 	Smoke bool `json:"smoke"`
@@ -99,16 +191,17 @@ type settings struct {
 
 func defaultSettings() settings {
 	return settings{
-		FusionNoAvoid: true,
-		NotchActivity: true,
-		Appearance:    "system",
-		Glass:         true,
-		GlassStrength: 0.7,
-		Volume:        0.8,
-		CacheMB:       1024,
-		MVLyrics:      true,
-		MVQueue:       true,
-		AutoUpdate:    true,
+		FusionNoAvoid:       true,
+		NotchActivity:       true,
+		Appearance:          "system",
+		Glass:               true,
+		GlassStrength:       0.7,
+		PlaylistTrackCovers: true,
+		Volume:              0.8,
+		CacheMB:             1024,
+		MVLyrics:            true,
+		MVQueue:             true,
+		AutoUpdate:          true,
 	}
 }
 

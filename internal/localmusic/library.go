@@ -176,20 +176,33 @@ func Read(path, coverDir string) (spotify.Track, error) {
 	return track, nil
 }
 
+func decodeLyricsBytes(data []byte) string {
+	if len(data) >= 2 && (data[0] == 0xff && data[1] == 0xfe || data[0] == 0xfe && data[1] == 0xff) {
+		if decoded, err := unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder().Bytes(data); err == nil {
+			return string(decoded)
+		}
+	}
+	if strings.ToValidUTF8(string(data), "") != string(data) {
+		if decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(data); err == nil {
+			return string(decoded)
+		}
+	}
+	return strings.TrimPrefix(string(data), "\ufeff")
+}
+
 func Lyrics(track spotify.Track) string {
+	if track.CloudURL != "" {
+		if text := cloudLyrics(track.CloudURL, track.CloudLyricsURL); text != "" {
+			return text
+		}
+		return track.LocalLyrics
+	}
+	if track.LocalPath == "" {
+		return track.LocalLyrics
+	}
 	path := strings.TrimSuffix(track.LocalPath, filepath.Ext(track.LocalPath)) + ".lrc"
 	if data, err := os.ReadFile(path); err == nil && len(data) <= 2<<20 {
-		if len(data) >= 2 && (data[0] == 0xff && data[1] == 0xfe || data[0] == 0xfe && data[1] == 0xff) {
-			if decoded, err := unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder().Bytes(data); err == nil {
-				return string(decoded)
-			}
-		}
-		if strings.ToValidUTF8(string(data), "") != string(data) {
-			if decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(data); err == nil {
-				return string(decoded)
-			}
-		}
-		return strings.TrimPrefix(string(data), "\ufeff")
+		return decodeLyricsBytes(data)
 	}
 	return track.LocalLyrics
 }

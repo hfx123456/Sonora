@@ -27,9 +27,12 @@ type Media struct {
 	// "" for a track without one; or of a video podcast's episode.
 	Video string
 	// File is a file that plays as it is, with no manifest and no licence:
-	// a podcast episode's audio where its podcast keeps it. With it, there
-	// is no Manifest.
+	// a podcast episode's audio where its podcast keeps it, or a WebDAV
+	// cloud track. With it, there is no Manifest.
 	File string
+	// Headers are optional HTTP headers sent when fetching File from its
+	// origin (e.g. WebDAV Basic auth); never forwarded across host redirects.
+	Headers map[string]string
 }
 
 // videoFormat is what the web player asks for besides, to know whether a

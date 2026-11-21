@@ -144,6 +144,11 @@ func (a *app) settingsPage(c *ui.Context) {
 					a.changed()
 				}
 			})
+			row("列表显示歌曲封面", "在歌单、我喜欢的音乐和本地与云盘音乐中显示每首歌的专辑封面", func() {
+				if ui.Switch(c.Key("playlist-track-covers"), &s.PlaylistTrackCovers).Label("列表显示歌曲封面").Changed() {
+					a.changed()
+				}
+			})
 			strengthPct := int(math.Round(min(max(s.GlassStrength, 0), 1) * 100))
 			row("液态玻璃", "启用 iOS 风格液态玻璃折射与磨砂质感，并调节强度", func() {
 				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {

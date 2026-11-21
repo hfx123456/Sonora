@@ -16,6 +16,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"vinyl/internal/localmusic"
 	"vinyl/internal/player"
 	"vinyl/internal/qtweb"
 	"vinyl/internal/spotify"
@@ -208,12 +209,45 @@ type app struct {
 	localTracks     []spotify.Track
 	localLoading    bool
 	localLoaded     bool
-	localAgain      bool
+	localScanGen    int
+	localScanCancel func()
 	localWarnings   []string
 	localQuery      string
 	localSort       playlistSort
+	localScope      int // 0: all, 1: local only, 2: cloud only
 	localOrderCache playlistOrderCache
 	localSearchBox  ui.Handle
+
+	cloudFormOpen     bool
+	cloudFormTab      int // 0: WebDAV, 1: OneDrive, 2: Google Drive, 3: Baidu, 4: Quark, 5: 115
+	cloudFormAdvanced bool
+	cloudFormName     string
+	cloudFormURL      string
+	cloudFormFolder   string
+	cloudFormUser     string
+	cloudFormPass     string
+	cloudFormClientID string
+	cloudFormSecret   string
+	cloudFormTesting  bool
+	cloudFormAuthing  bool
+	cloudFormErr      string
+	cloudFormOK       string
+	cloudLoginWin      *mygo.Window
+	cloudLoginGen      int
+	cloudBrowseID        string
+	cloudBrowsePath      string
+	cloudBrowseSelected  string
+	cloudBrowseClickPath string
+	cloudBrowseClickAt   time.Time
+	cloudBrowseDirs      []localmusic.CloudFolder
+	cloudBrowseLoading bool
+	cloudBrowseErr     string
+	cloudBrowseGen     int
+	cloudUploading     bool
+	cloudSyncing       bool
+	cloudSyncDone      int
+	cloudSyncTotal     int
+	cloudSyncCancel    func()
 	proxyText       string          // the proxy as typed in the settings, till it is set
 	proxyErr        string          // why what was typed cannot be set
 	proxyTyping     bool            // the proxy's field had the focus last frame

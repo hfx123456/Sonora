@@ -51,7 +51,7 @@ func (a *app) trackPage(c *ui.Context) {
 		a.trackSkeleton(c, s, true, func(c *ui.Context) { a.playlistHeaderSkeleton(c, s) })
 		return
 	}
-	a.trackRows(c, pg.Recommended, true, func(c *ui.Context) { a.trackHeader(c, pg) }, func(c *ui.Context) { a.trackFooter(c, pg) })
+	a.trackRows(c, pg.Recommended, a.settings.PlaylistTrackCovers, func(c *ui.Context) { a.trackHeader(c, pg) }, func(c *ui.Context) { a.trackFooter(c, pg) })
 }
 
 func (a *app) trackHeader(c *ui.Context, pg *spotify.TrackPage) {

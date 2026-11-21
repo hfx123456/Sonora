@@ -5,6 +5,7 @@ import (
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 
+	"vinyl/internal/localmusic"
 	"vinyl/internal/spotify"
 )
 
@@ -53,9 +54,42 @@ func (a *app) songItems(tr *spotify.Track, pid string) func(m *ui.Menu) {
 		if m.Item("复制歌名和歌手").Chosen() {
 			copyText(tr.Name + " - " + tr.ArtistNames())
 		}
+		if tr.Cloud() {
+			if tr.CloudURL != "" && m.Item("复制云盘链接").Chosen() {
+				copyText(tr.CloudURL)
+			}
+			m.Separator()
+			if m.Item("从音乐库移除").Chosen() {
+				a.hideLocalTrack(*tr)
+			}
+			return
+		}
 		if tr.Local() {
-			if m.Item("复制文件路径").Chosen() {
+			if tr.LocalPath != "" && m.Item("复制文件路径").Chosen() {
 				copyText(tr.LocalPath)
+			}
+			if tr.LocalPath != "" && len(a.settings.CloudSources) > 0 && !a.cloudUploading {
+				addedSep := false
+				for _, src := range a.settings.CloudSources {
+					if src.effectiveType() == localmusic.CloudTypeQuark || src.effectiveType() == localmusic.CloudType115 {
+						continue
+					}
+					if !addedSep {
+						m.Separator()
+						addedSep = true
+					}
+					label := "上传到云盘"
+					if src.Name != "" {
+						label += "：" + src.Name
+					}
+					if m.Item(label).Chosen() {
+						a.uploadTrackToCloud(*tr, src)
+					}
+				}
+			}
+			m.Separator()
+			if m.Item("从音乐库移除").Chosen() {
+				a.hideLocalTrack(*tr)
 			}
 			return
 		}

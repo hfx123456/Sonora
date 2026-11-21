@@ -152,12 +152,19 @@ func otherMirrors(source string) []string {
 }
 
 func getRange(r *http.Request, u, rg string) (*http.Response, error) {
+	return getRangeWithHeaders(r, u, rg, nil)
+}
+
+func getRangeWithHeaders(r *http.Request, u, rg string, headers map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
 	if rg != "" {
 		req.Header.Set("Range", rg)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	return cdnDo(req)
 }
@@ -183,6 +190,8 @@ func answers(res *http.Response) bool {
 // hostOf returns the host of u, for the log and for telling CDNs apart.
 func hostOf(u string) string {
 	if i := len("https://"); len(u) > i && u[:i] == "https://" {
+		u = u[i:]
+	} else if i := len("http://"); len(u) > i && u[:i] == "http://" {
 		u = u[i:]
 	}
 	for i := 0; i < len(u); i++ {

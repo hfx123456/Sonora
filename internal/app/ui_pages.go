@@ -239,7 +239,7 @@ func (a *app) playlistPage(c *ui.Context) {
 			return
 		}
 		s := a.pageShimmer(c)
-		a.trackSkeleton(c, s, false, func(c *ui.Context) { a.playlistHeaderSkeleton(c, s) })
+		a.trackSkeleton(c, s, a.settings.PlaylistTrackCovers, func(c *ui.Context) { a.playlistHeaderSkeleton(c, s) })
 		return
 	}
 	ordered := a.orderedPlaylistTracks(pl)
@@ -247,7 +247,7 @@ func (a *app) playlistPage(c *ui.Context) {
 	if a.playlistHeaderHeights == nil {
 		a.playlistHeaderHeights = map[string]float32{}
 	}
-	list := a.trackRows(c, tracks, false, func(c *ui.Context) {
+	list := a.trackRows(c, tracks, a.settings.PlaylistTrackCovers, func(c *ui.Context) {
 		header := ui.Column(c.Key("playlist-hero")).Children(func() { a.playlistHeader(c, pl) })
 		if height := header.LayoutBounds().H; height > 0 && height != a.playlistHeaderHeights[id] {
 			a.playlistHeaderHeights[id] = height
@@ -365,7 +365,7 @@ func (a *app) searchPage(c *ui.Context) {
 		})
 		return
 	}
-	a.trackRows(c, a.results, true, func(c *ui.Context) {
+	a.trackRows(c, a.results, a.settings.PlaylistTrackCovers, func(c *ui.Context) {
 		a.heading(c, "“"+a.searched+"”", "搜索")
 		if len(a.found)+len(a.foundAlbums)+len(a.foundLists)+len(a.foundShows) == 0 {
 			return

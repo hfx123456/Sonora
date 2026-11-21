@@ -263,7 +263,7 @@ func (w *Web) Open(m *spotify.Media) Output {
 	} else if m.File != "" {
 		// A file plays as it is: the page asks for its bytes a range at a
 		// time, passed through from where it is.
-		o.sources, o.file = []string{m.File}, true
+		o.sources, o.file, o.headers = []string{m.File}, true, m.Headers
 	} else {
 		o.manifest, o.sources = localManifest(m.Manifest, "/m/"+strconv.Itoa(o.gen)+"/")
 	}
@@ -491,7 +491,10 @@ func (w *Web) serveMedia(rw http.ResponseWriter, r *http.Request, rest string) {
 	// asked once, its failure is the page's to try again.
 	fetch, source := fetchPart, o.sources[i]
 	if o.file {
-		fetch, source = getRange, o.went(source)
+		source = o.went(source)
+		fetch = func(r *http.Request, u, rg string) (*http.Response, error) {
+			return getRangeWithHeaders(r, u, rg, o.headersFor(u))
+		}
 	}
 	res, err := fetch(r, source, rg)
 	if o.file {
@@ -625,6 +628,7 @@ type webOut struct {
 	license   string
 	video     bool
 	file      bool // a file that plays as it is (spotify.Media's File)
+	headers   map[string]string
 	// wentTo is where the file's address led, through its redirects: a
 	// podcast's goes through a few, seconds each, to a counter of plays
 	// and back, and the page asks for a range many times as it starts.
@@ -659,6 +663,50 @@ func (o *webOut) went(source string) string {
 	return source
 }
 
+// headersFor returns o.headers for target, stripping Authorization on
+// cross-host CDN redirects (e.g. Alist/OneDrive redirecting to SharePoint),
+// preserving Cookie across same-site CDN nodes (e.g. *.quark.cn, *.115.com),
+// and always preserving non-secret headers like User-Agent and Referer.
+func (o *webOut) headersFor(target string) map[string]string {
+	if len(o.headers) == 0 || len(o.sources) == 0 {
+		return nil
+	}
+	hTarget, hOrig := hostOf(target), hostOf(o.sources[0])
+	if strings.EqualFold(hTarget, hOrig) {
+		return o.headers
+	}
+	sameSite := sameBaseDomain(hTarget, hOrig)
+	var safe map[string]string
+	for k, v := range o.headers {
+		if strings.EqualFold(k, "Authorization") {
+			continue
+		}
+		if strings.EqualFold(k, "Cookie") && !sameSite {
+			continue
+		}
+		if safe == nil {
+			safe = map[string]string{}
+		}
+		safe[k] = v
+	}
+	return safe
+}
+
+func sameBaseDomain(a, b string) bool {
+	stripPort := func(h string) string {
+		if i := strings.IndexByte(h, ':'); i >= 0 {
+			h = h[:i]
+		}
+		return strings.ToLower(h)
+	}
+	a, b = stripPort(a), stripPort(b)
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	if len(pa) < 2 || len(pb) < 2 {
+		return a == b
+	}
+	return pa[len(pa)-1] == pb[len(pb)-1] && pa[len(pa)-2] == pb[len(pb)-2]
+}
+
 // follow takes the answer for the file asked for at source, sources[i]
 // itself or where it led: where it led, for the next range; or, as where it
 // led does not answer, as a signed address that ran out, sources[i] asked
@@ -672,7 +720,7 @@ func (o *webOut) follow(r *http.Request, i int, source, rg string, res *http.Res
 		o.wentTo = ""
 		o.mu.Unlock()
 		source = o.sources[i]
-		res, err = getRange(r, source, rg)
+		res, err = getRangeWithHeaders(r, source, rg, o.headersFor(source))
 	}
 	if err == nil && answers(res) && res.Request != nil && res.Request.URL.String() != source {
 		o.mu.Lock()

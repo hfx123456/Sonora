@@ -22,8 +22,12 @@ func SetLocalTracks(tracks []Track) {
 	localCatalog.Unlock()
 }
 
+func (t *Track) Cloud() bool {
+	return t.CloudURL != "" || strings.HasPrefix(t.ID, "cloud:")
+}
+
 func (t *Track) Local() bool {
-	return t.LocalPath != "" || strings.HasPrefix(t.ID, "local:") || strings.HasPrefix(t.ID, "spotify:local:")
+	return t.LocalPath != "" || t.CloudURL != "" || strings.HasPrefix(t.ID, "local:") || strings.HasPrefix(t.ID, "cloud:") || strings.HasPrefix(t.ID, "spotify:local:")
 }
 
 func MatchLocal(uri string) (Track, bool) {
