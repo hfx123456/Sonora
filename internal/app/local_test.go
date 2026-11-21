@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image/png"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -299,4 +301,61 @@ func TestCloudSourceFormAddAndFilter(t *testing.T) {
 	if len(filtered) != 1 || !filtered[0].Cloud() {
 		t.Fatalf("expected only cloud track, got %+v", filtered)
 	}
+}
+
+// With NM_FRAMES set, saves screenshots of the Cloud Music Disk setup/folder picker and playlist track covers.
+func TestCloudShowcaseFrames(t *testing.T) {
+	dir := os.Getenv("NM_FRAMES")
+	if dir == "" {
+		t.Skip()
+	}
+	savePNG := func(name string, tt *ui.Tester) {
+		t.Helper()
+		f, err := os.Create(filepath.Join(dir, name+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1. Cloud Music Disk connection card + visual folder browser.
+	a := libraryRefreshApp()
+	a.settings.CloudSources = []cloudSourceSetting{
+		{ID: "od1", Type: localmusic.CloudTypeOneDrive, Name: "OneDrive", Username: "sonora@outlook.com", Folder: "/Music"},
+		{ID: "qk1", Type: localmusic.CloudTypeQuark, Name: "夸克网盘", Folder: "音乐收藏"},
+	}
+	a.cloudFormOpen = true
+	a.cloudFormTab = 1
+	a.cloudBrowseID = "qk1"
+	a.cloudBrowsePath = ""
+	a.cloudBrowseSelected = "音乐收藏"
+	a.cloudBrowseDirs = []localmusic.CloudFolder{
+		{Name: "ACG 无损", Path: "ACG 无损"},
+		{Name: "音乐收藏", Path: "音乐收藏"},
+		{Name: "华语精选", Path: "华语精选"},
+		{Name: "日系摇滚", Path: "日系摇滚"},
+	}
+	a.localLoaded = true
+	a.localTracks = []spotify.Track{
+		{ID: "cloud:1", CloudURL: "https://graph.microsoft.com/v1.0/me/drive/items/1/content", CloudSource: "OneDrive", Name: "All I Need", Artists: []spotify.Artist{{Name: "DJ Okawari"}}, Album: spotify.Album{Name: "Restore", PicURL: a.pl.Queue()[0].Album.PicURL}, Duration: 245000},
+		{ID: "cloud:2", CloudURL: "quark://qk1/2", CloudSource: "夸克网盘", Name: "Beat Hit!", Artists: []spotify.Artist{{Name: "宮崎歩"}}, Album: spotify.Album{Name: "Beat Hit!", PicURL: a.pl.Queue()[1].Album.PicURL}, Duration: 258000},
+		{ID: "local:3", LocalPath: "C:\\Music\\sample.flac", Name: "Bad Apple!! feat. nomico", Artists: []spotify.Artist{{Name: "のみこ"}}, Album: spotify.Album{Name: "EXSERENS", PicURL: a.pl.Queue()[2].Album.PicURL}, Duration: 214000},
+	}
+	a.route = route{page: pageLocal}
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	tt.Frame()
+	savePNG("cloud-music-connect", tt)
+
+	// 2. Playlist with unified per-row album covers enabled.
+	b := libraryRefreshApp()
+	b.settings.PlaylistTrackCovers = true
+	b.route = route{page: pagePlaylist, playlist: b.mine[0].ID}
+	pt := ui.NewTester(b.view, 1180, 760)
+	pt.Frame()
+	pt.Frame()
+	savePNG("playlist-covers", pt)
 }
