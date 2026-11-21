@@ -54,7 +54,7 @@ func (a *app) playlistChanged(id string) {
 	delete(a.playlists, id)
 	a.cachePlaylistSoon(id)
 	if a.route.page == pagePlaylist && a.route.playlist == id {
-		a.loadPlaylist(id, false)
+		a.requestPlaylist(id, false, true)
 	}
 	if a.profile != nil {
 		a.loadMine(a.profile.UserID)
@@ -92,11 +92,14 @@ func (a *app) submitName() {
 		if pl == nil || pl.Name == name {
 			return
 		}
-		old := pl.Name
+		old, gen := pl.Name, a.accountGen
 		a.setPlaylistName(id, name)
 		go func() {
 			err := renamePlaylist(id, name)
 			a.post(func() {
+				if a.accountGen != gen {
+					return
+				}
 				if err != nil {
 					a.setPlaylistName(id, old)
 					a.toast = "重命名失败，请稍后再试"
@@ -108,10 +111,14 @@ func (a *app) submitName() {
 		return
 	}
 	d.busy = true
-	add, user := d.add, a.profile.UserID
+	add, user, gen := d.add, a.profile.UserID, a.accountGen
 	go func() {
 		pl, err := createPlaylist(user, name)
 		a.post(func() {
+			if a.accountGen != gen {
+				a.naming.busy = false
+				return
+			}
 			a.naming.busy = false
 			if err != nil {
 				a.toast = "创建歌单失败，请稍后再试"
@@ -163,9 +170,13 @@ func (a *app) deleteChosen() {
 		}
 		a.showAgain(r)
 	}
+	gen := a.accountGen
 	go func() {
 		err := deletePlaylist(user, id)
 		a.post(func() {
+			if a.accountGen != gen {
+				return
+			}
 			if err != nil {
 				a.mine = slices.Insert(a.mine, min(i, len(a.mine)), pl)
 				a.toast = "删除失败，请稍后再试"
@@ -193,10 +204,13 @@ func (a *app) addTo(pid string, tr *spotify.Track) {
 		a.toast = "歌曲已在歌单中"
 		return
 	}
-	id := tr.ID
+	id, gen := tr.ID, a.accountGen
 	go func() {
 		err := addToPlaylist(pid, id)
 		a.post(func() {
+			if a.accountGen != gen {
+				return
+			}
 			if err != nil {
 				a.toast = "添加失败，请稍后再试"
 				return
@@ -211,7 +225,7 @@ func (a *app) addTo(pid string, tr *spotify.Track) {
 // once in the app and then with Spotify, which may refuse: the song comes
 // back then.
 func (a *app) removeFrom(pid string, tr *spotify.Track) {
-	uid := tr.UID
+	uid, gen := tr.UID, a.accountGen
 	pl := a.playlists[pid]
 	var before []spotify.Track
 	if pl != nil {
@@ -222,6 +236,9 @@ func (a *app) removeFrom(pid string, tr *spotify.Track) {
 	go func() {
 		err := removeFromPlaylist(pid, uid)
 		a.post(func() {
+			if a.accountGen != gen {
+				return
+			}
 			if err != nil {
 				if pl != nil && a.playlists[pid] == pl {
 					pl.Tracks = before

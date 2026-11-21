@@ -149,6 +149,10 @@ var connectCommand = (*spotify.Connect).Command
 var connectReport = (*spotify.Connect).Report
 
 func (a *app) stopConnect() {
+	a.stopConnectWait(0)
+}
+
+func (a *app) stopConnectWait(wait time.Duration) {
 	state := a.connect
 	a.connect = nil
 	if state == nil {
@@ -158,10 +162,20 @@ func (a *app) stopConnect() {
 		state.timer.Stop()
 	}
 	close(state.done)
-	go state.client.Close()
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		state.client.Close()
+	}()
 	a.pl.Control = nil
 	if a.pl.IsRemote() {
 		a.pl.StopConnect()
+	}
+	if wait > 0 {
+		select {
+		case <-closed:
+		case <-time.After(wait):
+		}
 	}
 }
 
@@ -397,6 +411,15 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 		if cluster.Timestamp > 0 && cluster.Timestamp < state.cluster.Timestamp {
 			return
 		}
+		if cluster.Timestamp == 0 && state.cluster.Timestamp > 0 {
+			if cluster.Active != "" && cluster.Active != state.client.ID && state.ref != nil {
+				return
+			}
+			cluster.Timestamp = state.cluster.Timestamp
+		}
+		if cluster.Active != "" && cluster.Active != state.client.ID && state.ref != nil && cluster.Timestamp > 0 && cluster.Timestamp == state.cluster.Timestamp {
+			return
+		}
 		state.cluster = cluster
 		// Playing here, shuffle and repeat are those of the state Spotify
 		// gave this device: the cluster's are what it reported, a step
@@ -423,10 +446,9 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 				a.pl.StopConnect()
 			}
 		} else if cluster.Active == state.client.ID && state.ref != nil {
-			clusterTrack := cluster.Track()
-			if current := a.pl.Current(); current != nil && clusterTrack.URI() == current.URI() {
-				state.localQueue = false
-			}
+			// Keep the native local queue (history + Smart Shuffle) intact when
+			// playback was started locally instead of truncating it to Connect's
+			// [current, next...] window.
 			a.connectQueue(state.ref.Index)
 		}
 	case "report":
@@ -452,6 +474,7 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 					track, err = response.Machine.Track(index)
 				}
 				if err == nil && a.pl.Current() != nil && track.URI() == a.pl.Current().URI() {
+					state.err = ""
 					state.machine = response.Machine
 					state.ref.Index = index
 					a.connectQueue(index)
@@ -473,26 +496,29 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 					return
 				}
 				track, err := command.Machine.Track(command.Ref.Index)
-				if err != nil || track.URI() != state.pendingPlay {
+				matched := err == nil && (track.URI() == state.pendingPlay || track.LinkedFrom != "" && "spotify:track:"+track.LinkedFrom == state.pendingPlay)
+				if !matched {
 					return
 				}
 				// The audio has already started (and may since have paused or
 				// sought). Adopt the identity, keeping that newer local state.
 				ref := *command.Ref
 				ref.Paused = !a.pl.Playing()
+				state.err = ""
 				state.pendingPlay = ""
 				state.machine = command.Machine
 				state.ref, state.lost = &ref, false
 				state.cluster.Active = state.client.ID
 				localShuffle := a.pl.ShuffleMode()
 				localRepeat := a.pl.Repeat()
-				a.connectOptions(state.machine.Attributes.Options)
+				opts := state.machine.Attributes.Options
 				if localShuffle != player.ShuffleOff && !state.shuffle.on {
-					a.pl.SetShuffleMode(localShuffle)
+					opts.Shuffle = nil
 				}
 				if localRepeat != player.RepeatOff && !state.repeat.on {
-					a.pl.SetRepeatMode(localRepeat)
+					opts.RepeatContext, opts.RepeatTrack = nil, nil
 				}
+				a.connectOptions(opts)
 				a.reportConnect()
 				return
 			}
@@ -554,6 +580,8 @@ func (a *app) applyConnect(ref *spotify.ConnectRef, seek *int64) {
 		return
 	}
 	copyRef := *ref
+	state.err = ""
+	state.localQueue = false
 	state.ref, state.lost = &copyRef, false
 	state.cluster.Active = state.client.ID
 	position := time.Duration(-1)

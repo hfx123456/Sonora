@@ -31,6 +31,7 @@ func TestScrubSeeksOnRelease(t *testing.T) {
 			defer out.Close()
 			a.nowPlaying, a.npPane = true, pane.pane
 			tt := ui.NewTester(a.view, 1200, 800)
+			tt.Move(600, 400)
 			tt.Advance(time.Second)
 			tt.Frame()
 			bar, ok := tt.Find("播放进度")
@@ -61,5 +62,89 @@ func TestScrubSeeksOnRelease(t *testing.T) {
 				t.Errorf("let go at 60%%, at %v", pos)
 			}
 		})
+	}
+}
+
+// Releasing a drag after the song changes must not seek the replacement song.
+func TestStageScrubIgnoresTrackChangeDuringDrag(t *testing.T) {
+	a := newTestApp()
+	a.pl.Cue([]spotify.Track{{ID: "first", Duration: 200000}})
+	a.pl.SetLyrics(nil)
+	a.nowPlaying, a.npPane = true, paneStage
+	tt := ui.NewTester(a.view, 880, 580)
+	tt.Move(440, 290)
+	tt.Advance(time.Second)
+	tt.Frame()
+	bar, ok := tt.Find("播放进度")
+	if !ok {
+		t.Fatal("no progress bar")
+	}
+	y := bar.Y + bar.H/2
+	tt.Press(bar.X+bar.W*.3, y)
+	tt.Frame()
+
+	a.pl.Cue([]spotify.Track{{ID: "second", Duration: 200000}})
+	a.pl.SetLyrics(nil)
+	a.pl.Seek(7 * time.Second)
+	tt.Frame()
+	x := bar.X + bar.W*.6
+	tt.Move(x, y)
+	tt.Release(x, y)
+	tt.Frame()
+	if pos := a.pl.Position(); pos != 7*time.Second {
+		t.Fatalf("a drag from the previous track moved the new track to %v", pos)
+	}
+}
+
+// Leaving the window hides the stage controls after an active seek is released, and reentering makes them usable again.
+func TestStageControlsHideOutsideWindow(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.pl.Cue([]spotify.Track{{ID: "stage", Duration: 200000}})
+	a.pl.SetLyrics(nil)
+	a.nowPlaying, a.npPane = true, paneStage
+	tt := ui.NewTester(a.view, 880, 580)
+	tt.Move(440, 290)
+	tt.Advance(time.Second)
+	tt.Frame()
+	if _, ok := tt.Find("播放进度"); !ok {
+		t.Fatal("the controls did not appear on entry")
+	}
+	tt.Move(440, 620)
+	tt.Advance(300 * time.Millisecond)
+	if _, ok := tt.Find("播放进度"); ok {
+		t.Fatal("the controls stayed available outside the window")
+	}
+
+	tt.Move(440, 290)
+	tt.Advance(300 * time.Millisecond)
+	bar, ok := tt.Find("播放进度")
+	if !ok {
+		t.Fatal("the progress bar did not return")
+	}
+	tt.Press(bar.X+bar.W*.3, bar.Y+bar.H/2)
+	x := bar.X + bar.W*.6
+	tt.Move(x, 620)
+	tt.Advance(300 * time.Millisecond)
+	if !a.npScrub.held || a.pl.Position() != 0 {
+		t.Fatal("leaving the window interrupted the drag")
+	}
+	tt.Release(x, 620)
+	tt.Advance(300 * time.Millisecond)
+	if pos := a.pl.Position(); pos < 118*time.Second || pos > 122*time.Second {
+		t.Fatalf("release outside the window sought to %v", pos)
+	}
+	if _, ok := tt.Find("播放进度"); ok {
+		t.Fatal("the controls stayed available after the drag ended")
+	}
+
+	tt.Move(440, 290)
+	tt.Advance(300 * time.Millisecond)
+	repeat := a.pl.Repeat()
+	if err := tt.Click("循环"); err != nil {
+		t.Fatal(err)
+	}
+	if a.pl.Repeat() == repeat {
+		t.Fatal("the controls did not handle clicks after reentry")
 	}
 }

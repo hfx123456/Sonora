@@ -8,6 +8,10 @@ func (a *app) applyProxy() {
 	u, _ := spotify.ParseProxy(a.settings.Proxy) // kept only once it reads
 	spotify.SetProxy(u)
 	webProxy(u)
+	if a.connect != nil && a.profile != nil && a.win != nil {
+		a.stopConnect()
+		a.startConnect()
+	}
 }
 
 // setProxy sets the proxy typed in the settings, or says why it cannot.

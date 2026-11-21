@@ -73,6 +73,11 @@ func NewWeb() (*Web, error) {
 			w.Close()
 			return nil, err
 		}
+		go func() {
+			timer := time.NewTimer(25 * time.Second)
+			defer timer.Stop()
+			w.awaitReady(timer.C)
+		}()
 		return w, nil
 	}
 	w.win = mygo.NewWindow(mygo.WindowOptions{
@@ -278,7 +283,7 @@ func (w *Web) OpenVideo(v *spotify.Video) Output {
 	o := &webOut{w: w, dur: v.Duration, at: time.Now(), license: v.License, video: true}
 	w.mu.Lock()
 	w.gen++
-	o.gen = w.gen
+	o.gen, o.err = w.gen, w.browserErr
 	l := localizer{prefix: "/m/" + strconv.Itoa(o.gen) + "/", index: map[string]int{}}
 	o.manifest, o.playlists = v.Master, map[string]string{}
 	for name, pl := range v.Playlists {
@@ -531,8 +536,11 @@ func (w *Web) forward(rw http.ResponseWriter, r *http.Request, method, target st
 	var res *http.Response
 	var out []byte
 	for attempt := 0; ; attempt++ {
-		id, err := spotify.CurrentIdentity()
-		if attempt > 0 {
+		var id spotify.Identity
+		var err error
+		if attempt == 0 {
+			id, err = spotify.CurrentIdentity()
+		} else {
 			id, err = spotify.RenewedIdentity()
 		}
 		if err != nil {
@@ -549,7 +557,14 @@ func (w *Web) forward(rw http.ResponseWriter, r *http.Request, method, target st
 			req.Header.Set("Authorization", "Bearer "+id.Token)
 			req.Header.Set("Content-Type", "application/octet-stream")
 		}
-		if res, err = spotify.Client.Do(req); err != nil {
+		if method == http.MethodGet {
+			res, err = requestCertificate(req, spotify.Client.Do)
+		} else {
+			res, err = spotify.Client.Do(req)
+		}
+		if err != nil {
+			log.Printf("player: %s: %v", r.URL.Path, err)
+			o.answered(http.StatusBadGateway, 0)
 			http.Error(rw, err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -567,6 +582,32 @@ func (w *Web) forward(rw http.ResponseWriter, r *http.Request, method, target st
 	o.answered(res.StatusCode, wait)
 	rw.WriteHeader(res.StatusCode)
 	rw.Write(out)
+}
+
+// A certificate request is safe to repeat after a transient gateway failure.
+func requestCertificate(req *http.Request, do func(*http.Request) (*http.Response, error)) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		res, err := do(req)
+		if attempt == 2 || req.Context().Err() != nil || (err == nil && !temporaryCertificateStatus(res.StatusCode)) {
+			return res, err
+		}
+		if res != nil {
+			res.Body.Close()
+		}
+		select {
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		case <-time.After(250 * time.Millisecond << attempt):
+		}
+	}
+}
+
+func temporaryCertificateStatus(status int) bool {
+	switch status {
+	case 0, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
 }
 
 // webOut is one track in the page, which reports where it is a few times
@@ -589,14 +630,17 @@ type webOut struct {
 	// and back, and the page asks for a range many times as it starts.
 	wentTo string
 
-	mu          sync.Mutex
-	pos         time.Duration // where it was at at
-	at          time.Time
-	running     bool // the page plays it: its time moves
-	playing     bool // it was asked to play, and has not ended
-	asked       int  // how many times Vinyl asked the page to play or pause
-	seekPending *time.Duration
-	onEnd       func()
+	mu           sync.Mutex
+	pos          time.Duration // where it was at at
+	at           time.Time
+	running      bool // the page plays it: its time moves
+	playing      bool // it was asked to play, and has not ended
+	played       bool // audio reached playing at least once
+	asked        int  // how many times Vinyl asked the page to play or pause
+	seekPending  *time.Duration
+	seekAt       time.Time
+	lastEventSeq int
+	onEnd        func()
 	// onSystem hears what the system did to the page rather than Vinyl.
 	onSystem func(string)
 	endSeq   int
@@ -669,7 +713,15 @@ func (o *webOut) Playing() bool {
 
 func (o *webOut) Seek(t time.Duration) {
 	o.mu.Lock()
-	o.seekPending = &t
+	if t < 0 {
+		t = 0
+	}
+	if o.dur > 0 && t > o.dur {
+		t = o.dur
+	}
+	target := t
+	o.seekPending = &target
+	o.seekAt = time.Now()
 	o.pos, o.at = t, time.Now()
 	o.mu.Unlock()
 	o.w.send(fmt.Sprintf("vinyl.seek(%d,%.3f)", o.gen, t.Seconds()))
@@ -686,7 +738,16 @@ func (o *webOut) position(now time.Time) time.Duration {
 	if o.running {
 		p += now.Sub(o.at)
 	}
-	return min(max(p, 0), o.dur)
+	if o.dur > 0 {
+		return min(max(p, 0), o.dur)
+	}
+	return max(p, 0)
+}
+
+func (o *webOut) Played() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.played
 }
 
 func (o *webOut) Duration() time.Duration {
@@ -751,9 +812,18 @@ func (o *webOut) answered(status int, wait time.Duration) {
 // event takes in what the page reports: an event of its audio at t.
 func (o *webOut) event(kind string, t time.Duration, msg string, seq int) {
 	o.mu.Lock()
-	if o.seekPending != nil && (kind == "time" || kind == "seeked" || kind == "playing" || kind == "pause" || kind == "waiting") {
+	isOrdered := kind == "time" || kind == "seeked" || kind == "playing" || kind == "pause" || kind == "waiting"
+	if isOrdered && seq > 0 {
+		if seq < o.lastEventSeq {
+			o.mu.Unlock()
+			return
+		}
+		o.lastEventSeq = seq
+	}
+	if o.seekPending != nil && isOrdered {
 		delta := t - *o.seekPending
-		if delta < -500*time.Millisecond || delta > 500*time.Millisecond {
+		settled := kind == "seeked" || (delta >= -500*time.Millisecond && delta <= 500*time.Millisecond) || (!o.seekAt.IsZero() && time.Since(o.seekAt) > 2*time.Second)
+		if !settled {
 			o.mu.Unlock()
 			return
 		}
@@ -765,6 +835,7 @@ func (o *webOut) event(kind string, t time.Duration, msg string, seq int) {
 	case "time", "seeked":
 	case "playing":
 		o.running = true
+		o.played = true
 	case "pause", "waiting":
 		o.running = false
 	case "system-pause", "system-play":
@@ -785,7 +856,7 @@ func (o *webOut) event(kind string, t time.Duration, msg string, seq int) {
 		}
 		return
 	case "ended":
-		if seq <= o.endSeq {
+		if o.err != "" || seq <= o.endSeq {
 			o.mu.Unlock()
 			return
 		}

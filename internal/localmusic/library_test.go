@@ -65,3 +65,30 @@ func TestUnavailableLocalFile(t *testing.T) {
 		t.Fatalf("unavailable file: %+v, warnings %v", tracks, warnings)
 	}
 }
+
+// Non-MP3 files containing 0xFF 0xFB sync bytes and MP3s with corrupt ID3 lengths must not produce fake or negative durations.
+func TestDurationRejectsNonMP3AndCorruptID3(t *testing.T) {
+	dir := t.TempDir()
+	ogg := filepath.Join(dir, "sample.ogg")
+	// Fake MP3 sync word 0xFF 0xFB 0x90 0x00 inside a non-MP3 file.
+	oggBytes := append([]byte("OggS\x00\x02"), 0xff, 0xfb, 0x90, 0x00)
+	oggBytes = append(oggBytes, make([]byte, 4096)...)
+	if err := os.WriteFile(ogg, oggBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tr, err := Read(ogg, "")
+	if err != nil || tr.Duration != 0 {
+		t.Fatalf("expected 0 duration for .ogg with MP3 sync bytes, got %d err=%v", tr.Duration, err)
+	}
+
+	badMP3 := filepath.Join(dir, "bad.mp3")
+	// ID3 header claiming size larger than file followed by a sync word.
+	id3 := []byte{'I', 'D', '3', 3, 0, 0, 0x0f, 0x7f, 0x7f, 0x7f, 0xff, 0xfb, 0x90, 0x00}
+	if err := os.WriteFile(badMP3, id3, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tr2, err := Read(badMP3, "")
+	if err != nil || tr2.Duration < 0 {
+		t.Fatalf("corrupt ID3 produced negative duration: %d err=%v", tr2.Duration, err)
+	}
+}

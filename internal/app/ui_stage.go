@@ -2,7 +2,10 @@ package app
 
 import (
 	"math"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 
@@ -14,6 +17,8 @@ import (
 // time, its words scattered a little, each springing in as it is sung,
 // lighting up with a glow, then settling and drifting. Everything follows
 // from where playback is, so seeking shows the same frame playing would.
+
+const stageLineFade = 400 * time.Millisecond
 
 // wordShape is where a word sits and leans, the same for a line each time.
 type wordShape struct {
@@ -48,19 +53,114 @@ func easeOutCubic(t float32) float32 {
 	return 1 - (1-t)*(1-t)*(1-t)
 }
 
-// stageShapes lays out the words of a line at font size f.
-func stageShapes(c *ui.Context, l *lyrics.Line, f float32) []wordShape {
-	seed := float64(l.At / time.Millisecond)
-	shapes := make([]wordShape, len(l.Words))
-	widths := make([]float32, len(l.Words))
-	for i, w := range l.Words {
+// stageLineWords returns l's word timings, spreading synced line-only lyrics
+// (such as those adopted from Fusion) on the fly so stage rendering never
+// displays an empty line.
+func stageLineWords(lines []lyrics.Line, i int) []lyrics.Word {
+	l := lines[i]
+	if len(l.Words) > 0 {
+		return l.Words
+	}
+	if l.Unsynced || l.Text == "" {
+		return nil
+	}
+	end := l.End
+	if end <= l.At || (i+1 < len(lines) && end == lines[i+1].At && end-l.At > 6*time.Second) {
+		end = l.At + 6*time.Second
+		if i+1 < len(lines) && lines[i+1].At > l.At {
+			end = min(end, lines[i+1].At)
+		}
+	}
+	return lyrics.SpreadWords(l.Text, l.At, end)
+}
+
+// stageTranslationWords spreads the visible translation of lines[i] across the
+// timing of its original words so each translated word or character springs,
+// glows, and drifts on the stage in step with the original lyric.
+func stageTranslationWords(lines []lyrics.Line, i int, words []lyrics.Word) []lyrics.Word {
+	l := lines[i]
+	tr := visibleFusionTranslation(l, fusionChinese(lines), false)
+	if tr == "" || l.Unsynced {
+		return nil
+	}
+	end := l.End
+	if end <= l.At || (i+1 < len(lines) && end == lines[i+1].At && end-l.At > 6*time.Second) {
+		end = l.At + 6*time.Second
+		if i+1 < len(lines) && lines[i+1].At > l.At {
+			end = min(end, lines[i+1].At)
+		}
+	}
+	if len(words) == 0 {
+		return lyrics.SpreadWords(tr, l.At, end)
+	}
+	raw := lyrics.SpreadWords(tr, 0, time.Second)
+	if len(raw) == 0 {
+		return nil
+	}
+	var tokens []string
+	for _, w := range raw {
+		trimmed := strings.TrimSpace(w.Text)
+		onlyPunct := trimmed != "" && strings.IndexFunc(trimmed, func(r rune) bool {
+			return unicode.IsLetter(r) || unicode.IsNumber(r)
+		}) < 0
+		if onlyPunct && len(tokens) > 0 {
+			tokens[len(tokens)-1] += w.Text
+			continue
+		}
+		tokens = append(tokens, w.Text)
+	}
+	weights := make([]int, len(tokens))
+	totalWeight := 0
+	for idx, tok := range tokens {
+		weights[idx] = max(1, utf8.RuneCountInString(strings.TrimSpace(tok)))
+		totalWeight += weights[idx]
+	}
+	var totalDur time.Duration
+	for _, w := range words {
+		totalDur += max(time.Millisecond, w.End-w.Start)
+	}
+	mapTime := func(units int, isEnd bool) time.Duration {
+		if units <= 0 {
+			return words[0].Start
+		}
+		if units >= totalWeight {
+			return words[len(words)-1].End
+		}
+		target := totalDur * time.Duration(units) / time.Duration(totalWeight)
+		for idx, w := range words {
+			d := max(time.Millisecond, w.End-w.Start)
+			if target < d || (isEnd && target == d) || idx == len(words)-1 {
+				return w.Start + min(target, d)
+			}
+			target -= d
+		}
+		return words[len(words)-1].End
+	}
+	out := make([]lyrics.Word, len(tokens))
+	before := 0
+	for idx, tok := range tokens {
+		start := mapTime(before, false)
+		before += weights[idx]
+		finish := max(start+time.Millisecond, mapTime(before, true))
+		out[idx] = lyrics.Word{Text: tok, Start: start, End: finish}
+	}
+	return out
+}
+
+// stageShapes lays out words at font size f.
+func stageShapes(c *ui.Context, at time.Duration, words []lyrics.Word, f float32) []wordShape {
+	seed := float64(at / time.Millisecond)
+	shapes := make([]wordShape, len(words))
+	widths := make([]float32, len(words))
+	for i, w := range words {
 		widths[i], _ = c.MeasureText(0, ui.Span{Text: w.Text, Size: f, Weight: 800})
 	}
-	for i := range l.Words {
+	scatter := 36 * min(1, max(0.55, f/54))
+	for i := range words {
 		ws := seed + float64(i)
 		shapes[i] = wordShape{
-			x:      (lineRandom(ws, 1) - 0.5) * 36,
-			y:      (lineRandom(ws, 2) - 0.5) * 36,
+			x:      (lineRandom(ws, 1) - 0.5) * scatter,
+			y:      (lineRandom(ws, 2) - 0.5) * scatter,
 			rotate: (lineRandom(ws, 3) - 0.5) * 10,
 			scale:  1.1 + lineRandom(ws, 4)*0.2,
 			drift:  (lineRandom(ws, 5) - 0.5) * 10,
@@ -84,7 +184,7 @@ func stageShapes(c *ui.Context, l *lyrics.Line, f float32) []wordShape {
 // stage shows the lyrics of tr on the whole stage.
 func (a *app) stage(c *ui.Context, tr *spotify.Track, accent ui.Color) {
 	pl := a.pl
-	lines, loaded := pl.Lyrics()
+	lines, loaded := a.nowPlayingLyrics(tr)
 	w, h := c.Size()
 	f := min(64, max(36, w*0.045))
 	box := ui.Box(c.Key("stage")).Grow(1)
@@ -100,6 +200,15 @@ func (a *app) stage(c *ui.Context, tr *spotify.Track, accent ui.Color) {
 		})
 		return
 	}
+	if lines[0].Unsynced {
+		box.Children(func() {
+			ui.Column(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Gap(10).Children(func() {
+				ui.Text(c, "无时间轴歌词不支持律动模式").FontSize(26).FontWeight(800).TextColor(white.Alpha(0.55))
+				ui.Text(c, "请切换到「"+lyricsName(tr)+"」查看全文").FontSize(14).TextColor(white.Alpha(0.35))
+			})
+		})
+		return
+	}
 	pos := pl.SongPosition()
 	cur := lyrics.Index(lines, pos)
 	if pl.Playing() {
@@ -110,9 +219,9 @@ func (a *app) stage(c *ui.Context, tr *spotify.Track, accent ui.Color) {
 		ui.Box(c.Key("sung")).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Children(func() {
 			// The line before goes as the new one comes.
 			if cur > 0 {
-				gone := float32((pos - lines[cur].At).Seconds()) / 0.4
+				gone := float32(pos-lines[cur].At) / float32(stageLineFade)
 				if gone < 1 {
-					a.stageLine(c, &lines[cur-1], pos, f, w, h, 1-easeOutCubic(gone), accent)
+					a.stageLine(c, lines, cur-1, pos, f, w, h, 1-easeOutCubic(gone), accent)
 				}
 			}
 			switch {
@@ -122,18 +231,8 @@ func (a *app) stage(c *ui.Context, tr *spotify.Track, accent ui.Color) {
 				// A long break before the next line.
 				a.interlude(c, pos, lines[cur].End, lines[cur+1].At)
 			default:
-				a.stageLine(c, &lines[cur], pos, f, w, h, 1, accent)
+				a.stageLine(c, lines, cur, pos, f, w, h, 1, accent)
 			}
-
-			// The translation, and the line coming next, along the foot.
-			ui.Column(c).Absolute().Left(0).Right(0).Bottom(24).AlignItems(ui.Center).Gap(8).PassThrough().Children(func() {
-				if cur >= 0 && lines[cur].Translation != "" {
-					ui.Text(c.Key("translation"), lines[cur].Translation).FontSize(18).FontWeight(600).TextColor(white.Alpha(0.72)).TextAlign(ui.Center)
-				}
-				if cur+1 < len(lines) {
-					ui.Text(c.Key("next"), lines[cur+1].Text).FontSize(14).TextColor(white.Alpha(0.32)).TextAlign(ui.Center).SingleLine()
-				}
-			})
 		})
 	})
 }
@@ -143,28 +242,41 @@ func (a *app) stage(c *ui.Context, tr *spotify.Track, accent ui.Color) {
 // times a second while words only drift, and else when the next word is
 // due. Most of a song is the slow kind.
 func stageNextFrame(c *ui.Context, lines []lyrics.Line, cur int, pos time.Duration) {
+	if len(lines) == 0 || lines[0].Unsynced {
+		return
+	}
 	if cur < 0 {
-		if len(lines) > 0 {
-			c.After(min(100*time.Millisecond, lines[0].At-pos))
+		if wait := lines[0].At - pos; wait > 0 {
+			c.After(min(100*time.Millisecond, wait))
 		}
+		return
+	}
+	if cur > 0 && pos-lines[cur].At < stageLineFade {
+		c.AnimationFrame()
 		return
 	}
 	const lookahead = 80 * time.Millisecond
 	next, drifting := time.Duration(-1), false
 	for i := max(cur-1, 0); i <= min(cur+1, len(lines)-1); i++ {
-		for _, w := range lines[i].Words {
-			start, end := w.Start-lookahead, max(w.End, w.Start+150*time.Millisecond)
-			switch {
-			case pos >= start && pos < max(start+700*time.Millisecond, end+900*time.Millisecond):
-				// Springing in, filling, or its glow fading.
-				c.AnimationFrame()
-				return
-			case pos >= end && pos < end+5*time.Second:
-				drifting = true
-			case pos < start && (next < 0 || start-pos < next):
-				next = start - pos
+		words := stageLineWords(lines, i)
+		for _, group := range [][]lyrics.Word{words, stageTranslationWords(lines, i, words)} {
+			for _, w := range group {
+				start, end := w.Start-lookahead, max(w.End, w.Start+150*time.Millisecond)
+				switch {
+				case pos >= start && pos < max(start+700*time.Millisecond, end+900*time.Millisecond):
+					// Springing in, filling, or its glow fading.
+					c.AnimationFrame()
+					return
+				case pos >= end && pos < end+5*time.Second:
+					drifting = true
+				case pos < start && (next < 0 || start-pos < next):
+					next = start - pos
+				}
 			}
 		}
+	}
+	if cur == len(lines)-1 && !drifting && next < 0 {
+		return
 	}
 	wait := 100 * time.Millisecond // the drift, and the breathing of a break
 	if !drifting && next > 0 {
@@ -173,21 +285,37 @@ func stageNextFrame(c *ui.Context, lines []lyrics.Line, cur int, pos time.Durati
 	c.After(wait)
 }
 
-// stageLine shows the words of l as they are at pos, the whole line at
+// stageLine shows the words of lines[idx] as they are at pos, the whole line at
 // opacity fade.
-func (a *app) stageLine(c *ui.Context, l *lyrics.Line, pos time.Duration, f, w, h, fade float32, accent ui.Color) {
+func (a *app) stageLine(c *ui.Context, lines []lyrics.Line, idx int, pos time.Duration, f, w, h, fade float32, accent ui.Color) {
+	l := &lines[idx]
+	words := stageLineWords(lines, idx)
 	seed := float64(l.At / time.Millisecond)
-	shapes := stageShapes(c, l, f)
+	shapes := stageShapes(c, l.At, words, f)
+	trWords := stageTranslationWords(lines, idx, words)
+	tf := min(44, max(24, f*0.68))
+	trShapes := stageShapes(c, l.At+37*time.Millisecond, trWords, tf)
 	// Where the line sits: to one side or the middle, a little up or down.
 	justify := []ui.Align{ui.Start, ui.Center, ui.End}[int(seed)%3]
 	lift := []float32{-0.14, 0, 0.12}[int(seed*2)%3] * h
 
 	ui.Row(c.Key(l.At)).Absolute().Top(0).Left(0).Right(0).Bottom(0).Padding(0, w*0.1).
-		Wrap().Justify(justify).AlignContent(ui.Center).AlignItems(ui.Center).Translate(0, lift).
+		Justify(justify).AlignItems(ui.Center).Translate(0, lift).
 		Opacity(fade).PassThrough().Children(func() {
-		for i, word := range l.Words {
-			a.stageWord(c.Key(i), word, shapes[i], pos, f, accent)
-		}
+		ui.Column(c).Shrink(1).MinWidth(0).AlignItems(ui.Center).Children(func() {
+			ui.Row(c.Key("words")).Wrap().Justify(justify).AlignContent(ui.Center).AlignItems(ui.Center).Children(func() {
+				for i, word := range words {
+					a.stageWord(c.Key(i), word, shapes[i], pos, f, accent)
+				}
+			})
+			if len(trWords) > 0 {
+				ui.Row(c.Key("translation")).Margin(max(34, f*0.64), 0, 0, 0).Wrap().Justify(justify).AlignContent(ui.Center).AlignItems(ui.Center).Children(func() {
+					for i, word := range trWords {
+						a.stageWord(c.Key(i), word, trShapes[i], pos, tf, accent)
+					}
+				})
+			}
+		})
 	})
 }
 

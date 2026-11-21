@@ -2,123 +2,91 @@
 
 <img src="docs/icon.png" width="88" alt="Sonora">
 
-# Sonora · Custom Windows Fork
+# Sonora v1.0 · Custom Windows Fork
 
-**Lyric island · Bilingual word highlighting · Local music · Sticky playlist search**
+**Flow & Liquid Glass · Word-timed bilingual stage · Draggable multi-monitor island · Local music · Sticky playlist search**
 
-An independent fork of MySpotify with its own identity, custom icon and isolated profile directories, focused on desktop lyrics, local listening and finding songs in large playlists.
+An independent fork of MySpotify with its own identity, custom icon, and isolated profile directories—focused on fluid desktop lyrics, multi-monitor dynamic island, local playback, and effortless search in large playlists.
 
 [简体中文](README.md) · **English**
 
-[![Latest release](https://img.shields.io/github/v/release/hfx123456/Sonora?style=flat-square&label=release&color=ef3b45)](https://github.com/hfx123456/Sonora/releases/latest)
+[![Latest release](https://img.shields.io/badge/version-v1.0.0-ef3b45?style=flat-square)](https://github.com/hfx123456/Sonora/releases/latest)
 ![Windows x64](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-3a6ea5?style=flat-square)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-c2410c?style=flat-square)](LICENSE)
 
 **[Download Sonora](https://github.com/hfx123456/Sonora/releases/latest)** · [Lyrics guide (Chinese)](FUSION.md) · [Changelog](CHANGELOG.md) · [Upstream](https://github.com/margbug01/MySpotify)
 
-<img src="docs/screenshots/island.webp" width="960" alt="Actual screenshot: bilingual lyric island at the screen's top edge">
+<img src="docs/screenshots/stage-bilingual.webp" width="960" alt="Sonora v1.0 Stage mode with GPU Flow backdrop, Liquid Glass controls, and word-timed bilingual animations">
 
 </div>
 
-Maintained by **hfx123456**, based on [margbug01/MySpotify](https://github.com/margbug01/MySpotify). This page describes the additions in this fork. Spotify browsing, streaming, music videos and podcasts come from upstream. This fork currently publishes **Windows 10/11 x64** builds.
+Maintained by **hfx123456**, based on [margbug01/MySpotify](https://github.com/margbug01/MySpotify). Below are the key additions and refinements in **Sonora v1.0**; Spotify browsing, streaming, music videos, and podcasts come from upstream. Publishes **Windows 10/11 x64** builds.
 
-## Desktop lyrics that fit around your windows
+---
 
-The **Fusion 双语歌词** button at the far right of the player bar offers three views:
+## 1. Flow Backdrop, Liquid Glass & Word-Timed Bilingual Stage
 
-| View | Behavior |
-| --- | --- |
-| **Top-edge lyric island** | A capsule attached to the physical screen edge, with lyrics, Chinese translation and cover art; can also become a draggable floating capsule. |
-| **Transparent desktop lyrics** | Outlined original text above its Chinese translation, draggable over other windows. |
-| **In-app bilingual panel** | Scrollable lyrics with click-to-seek and an animated background based on cover colors. |
-
-- Floating lyrics **hide on pause and return on resume**.
-- The attached island can fade out and allow clicks through when the pointer enters, then reappear when it leaves. Avoidance is optional.
-- Overlays can be locked for click-through; unlock them from the player menu or tray.
-- Choose a lyrics font and a separate Chinese font. Adjust font size and island width independently; positions and preferences are saved.
-- Chinese songs use one line. A translation line appears only when a valid Chinese translation exists.
-- The intro title/credits stage now refreshes at 30 FPS in motion mode, fixing its animation stutter.
+- **Apple Music-style GPU Flow Backdrop**: Real-time animated mesh gradient derived from the current album artwork, drifting and breathing with playback.
+- **iOS-style Liquid Glass**: Unified translucent glass surfaces for the Now Playing mode switcher, stage controls, and floating bars, with a toggle and continuous strength slider in Settings.
+- **Word-Timed Bilingual Stage**: Both original lyrics and Chinese translations spring in, unblur, glow in the album accent color, and drift word-by-word along the playback timeline; top tabs and transport controls appear on pointer hover and fade away cleanly when idle.
+- **Scrolling Lyrics Sweep**: Continuous karaoke sweep, subtle lift, and glow on the active line and its translation, while pausing stops continuous repaints.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/island.webp" alt="Top-edge bilingual lyric island"><br><b>Lyric island</b></td>
-    <td width="50%"><img src="docs/screenshots/desktop-lyrics.webp" alt="Transparent bilingual desktop lyrics"><br><b>Transparent desktop lyrics</b></td>
+    <td width="50%"><img src="docs/screenshots/stage-bilingual.webp" alt="Bilingual stage mode"><br><b>Stage Mode</b>: Flow backdrop, Liquid Glass controls, and word-timed bilingual motion.</td>
+    <td width="50%"><img src="docs/screenshots/nowplaying-glass.webp" alt="Scrolling lyrics mode"><br><b>Lyrics Mode</b>: Continuous word sweep for both original text and translation.</td>
   </tr>
 </table>
 
-## Bilingual lookup, timing and animation
+---
 
-The embedded **Lyricify Lyrics Helper** searches **NetEase Cloud Music, QQ Music and LRCLIB** for both online and local songs. Candidates are checked against title, artist, album and duration, preferring synchronized lyrics before comparing translations and word timing.
+## 2. Draggable Multi-Monitor Island & Quick Unlock
 
-- Word highlighting, lift, subtle scale and glow, including transitions for translated lines; motion can be disabled.
-- Real word timestamps are used when available. With line timing only, word highlighting is an approximate visual effect, not syllable alignment.
-- Import `LRC / TTML / YRC / QRC / LYS / LYL`, or force a new lookup bypassing cached results.
-- Adjust the overlay's global timing offset in 0.5-second steps from its menu.
-- Local sidecar LRC or embedded lyrics containing Chinese are preferred. Manual imports last for the current track session.
-- The release includes the lyrics helper and its .NET runtime. No separate .NET or Lyricify Fusion installation is needed.
+The **Fusion 双语歌词** menu at the right of the player bar provides three overlay modes:
 
-Translations come from lyric providers; there is no machine translation service and coverage is not guaranteed. Lookup sends track metadata, not local audio. See [FUSION.md](FUSION.md) for details.
+| Mode | Behavior |
+| --- | --- |
+| **Dynamic Island** | Anchored to the physical top edge of its display by default with spring-animated width and height. **Drag it freely anywhere, including across multiple monitors**: dragging away from the top edge smoothly turns it into a rounded floating capsule, and dragging back to any monitor's top edge snaps it flush to that display. Multi-monitor setups also get a **Move Island to Next Display** menu action. |
+| **Transparent Desktop Lyrics** | Outlined two-line lyrics floating over your windows. Hovering when unlocked reveals a dark translucent bar with track info and playback/lock controls. |
+| **In-App Bilingual Panel** | Full scrollable bilingual lyrics with click-to-seek and animated artwork backdrop. |
 
-<details>
-<summary>Actual lyrics menu</summary>
+### Click-Through Lock with Instant Unlock Pill
 
-<img src="docs/screenshots/fusion-menu.webp" width="247" alt="Lyrics mode, motion, pointer avoidance, fonts, width, timing and import controls">
+- When locked for click-through, moving the mouse over or clicking the lyrics/island reveals a compact **Unlock (解锁)** pill without any distracting dark box around the lyrics; only that small pill accepts clicks while the rest of the lyrics remain click-through.
+- Floating overlays automatically hide when paused and return on resume.
 
-</details>
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/island-floating.webp" alt="Draggable floating Dynamic Island"><br><b>Floating Island</b>: Dragged away from the top edge or onto another monitor.</td>
+    <td width="50%"><img src="docs/screenshots/fusion-locked-unlock.webp" alt="Locked desktop lyrics with unlock pill"><br><b>Quick Unlock Pill</b>: Appears on hover/click while keeping lyrics click-through.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/island.webp" alt="Top-edge Dynamic Island"><br><b>Top-Edge Island</b>: Attached cleanly to the display's physical top.</td>
+    <td width="50%"><img src="docs/screenshots/desktop-lyrics.webp" alt="Transparent desktop lyrics"><br><b>Desktop Lyrics</b>: Crisp outlined text over any window.</td>
+  </tr>
+</table>
 
-## Sticky search inside playlists
+---
 
-The new playlist search box starts below the playlist header and sticks to the content's top edge as you scroll.
+## 3. Embedded Bilingual Lookup, Playlist Search & Local Music
 
-- Filter instantly by **title, artist or album**, see the result count and clear the query in one click.
-- Match **simplified and traditional Chinese** in either direction without changing displayed metadata.
-- Space-separated terms must all match; terms can span metadata fields. English matching ignores case.
-- Typing a space in the search box does not pause playback.
-- Double-click a result to play from its original playlist position, keeping the **full playlist queue**.
-- Each playlist retains its own query during the current app session.
+- **Embedded Lyricify Lyrics Helper**: Searches **NetEase Cloud Music, QQ Music, and LRCLIB** with cross-script alias matching, QRC/YRC/LRC/TTML/LYS/LYL import, ±0.5s global timing offset, and bundled .NET runtime (no separate installation required).
+- **Sticky Playlist & Local Search**: Capsule search bar sticks to the top while scrolling, supports Simplified/Traditional Chinese matching, space-separated multi-term filtering, consistent playlist sorting, and preserves the full queue when playing a filtered track.
+- **Local Music**: Recursive folder or single-file scanning (`MP3 / FLAC / M4A / WAV / OGG / Opus / AAC`) with embedded tags, artwork, and `.lrc` support without requiring Spotify sign-in.
 
-<img src="docs/screenshots/playlist-search.webp" width="860" alt="Actual playlist filtering by artist with a result count">
+<img src="docs/screenshots/playlist-search.webp" width="860" alt="Sticky playlist search">
 
-Chinese variant matching here applies to **local filtering within a playlist**; it is not a claim about Spotify's global search.
+---
 
-## Play music already on your computer
+## Install, Isolation & Build
 
-The new **本地音乐** sidebar page imports folders recursively or individual files and plays them from their original locations without Spotify sign-in.
+1. Download the release archive from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**, extract all files alongside `Sonora.exe`, and run `Sonora.exe` (requires Microsoft Edge WebView2 Runtime on Windows 10/11).
+2. **Isolated from upstream MySpotify**: Uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), migrating existing settings on first launch without altering the legacy folder.
 
-- Scans `MP3 / FLAC / M4A / WAV / OGG / Opus / AAC`; decoding depends on the playback component's support for the file encoding.
-- Reads tags, embedded artwork and lyrics, plus same-name `.lrc` files; filter by title, artist or album.
-- Uses the same queue, shuffle, repeat, seeking, volume and desktop lyrics. Online lyrics lookup still requires a connection.
-- Matches `spotify:local:` playlist entries uniquely to imported files by title, artist and album; missing or ambiguous matches remain unplayable.
-- Removing a source does not delete files. Rescan after changes; download OneDrive cloud files before playing them.
+```powershell
+$env:CGO_ENABLED = '0'
+go test ./internal/...
+go build -trimpath -ldflags='-H windowsgui -s -w' -o Sonora.exe .
+```
 
-Local music does not transfer through Spotify Connect, and protected Apple Music `.m4p` files are unsupported.
-
-## Install and update
-
-1. Download `Sonora-<version>-windows-amd64.zip` or `sonora-<version>-windows-amd64.tar.gz` from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**.
-2. Extract the complete archive, retain the accompanying license files and resources alongside `Sonora.exe`, and run `Sonora.exe`.
-3. Online Spotify sign-in and playback need [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
-4. Use **本地音乐** to add local songs, or **Fusion 双语歌词** in the player bar to enable an overlay.
-
-Signed builds use **hfx123456/Sonora** as their update source and verify updates using this repo's public key. Check for updates under **设置 → 关于**.
-
-**Sonora is isolated from upstream MySpotify**: it uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and profile directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), so both apps can coexist side by side. On first launch it automatically migrates existing settings, playback state, caches and sealed login cookies from `Vinyl` without modifying the legacy folder.
-
-## Inherited features and limits
-
-Spotify browsing, streaming, music videos, podcasts, scrolling lyrics, media keys, global shortcuts, tray behavior and themes are inherited from upstream, not new additions by this fork.
-
-Sonora is an unofficial personal project, unaffiliated with Spotify. Online features use Spotify's internal web-player interfaces and may break or conflict with its terms, putting accounts at risk. DRM decryption remains in the system web component; cached encrypted segments are not offline audio downloads. Use only your own account.
-
-Windows settings, playback state and logs live under `%APPDATA%\Sonora`; login data and caches use relevant subdirectories under `%LOCALAPPDATA%\Sonora`. Keep login data out of public repositories.
-
-## Development and attribution
-
-See [DEVELOPMENT.md](DEVELOPMENT.md) for development, [FUSION.md](FUSION.md) for the custom lyrics component, and [CHANGELOG.md](CHANGELOG.md) for changes. The dated [source-package notes](README-未编译源码.md) describe the source handoff at that time.
-
-- **Upstream application**: [margbug01/MySpotify](https://github.com/margbug01/MySpotify), retained under **AGPL-3.0**.
-- **Native UI**: [MyGo](https://github.com/egoist/mygo); upstream's interface originated in [mygo-cloudmusic](https://github.com/egoist/mygo-cloudmusic).
-- **Lyrics lookup and parsing**: [Lyricify Lyrics Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper), Apache-2.0.
-- **Adapted backgrounds**: [Lyricify Backgrounds](https://github.com/WXRIW/Lyricify-Backgrounds), Apache-2.0. Island appearance and concept credit Lyricify; see the third-party notices for visual attribution.
-
-The lyric windows are drawn by this application; no unpublished complete Lyricify Fusion UI source is used. Full component versions, licenses and notices are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and [licenses/](licenses/). Retain these and [LICENSE](LICENSE) when redistributing. Spotify trademarks and screenshot artwork belong to their respective owners.
+Retained under **AGPL-3.0** based on [margbug01/MySpotify](https://github.com/margbug01/MySpotify). See [DEVELOPMENT.md](DEVELOPMENT.md), [FUSION.md](FUSION.md), and [CHANGELOG.md](CHANGELOG.md).

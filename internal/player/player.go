@@ -2,6 +2,7 @@ package player
 
 import (
 	"errors"
+	"io/fs"
 	"log"
 	"math"
 	"math/rand/v2"
@@ -99,8 +100,10 @@ type Player struct {
 	feeding  bool // the feed is asked
 	awaiting bool // at the queue's end, for what the feed gives
 
-	track *spotify.Track
-	out   Output
+	track     *spotify.Track
+	out       Output
+	offEnd    func()
+	offSystem func()
 	// media is where the track's audio is, once resolved; video whether
 	// its music video plays rather than its audio, when it has one, and
 	// showsVideo whether out is the video.
@@ -239,10 +242,20 @@ func (p *Player) ended() {
 	}); ok {
 		if msg, licence, wait := f.Fault(); msg != "" {
 			if strings.HasPrefix(msg, "backendError ") {
+				if p.showsVideo {
+					if p.Video != nil {
+						p.Video.Close()
+						p.Video = nil
+					}
+					p.videoFailed(msg)
+					return
+				}
 				p.pending = p.Position()
 				p.stop()
-				p.Web.Close()
-				p.Web = nil
+				if p.Web != nil {
+					p.Web.Close()
+					p.Web = nil
+				}
 				p.err, p.playing = "音频播放器未能正常运行，点击播放重试", false
 				p.sync()
 				return
@@ -257,6 +270,10 @@ func (p *Player) ended() {
 				p.videoFailed(msg)
 				return
 			}
+			if strings.HasPrefix(msg, "keySystemError keySystemServerCertificateRequestFailed") {
+				p.certificateFailed(licence, wait)
+				return
+			}
 			p.failed(msg, licence, wait)
 			return
 		}
@@ -266,8 +283,11 @@ func (p *Player) ended() {
 	}
 	p.throttles = 0
 	if p.repeat == RepeatOne {
-		p.out.Seek(0)
-		p.out.Play()
+		if p.out != nil {
+			p.out.Seek(0)
+			p.out.Play()
+			p.sync()
+		}
 		return
 	}
 	if p.at+1 >= len(p.order) && p.feed != nil {
@@ -284,6 +304,22 @@ func (p *Player) ended() {
 		return
 	}
 	p.Next()
+}
+
+func (p *Player) certificateFailed(status int, wait time.Duration) {
+	if status == http.StatusTooManyRequests {
+		p.throttled(wait)
+		return
+	}
+	if temporaryCertificateStatus(status) && p.networkRetries == 0 {
+		p.networkRetries++
+		p.again(time.Second, "播放证书暂时不可用，正在重试")
+		return
+	}
+	from := p.Position()
+	p.stop()
+	p.pending, p.playing, p.err = from, false, "播放证书暂时不可用，点击播放重试"
+	p.sync()
 }
 
 // failed goes on from a track the page could not play: msg is what it
@@ -305,15 +341,25 @@ func (p *Player) failed(msg string, licence int, wait time.Duration) {
 		// The page tried again, and could not: if it was a network error and
 		// the network is up now (such as after a proxy node switch), reload the
 		// current track once at its position before skipping on.
-		at, skipped := p.at, p.skipped
+		if played, ok := p.out.(interface{ Played() bool }); ok && played.Played() {
+			p.networkRetries = 0
+		}
+		skipped := p.skipped
+		isNetwork := strings.HasPrefix(msg, "networkError ") || strings.HasPrefix(msg, "media 2 ") || msg == "media 2"
 		p.unlessOffline(func() {
-			if strings.HasPrefix(msg, "networkError ") && p.networkRetries < 1 {
+			if len(p.order) == 0 {
+				p.playing = false
+				p.sync()
+				return
+			}
+			curAt := min(max(p.at, 0), len(p.order)-1)
+			if isNetwork && p.networkRetries < 1 {
 				p.networkRetries++
-				p.loadSkipping(at, skipped, p.playing, p.pending)
+				p.loadSkipping(curAt, skipped, p.playing, p.pending)
 				return
 			}
 			p.err = "这首歌暂时无法播放"
-			p.skip(at, skipped)
+			p.skip(curAt, skipped)
 		})
 	}
 }
@@ -324,6 +370,7 @@ func (p *Player) failed(msg string, licence int, wait time.Duration) {
 // then, and loads again from where it was.
 func (p *Player) unlessOffline(then func()) {
 	if p.track != nil && p.track.Local() {
+		p.stop()
 		then()
 		return
 	}
@@ -438,10 +485,10 @@ func (p *Player) PlayRadio(name string, tracks []spotify.Track, feed func(got fu
 	if len(tracks) == 0 {
 		return
 	}
-	shuffle := p.shuffle
-	p.shuffle = false
+	shuffle, smart := p.shuffle, p.smartShuffle
+	p.shuffle, p.smartShuffle = false, false
 	p.PlayQueue(tracks, 0)
-	p.shuffle = shuffle
+	p.shuffle, p.smartShuffle = shuffle, smart
 	p.AttachRadio(name, feed)
 }
 
@@ -452,6 +499,9 @@ func (p *Player) RadioFrom(name string, tracks []spotify.Track, feed func(got fu
 	if p.track == nil {
 		return
 	}
+	p.smartGen++
+	p.smartFeeding = false
+	p.smartAdded = nil
 	p.queue, p.order, p.at = []spotify.Track{*p.track}, []int{0}, 0
 	p.appendTracks(tracks)
 	p.AttachRadio(name, feed)
@@ -515,7 +565,8 @@ func (p *Player) refill() {
 		case !p.awaiting:
 		case p.at+1 < len(p.order):
 			p.awaiting = false
-			p.load(p.at + 1)
+			p.networkRetries = 0
+			p.loadSkipping(p.at+1, 0, p.playing, 0)
 		default:
 			// The radio has nothing more: it stops at its end.
 			p.awaiting, p.playing = false, false
@@ -690,6 +741,13 @@ func (p *Player) IsSmartTrack(id string) bool {
 func (p *Player) removeUnplayedSmartTracks() {
 	p.smartGen++
 	p.smartFeeding = false
+	if p.awaiting && p.feed == nil {
+		p.awaiting = false
+		if p.out == nil {
+			p.playing = false
+		}
+		p.sync()
+	}
 	if len(p.smartAdded) == 0 || len(p.order) == 0 {
 		p.smartAdded = nil
 		return
@@ -738,7 +796,10 @@ func (p *Player) removeUnplayedSmartTracks() {
 }
 
 func (p *Player) refillSmart() {
-	if !p.smartShuffle || p.SmartFeed == nil || p.smartFeeding || len(p.order) == 0 {
+	if !p.smartShuffle || p.SmartFeed == nil || p.smartFeeding || len(p.order) == 0 || p.feed != nil || p.IsRemote() {
+		if p.awaiting && p.feed == nil && !p.smartFeeding {
+			p.finishSmartEnd()
+		}
 		return
 	}
 	start := max(p.at, 0)
@@ -753,6 +814,9 @@ func (p *Player) refillSmart() {
 	}
 	seed, ok := p.smartSeedTrack()
 	if !ok {
+		if p.awaiting && p.feed == nil {
+			p.finishSmartEnd()
+		}
 		return
 	}
 	p.smartFeeding = true
@@ -771,12 +835,23 @@ func (p *Player) refillSmart() {
 			}
 		case p.at+1 < len(p.order):
 			p.awaiting = false
-			p.load(p.at + 1)
+			p.networkRetries = 0
+			p.loadSkipping(p.at+1, 0, p.playing, 0)
 		default:
-			p.awaiting, p.playing = false, false
-			p.sync()
+			p.finishSmartEnd()
 		}
 	})
+}
+
+func (p *Player) finishSmartEnd() {
+	p.awaiting = false
+	if p.repeat == RepeatAll && len(p.order) > 0 {
+		p.networkRetries = 0
+		p.loadSkipping(0, 0, p.playing, 0)
+		return
+	}
+	p.playing = false
+	p.sync()
 }
 
 func (p *Player) awaitSmartFeed() {
@@ -860,7 +935,7 @@ func (p *Player) Ready() bool { return p.out != nil }
 // Err returns why the current track did not play, or "".
 func (p *Player) Err() string { return p.err }
 
-func (p *Player) Shuffle() bool     { return p.shuffle }
+func (p *Player) Shuffle() bool      { return p.shuffle }
 func (p *Player) SmartShuffle() bool { return p.smartShuffle }
 func (p *Player) ShuffleMode() ShuffleMode {
 	if p.smartShuffle {
@@ -885,6 +960,13 @@ func (p *Player) AdoptLyrics(uri string, lines []lyrics.Line) {
 	p.lyrics = append([]lyrics.Line(nil), lines...)
 	p.lyricsLoaded = true
 	p.lyricsOverride = true
+}
+
+// UseFallbackLyrics shows lyrics while the current track's lookup continues.
+func (p *Player) UseFallbackLyrics(uri string, lines []lyrics.Line) {
+	if !p.lyricsLoaded && p.track != nil && p.track.URI() == uri {
+		p.lyrics = append([]lyrics.Line(nil), lines...)
+	}
 }
 
 // PlayOrder returns the queue's indices in play order, and where the
@@ -966,14 +1048,25 @@ func (p *Player) TogglePlay() {
 	}
 	if p.out == nil {
 		switch {
-		case p.loading || p.waiting:
+		case p.loading || p.waiting || p.awaiting:
 			// It plays once loaded, or not.
 			p.playing = !p.playing
 			p.sync()
 		case len(p.order) > 0:
+			p.networkRetries = 0
 			p.loadSkipping(max(p.at, 0), 0, true, p.pending)
 		}
 		return
+	}
+	if f, ok := p.out.(interface {
+		Fault() (string, int, time.Duration)
+	}); ok {
+		if msg, _, _ := f.Fault(); msg != "" && !p.playing && len(p.order) > 0 {
+			from := p.Position()
+			p.networkRetries = 0
+			p.loadSkipping(min(max(p.at, 0), len(p.order)-1), 0, true, from)
+			return
+		}
 	}
 	out := p.out
 	if p.playing {
@@ -991,7 +1084,7 @@ func (p *Player) TogglePlay() {
 	}
 	p.playing = true
 	if !p.seeking && !out.Playing() {
-		if out.Position() >= out.Duration()-time.Second {
+		if d := out.Duration(); d > time.Second && out.Position() >= d-time.Second {
 			out.Seek(0)
 		}
 		out.Play()
@@ -1131,9 +1224,11 @@ func (p *Player) Duration() time.Duration {
 	if p.track == nil {
 		return 0
 	}
-	if p.out != nil && (p.showsVideo || p.track.Local()) {
-		// The video's own: it can run longer than the song, or shorter.
-		return p.out.Duration()
+	if p.out != nil && (p.showsVideo || p.track.Local() || p.media != nil && p.media.File != "") {
+		if d := p.out.Duration(); d > 0 || p.showsVideo || p.track.Local() {
+			// The video's or file's own: it can run longer than metadata, or shorter.
+			return d
+		}
 	}
 	return p.track.Length()
 }
@@ -1198,12 +1293,53 @@ func (p *Player) CloseWeb() {
 		p.Web.Close()
 		p.Web = nil
 	}
+	if p.Video != nil {
+		p.Video.Close()
+		p.Video = nil
+	}
+}
+
+// Clear stops playback and drops the current queue, track, radio, and lyrics
+// (used when signing out of a Spotify account).
+func (p *Player) Clear() {
+	p.gen++
+	p.stop()
+	p.endRadio()
+	p.smartGen++
+	p.smartFeeding = false
+	p.smartAdded = nil
+	p.awaiting = false
+	p.loading = false
+	p.playing = false
+	p.waiting = false
+	p.err = ""
+	p.pending = 0
+	p.queue = nil
+	p.order = nil
+	p.at = 0
+	p.track = nil
+	p.media = nil
+	p.lyrics = nil
+	p.lyricsLoaded = false
+	p.lyricsOverride = false
+	p.sync()
 }
 
 func (p *Player) stop() {
 	if p.upNext.timer != nil {
 		p.upNext.timer.Stop()
 		p.upNext.timer = nil
+		if p.upNext.m == nil {
+			p.upNext.id = ""
+		}
+	}
+	if p.offEnd != nil {
+		p.offEnd()
+		p.offEnd = nil
+	}
+	if p.offSystem != nil {
+		p.offSystem()
+		p.offSystem = nil
 	}
 	if out := p.out; out != nil {
 		// Paused first, it fades out over a few milliseconds, rather than
@@ -1215,6 +1351,17 @@ func (p *Player) stop() {
 	p.showsVideo = false
 	p.seeking = false
 	p.fade.attach(nil, 1)
+}
+
+// isPlayableLocalFile reports whether info is a readable regular file,
+// including hydrated Windows Cloud Filter (OneDrive) files whose reparse point
+// causes Go's Mode().IsRegular() to return false.
+func isPlayableLocalFile(info fs.FileInfo) bool {
+	if info.IsDir() {
+		return false
+	}
+	const nonFile = fs.ModeDir | fs.ModeSymlink | fs.ModeNamedPipe | fs.ModeSocket | fs.ModeDevice | fs.ModeCharDevice
+	return info.Mode()&nonFile == 0
 }
 
 // load plays the track at order[at], skipping those that cannot play.
@@ -1241,7 +1388,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			if err != nil {
 				return nil, err
 			}
-			if !info.Mode().IsRegular() {
+			if !isPlayableLocalFile(info) {
 				return nil, errors.New("本地歌曲文件不存在")
 			}
 			var probe [1]byte
@@ -1286,8 +1433,14 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 				}
 				if !errors.Is(err, spotify.ErrNoAudioHere) {
 					p.unlessOffline(func() {
+						if len(p.order) == 0 {
+							p.playing = false
+							p.sync()
+							return
+						}
+						curAt := min(max(p.at, 0), len(p.order)-1)
 						p.err = "这首歌暂时无法播放"
-						p.skip(at, skipped)
+						p.skip(curAt, skipped)
 					})
 					return
 				}
@@ -1296,18 +1449,32 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 				// would not play either: they are not asked for one
 				// after another, as the songs after one that fails are.
 				if n := len(p.order); n > 1 {
-					if after := p.queue[p.order[(at+1)%n]]; after.Episode && after.Album.ID == t.Album.ID {
+					curAt := min(max(p.at, 0), n-1)
+					if after := p.queue[p.order[(curAt+1)%n]]; after.Episode && after.Album.ID == t.Album.ID {
 						p.playing = false
 						p.sync()
 						return
 					}
+					p.skip(curAt, skipped)
+					return
 				}
-				p.skip(at, skipped)
+				if len(p.order) > 0 {
+					p.skip(min(max(p.at, 0), len(p.order)-1), skipped)
+				} else {
+					p.playing = false
+					p.sync()
+				}
 				return
 			}
 			p.offline = 0
 			p.media = m
+			if !p.video {
+				v = nil
+			}
 			p.open(gen, m, v)
+			if p.video && !video && m.Video != "" && p.out != nil {
+				p.reopen()
+			}
 			p.mediaAhead()
 		})
 	}()
@@ -1346,19 +1513,20 @@ func (p *Player) open(gen int, m *spotify.Media, v *spotify.Video) {
 	if p.pending > 0 {
 		level = 0
 	}
-	p.fade.attach(p.out, level)
+	out := p.out
+	p.fade.attach(out, level)
 	p.applyGain()
-	p.out.OnEnd(func() {
+	p.offEnd = out.OnEnd(func() {
 		p.post(func() {
-			if gen == p.gen {
+			if gen == p.gen && p.out == out {
 				p.ended()
 			}
 		})
 	})
-	if out, ok := p.out.(systemOutput); ok {
-		out.OnSystem(func(cmd string) {
+	if sysOut, ok := out.(systemOutput); ok {
+		p.offSystem = sysOut.OnSystem(func(cmd string) {
 			p.post(func() {
-				if gen == p.gen {
+				if gen == p.gen && p.out == out {
 					p.system(cmd)
 				}
 			})
@@ -1445,6 +1613,10 @@ func (p *Player) reopen() {
 				return
 			}
 			p.loading = false
+			if !p.video {
+				p.open(gen, m, nil)
+				return
+			}
 			if v == nil {
 				p.video, p.err = false, "MV 暂时无法播放"
 			} else if from > 0 {
@@ -1511,7 +1683,9 @@ func (p *Player) cue(at int, play bool, from time.Duration) (int, spotify.Track)
 		p.post(func() {
 			if gen == p.gen {
 				if !p.lyricsOverride {
-					p.lyrics = lines
+					if len(p.lyrics) == 0 || (len(lines) > 0 && (p.lyrics[0].Unsynced || !lines[0].Unsynced)) {
+						p.lyrics = lines
+					}
 					p.lyricsLoaded = true
 				}
 				p.lyricsAhead()
@@ -1571,7 +1745,7 @@ func (p *Player) mediaAhead() {
 	if next.Local() {
 		return
 	}
-	if p.upNext.id == next.ID {
+	if p.upNext.id == next.ID && (p.upNext.timer != nil || (p.upNext.m != nil && time.Since(p.upNext.at) <= aheadFresh)) {
 		return
 	}
 	if p.upNext.timer != nil {
@@ -1585,11 +1759,16 @@ func (p *Player) mediaAhead() {
 		m, err := resolveMedia(next.URI())
 		if err != nil {
 			log.Printf("player: ahead %s: %v", next.URI(), err)
+			p.post(func() {
+				if p.gen == gen && p.upNext.id == next.ID {
+					p.upNext.id, p.upNext.timer = "", nil
+				}
+			})
 			return
 		}
 		p.post(func() {
-			if p.gen == gen && p.upNext.id == next.ID {
-				p.upNext.m, p.upNext.at = m, time.Now()
+			if p.gen == gen && p.upNext.id == next.ID && p.Web == web {
+				p.upNext.m, p.upNext.at, p.upNext.timer = m, time.Now(), nil
 				go web.Prefetch(m)
 			}
 		})

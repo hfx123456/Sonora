@@ -95,10 +95,10 @@ func boneWidth(i int) float32 { return boneWidths[i%len(boneWidths)] }
 // the cards they show.
 
 func (a *app) chartCardsSkeleton(c *ui.Context, s shimmer) {
-	cols := min(4, max(2, a.columns(c, 260)))
-	ui.Grid(c).Columns(cols).Gap(20).Children(func() {
+	cols := a.officialChartColumns(c, 4)
+	ui.Grid(c).Columns(cols).Gap(8).Margin(0, -12, 0, -12).Children(func() {
 		for i := range 4 {
-			ui.Row(c.Key(i)).Gap(14).Padding(12).Radius(14).AlignItems(ui.Center).Background(a.pal.hover).Children(func() {
+			ui.Row(c.Key(i)).Gap(14).Padding(12).Radius(14).AlignItems(ui.Center).Children(func() {
 				s.bone(c, 9).Size(84, 84)
 				ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(5).Children(func() {
 					s.text(c, 14, 1.3).WidthPercent(46)
@@ -114,9 +114,9 @@ func (a *app) chartCardsSkeleton(c *ui.Context, s shimmer) {
 // playlistCardsSkeleton is n of playlistCard's cards, in columns at least
 // min DIPs wide, with a line for how often they update if freq.
 func (a *app) playlistCardsSkeleton(c *ui.Context, s shimmer, n int, min float32, freq bool) {
-	ui.Grid(c).Columns(a.columns(c, min)).GapX(20).GapY(28).Children(func() {
+	ui.Grid(c).Columns(a.columns(c, min)).GapX(0).GapY(12).Margin(0, -10, 0, -10).Children(func() {
 		for i := range n {
-			ui.Column(c.Key(i)).Gap(10).AlignItems(ui.Stretch).Children(func() {
+			ui.Column(c.Key(i)).Gap(10).Padding(10).AlignItems(ui.Stretch).Children(func() {
 				s.bone(c, 10).AspectRatio(1)
 				ui.Column(c).Gap(0).Children(func() {
 					s.text(c, 13, 1.35).WidthPercent(92)

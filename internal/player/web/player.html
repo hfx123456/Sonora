@@ -81,9 +81,13 @@ function nativeFairPlay(gen, a) {
       if (!a.webkitKeys) a.webkitSetMediaKeys(new WebKitMediaKeys('com.apple.fps.1_0'));
       session = a.webkitKeys.createSession('video/mp4', data);
       session.addEventListener('webkitkeymessage', async (m) => {
-        const r = await fetch('/license?gen=' + gen, { method: 'POST', body: m.message });
-        if (!r.ok) return fail('keySystemLicenseRequestFailed', r.status);
-        session.update(new Uint8Array(await r.arrayBuffer()));
+        try {
+          const r = await fetch('/license?gen=' + gen, { method: 'POST', body: m.message });
+          if (!r.ok) return fail('keySystemLicenseRequestFailed', r.status);
+          session.update(new Uint8Array(await r.arrayBuffer()));
+        } catch (err) {
+          fail('keySystemLicenseRequestFailed ' + (err && err.message ? err.message : String(err)));
+        }
       });
       session.addEventListener('webkitkeyerror', () => {
         const err = session.error;
@@ -109,8 +113,9 @@ function native(a, handlers, close) {
     startLoad() {},
     stopLoad() {},
     recoverMediaError() {
-      const at = a.currentTime;
-      a.addEventListener('loadedmetadata', () => { a.currentTime = at; }, { once: true });
+      // load() already captures t.seek before calling recoverMediaError() and
+      // restores it once on loadedmetadata, so re-assigning src avoids stacking
+      // duplicate loadedmetadata listeners that would overwrite t.seek with 0.
       a.src = src;
     },
     destroy() {
@@ -144,7 +149,7 @@ window.vinyl = {
     });
     // tries counts the recoveries, four at most; want is whether to play;
     // asked is how many times Vinyl had asked to play or pause.
-    const t = { gen, a, hls, seek: null, tries: 0, want: false, asked: 0, endSeq: 0, ending: false, lastTime: 0, still: 0, heard: false, recovering: false, retryTimer: null };
+    const t = { gen, a, hls, seek: null, tries: 0, want: false, asked: 0, eventSeq: 0, endSeq: 0, ending: false, lastTime: 0, still: 0, heard: false, recovering: false, retryTimer: null };
     const finish = (reason) => {
       if (cur !== t || t.ending) return;
       t.ending = true;
@@ -218,7 +223,7 @@ window.vinyl = {
         rest(t);
         return send(gen, 'system-pause', a.currentTime, '', t.asked);
       }
-      send(gen, n, a.currentTime);
+      send(gen, n, a.currentTime, '', ++t.eventSeq);
     });
     // And plays it again for them, where a long pause may have stopped
     // loading it.
@@ -230,7 +235,7 @@ window.vinyl = {
     });
     a.addEventListener('ended', () => finish('media ended'));
     a.addEventListener('seeking', () => { t.still = 0; t.heard = false; });
-    a.addEventListener('timeupdate', () => { if (!t.recovering && t.seek == null) send(gen, 'time', a.currentTime); });
+    a.addEventListener('timeupdate', () => { if (!t.recovering && t.seek == null) send(gen, 'time', a.currentTime, '', ++t.eventSeq); });
     a.addEventListener('error', () => fail({ type: Hls.ErrorTypes.MEDIA_ERROR, details: '', msg: 'media ' + (a.error ? a.error.code + ' ' + a.error.message : '') }));
     a.addEventListener('loadedmetadata', () => {
       t.recovering = false;
@@ -284,7 +289,18 @@ window.vinyl = {
   },
 };
 window.addEventListener('error', (event) => send(0, 'backend-error', 0, 'audio page: ' + event.message));
-window.addEventListener('unhandledrejection', (event) => send(0, 'backend-error', 0, 'audio page: ' + String(event.reason)));
+window.addEventListener('unhandledrejection', (event) => {
+  // hls.js can reject its certificate promise outside the track's error
+  // listener. Keep the error with the track that asked for it.
+  const data = event.reason?.data;
+  if (data?.details === Hls.ErrorDetails.KEY_SYSTEM_SERVER_CERTIFICATE_REQUEST_FAILED) {
+    const gen = Number(/[?&]gen=([0-9]+)(?:&|$)/.exec(data.response?.url || '')?.[1]);
+    event.preventDefault();
+    if (cur?.gen === gen) send(gen, 'error', cur.seek ?? cur.a.currentTime, data.type + ' ' + data.details);
+    return;
+  }
+  send(0, 'backend-error', 0, 'audio page: ' + String(event.reason));
+});
 (async function ready() {
   try {
     const response = await fetch('/event', {
@@ -301,13 +317,24 @@ if (controlKey) {
   history.replaceState(null, '', location.pathname + location.search);
   (async () => {
     for (;;) {
+      let command = null;
       try {
         const response = await fetch('/commands', { headers: { 'X-Vinyl-Key': controlKey[1] } });
-        if (!response.ok) return;
-        const command = await response.json();
-        if (command) Function(command)();
-      } catch {
+        if (!response.ok) {
+          send(0, 'backend-error', 0, 'commands http=' + response.status);
+          return;
+        }
+        command = await response.json();
+      } catch (err) {
+        send(0, 'backend-error', 0, 'commands: ' + String(err));
         return;
+      }
+      if (command) {
+        try {
+          Function(command)();
+        } catch (err) {
+          send(0, 'backend-error', 0, 'command eval: ' + String(err));
+        }
       }
     }
   })();

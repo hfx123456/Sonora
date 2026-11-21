@@ -94,7 +94,12 @@ func TestBackdropDriftFrames(t *testing.T) {
 	png.Encode(f, out)
 }
 
-func TestFlowBackdropRenders(t *testing.T) {
+// With NM_FRAMES set, saves flow at fixed phases to inspect its colors and motion.
+func TestFlowBackdropFrames(t *testing.T) {
+	dir := os.Getenv("NM_FRAMES")
+	if dir == "" {
+		t.Skip()
+	}
 	img := image.NewRGBA(image.Rect(0, 0, 24, 24))
 	for y := range 24 {
 		for x := range 24 {
@@ -110,29 +115,30 @@ func TestFlowBackdropRenders(t *testing.T) {
 			}
 		}
 	}
-	art := &artwork{
-		backdrop: ui.NewBitmap(blurImage(img)),
-		tint:     dominantColor(img),
-		palette:  extractPalette(img, dominantColor(img)),
+	const w, h = 320, 200
+	phases := []float64{0, 3, 6, 9}
+	palettes := [][4]ui.Color{
+		extractPalette(img, dominantColor(img)),
+		flowPalette(nil, ui.RGB(37, 95, 165)),
+		flowPalette(nil, ui.RGB(128, 128, 128)),
 	}
-	for _, tc := range []struct {
-		name string
-		art  *artwork
-	}{
-		{"cover", art},
-		{"fallback", nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	out := image.NewRGBA(image.Rect(0, 0, w*len(phases), h*len(palettes)))
+	for row, palette := range palettes {
+		for col, phase := range phases {
+			var mesh flowTexture
+			frame := mesh.paint(w/2, h/2, palette, phase, .4)
 			tt := ui.NewTester(func(c *ui.Context) {
-				ui.Box(c).Fill().Draw(func(p *ui.Painter, r ui.Rect) {
-					drawFlow(p, r, tc.art, art.tint, 1.5, 0.4)
-				})
-			}, 120, 80)
-			tt.Frame()
-			shot := tt.Image()
-			if shot.Bounds().Dx() != 120 || shot.Bounds().Dy() != 80 {
-				t.Fatalf("unexpected size: %v", shot.Bounds())
-			}
-		})
+				ui.Box(c).Fill().Draw(func(p *ui.Painter, r ui.Rect) { p.Image(frame, r, ui.FillBox) })
+			}, w, h)
+			draw.Draw(out, image.Rect(col*w, row*h, (col+1)*w, (row+1)*h), tt.Image(), image.Point{}, draw.Src)
+		}
+	}
+	f, err := os.Create(filepath.Join(dir, "flow.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, out); err != nil {
+		t.Fatal(err)
 	}
 }

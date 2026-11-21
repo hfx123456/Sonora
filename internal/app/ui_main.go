@@ -2,7 +2,9 @@ package app
 
 import (
 	"log"
+	"math/rand/v2"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +47,8 @@ func (a *app) view(c *ui.Context) {
 		c.Root().Background(ui.Transparent)
 	}
 	root := ui.Box(c).Fill()
-	if !c.Focused(a.searchBox) && !c.Focused(a.localSearchBox) && !c.Focused(a.playlistSearchBox) {
+	if !c.Focused(a.searchBox) && !c.Focused(a.localSearchBox) && !c.Focused(a.playlistSearchBox) &&
+		!a.naming.open && !a.proxyTyping && a.recording == "" {
 		// Space plays and pauses wherever the focus is, as in Music. On
 		// the container around everything, it comes before a button the
 		// pointer focused, which would take Space as a click; on the
@@ -113,6 +116,9 @@ func (a *app) view(c *ui.Context) {
 }
 
 func (a *app) shortcuts(c *ui.Context) {
+	if a.recording != "" {
+		return
+	}
 	// The side buttons of a mouse, the keys of keyboards that have them
 	// and swipes between pages, and the keys of Music.
 	c.OnShortcut(0, ui.KeyBack, a.back)
@@ -141,6 +147,41 @@ func (a *app) shortcuts(c *ui.Context) {
 	}
 }
 
+func (a *app) pushHistory(r route) {
+	a.history = append(a.history, r)
+	const maxHistory = 50
+	if len(a.history) > maxHistory {
+		a.history = slices.Clone(a.history[len(a.history)-maxHistory:])
+	}
+}
+
+func isTrackListPage(p pageKind) bool {
+	switch p {
+	case pagePlaylist, pageDaily, pageSearch, pageArtist, pageRecent, pageLocal:
+		return true
+	}
+	return false
+}
+
+func (a *app) pruneSpots() {
+	if len(a.spots) == 0 {
+		return
+	}
+	keep := make(map[route]bool, len(a.history)+len(a.forward)+1)
+	keep[a.route] = true
+	for _, r := range a.history {
+		keep[r] = true
+	}
+	for _, r := range a.forward {
+		keep[r] = true
+	}
+	for r := range a.spots {
+		if !keep[r] {
+			delete(a.spots, r)
+		}
+	}
+}
+
 // go opens a page, remembering the one before for the back button. The
 // page open already is shown too, from under Now Playing.
 func (a *app) open(r route) {
@@ -148,8 +189,10 @@ func (a *app) open(r route) {
 	if r == a.route {
 		return
 	}
-	a.history, a.forward = append(a.history, a.route), nil
+	a.pushHistory(a.route)
+	a.forward = nil
 	a.show(r)
+	a.pruneSpots()
 }
 
 // pageSpot is where a page is scrolled.
@@ -168,17 +211,31 @@ func (a *app) leave() {
 	if a.recording != "" {
 		a.stopRecording()
 	}
+	if a.route.page == pageSettings && a.proxyTyping {
+		a.proxyTyping = false
+		a.setProxy()
+	}
+	if a.trackListHandle == (ui.Handle{}) {
+		a.trackListHandle = a.trackList.Handle
+	}
 	if a.spots == nil {
 		a.spots = map[route]pageSpot{}
 	}
-	a.spots[a.route] = pageSpot{a.trackList, a.pageScroll}
-	a.trackList, a.pageScroll = ui.ListState{}, ui.ScrollState{}
+	var listSpot ui.ListState
+	if isTrackListPage(a.route.page) {
+		listSpot = a.trackList
+		listSpot.Handle = ui.Handle{}
+	}
+	a.spots[a.route] = pageSpot{listSpot, a.pageScroll}
+	a.trackList, a.pageScroll = ui.ListState{Handle: a.trackListHandle}, ui.ScrollState{}
+	a.startMarkW, a.startMarkTop, a.startMarkY = 0, 0, 0
 }
 
 // showAgain shows the page of r, one of the history, where it was left.
 func (a *app) showAgain(r route) {
 	a.show(r)
 	if s, ok := a.spots[r]; ok {
+		s.list.Handle = a.trackListHandle
 		a.trackList, a.pageScroll = s.list, ui.ScrollState{Y: s.scroll.Y}
 	}
 }
@@ -322,25 +379,7 @@ func (a *app) navItem(c *ui.Context, icon *ui.SVG, label string, r route) {
 	p := a.pal
 	selected := a.route.page == r.page && !a.nowPlaying
 	b := ui.ButtonBase(c.Key(label)).Height(34).PaddingX(10).Gap(10).Radius(10).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false)
-	if a.glassEnabled() && (selected || b.Hovered()) {
-		var tint ui.Color
-		if selected {
-			tint = p.accent.Alpha(0.14)
-		}
-		b.Material(a.liquidGlass(true, tint))
-		if !p.dark && selected {
-			b.Shadow(0, 2, 8, -2, ui.RGBA(0, 0, 0, 0.06))
-		}
-	} else {
-		bg := ui.Transparent
-		switch {
-		case selected:
-			bg = p.press
-		case b.Hovered():
-			bg = p.hover
-		}
-		b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
-	}
+	a.styleSidebarItem(b, selected, b.Hovered())
 	color := p.text
 	if selected {
 		color = p.accent
@@ -438,14 +477,34 @@ func (a *app) unifiedBackdrop(c *ui.Context, root ui.Element) {
 	var washColor ui.Color
 	var washStrength float32
 	switch a.route.page {
-	case pageHome:
-		if a.homeTint != (ui.Color{}) {
-			washColor = root.AnimateColor("home-wash", a.homeTint, ui.Animation{Duration: 600 * time.Millisecond})
+	case pageHome, pageCharts, pageBrowse, pageCategory, pageRecent, pageSection, pageUser, pageSearch:
+		if tint := a.pageTint(a.route.page); tint != (ui.Color{}) {
+			washColor = root.AnimateColor("page-wash", tint, ui.Animation{Duration: 600 * time.Millisecond})
 			washStrength = 0.22
 			if p.dark {
 				washStrength = 0.42
 			}
-			washStrength *= max(0, 1-a.pageScroll.Y/400)
+			switch a.route.page {
+			case pageRecent, pageSearch:
+				if offset, visible := a.trackHeaderOffset(); visible {
+					washStrength *= max(0, 1-offset/400)
+				} else {
+					washStrength = 0
+				}
+			default:
+				washStrength *= max(0, 1-a.pageScroll.Y/400)
+			}
+		} else {
+			washColor = p.accent
+			if tr := a.pl.Current(); tr != nil {
+				if art := a.art.get(spotify.Sized(tr.Album.PicURL, 600), true); art != nil && art.tint.A > 0 {
+					washColor = art.tint
+				}
+			}
+			washStrength = 0.08
+			if p.dark {
+				washStrength = 0.16
+			}
 		}
 	case pagePlaylist:
 		if pl := a.playlists[a.route.playlist]; pl != nil {
@@ -462,7 +521,8 @@ func (a *app) unifiedBackdrop(c *ui.Context, root ui.Element) {
 				washStrength = 0.28
 			}
 			if offset, visible := a.trackHeaderOffset(); visible {
-				washStrength *= max(0, 1-offset/360)
+				hero := max(a.playlistHeaderHeights[pl.ID], playlistCoverSize+playlistHeaderGap)
+				washStrength *= max(0, 1-offset/hero)
 			} else {
 				washStrength = 0
 			}
@@ -482,12 +542,12 @@ func (a *app) unifiedBackdrop(c *ui.Context, root ui.Element) {
 	root.Draw(func(dp *ui.Painter, r ui.Rect) {
 		dp.Fill(r, p.bg, 0)
 		if washColor.A > 0 && washStrength > 0.005 {
-			dp.FillGradient(r, ui.LinearGradient{
+			washH := min(r.H, top+360)
+			dp.FillGradient(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: washH}, ui.LinearGradient{
 				Angle: 180,
-				Oklab: true,
 				Stops: []ui.GradientStop{
 					{Color: washColor.Alpha(washStrength), At: 0},
-					{Color: washColor.Alpha(0), At: min(1, (top+360)/max(r.H, 1))},
+					{Color: washColor.Alpha(0), At: 1},
 				},
 			}, 0)
 		}
@@ -609,6 +669,7 @@ func (a *app) centered(c *ui.Context, err string, retry func()) {
 // with nothing to load it again, and its page would stay on the skeleton.
 func (a *app) loadHome() {
 	a.homeLoading, a.homeErr = true, ""
+	gen := a.accountGen
 	go func() {
 		var (
 			wg     sync.WaitGroup
@@ -632,6 +693,9 @@ func (a *app) loadHome() {
 		}
 		wg.Wait()
 		a.post(func() {
+			if a.accountGen != gen {
+				return
+			}
 			a.homeLoading = false
 			// What failed to load again shows as it did, as restoreHome
 			// had it.
@@ -667,30 +731,53 @@ func (a *app) requestPlaylist(id string, thenPlay, refresh bool) {
 		return
 	}
 	if a.loadingPl[id] {
+		if thenPlay {
+			if a.plThenPlay == nil {
+				a.plThenPlay = map[string]bool{}
+			}
+			a.plThenPlay[id] = true
+		}
+		if refresh {
+			if a.plRefreshAgain == nil {
+				a.plRefreshAgain = map[string]bool{}
+			}
+			a.plRefreshAgain[id] = true
+		}
 		return
 	}
 	a.loadingPl[id] = true
+	if thenPlay {
+		if a.plThenPlay == nil {
+			a.plThenPlay = map[string]bool{}
+		}
+		a.plThenPlay[id] = true
+	}
 	delete(a.plErr, id)
 	asked := time.Now()
 	user := ""
 	if a.profile != nil {
 		user = a.profile.UserID
 	}
-	root, generation, fetch := a.playlistCacheRoot, a.accountGen, playlistDetail
-	showCached := !refresh || a.playlists[id] == nil
+	root, generation, epoch, fetch := a.playlistCacheRoot, a.accountGen, accountEpoch(), playlistDetail
+	showCached := !refresh && a.playlists[id] == nil
 	go func() {
-		cached := readPlaylistSnapshot(root, user, id)
-		if cached != nil && showCached {
+		var cached *playlistSnapshot
+		if showCached {
+			cached = readPlaylistSnapshot(root, user, id)
+		}
+		if cached != nil {
 			a.post(func() {
 				if a.accountGen != generation || a.quitting {
 					return
 				}
-				a.receivePlaylist(id, cached.Playlist, nil, thenPlay, cached.Stored)
+				playNow := a.plThenPlay[id]
+				delete(a.plThenPlay, id)
+				a.receivePlaylist(id, cached.Playlist, nil, playNow, cached.Stored)
 				a.loadingPl[id] = true
 			})
 		}
 		pl, err := fetch(id)
-		if err == nil {
+		if err == nil && accountEpoch() == epoch {
 			savePlaylistSnapshot(root, user, id, pl, asked)
 		}
 		a.post(func() {
@@ -700,7 +787,14 @@ func (a *app) requestPlaylist(id string, thenPlay, refresh bool) {
 			if err != nil {
 				log.Printf("playlist refresh: %s: %v", id, err)
 			}
-			a.receivePlaylist(id, pl, err, thenPlay && cached == nil, asked)
+			playNow := a.plThenPlay[id]
+			delete(a.plThenPlay, id)
+			a.receivePlaylist(id, pl, err, playNow, asked)
+			if a.plRefreshAgain[id] {
+				delete(a.plRefreshAgain, id)
+				a.requestPlaylist(id, false, true)
+				return
+			}
 			a.playlistSync.complete(id, time.Now())
 			a.startPlaylistSync()
 		})
@@ -739,8 +833,24 @@ func firstPlayable(tracks []spotify.Track) int {
 	return 0
 }
 
+func randomPlayable(tracks []spotify.Track) int {
+	var playable []int
+	for i := range tracks {
+		if tracks[i].Playable() {
+			playable = append(playable, i)
+		}
+	}
+	if len(playable) == 0 {
+		return 0
+	}
+	return playable[rand.IntN(len(playable))]
+}
+
 func (a *app) search(q string) {
-	a.history, a.forward = append(a.history, a.route), nil
+	if a.route.page != pageSearch {
+		a.pushHistory(a.route)
+		a.forward = nil
+	}
 	a.leave()
 	a.route = route{page: pageSearch}
 	a.nowPlaying = false

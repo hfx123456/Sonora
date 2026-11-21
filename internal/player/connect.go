@@ -33,9 +33,23 @@ func (p *Player) ConnectQueue(tracks []spotify.Track) {
 
 func (p *Player) ConnectOptions(options spotify.ConnectOptions) {
 	if options.Shuffle != nil {
+		wasShuffled := p.shuffle
 		p.shuffle = *options.Shuffle
 		if !p.shuffle {
 			p.smartShuffle = false
+			p.removeUnplayedSmartTracks()
+		}
+		if !p.IsRemote() && len(p.order) > 0 && p.shuffle != wasShuffled {
+			cur := p.order[min(max(p.at, 0), len(p.order)-1)]
+			if p.shuffle {
+				p.shuffleOrder(cur)
+				p.at = 0
+			} else {
+				for i := range p.order {
+					p.order[i] = i
+				}
+				p.at = cur
+			}
 		}
 	}
 	if mode, ok := RepeatOf(options); ok {
@@ -78,6 +92,9 @@ func (p *Player) ApplyConnect(track spotify.Track, position time.Duration, pause
 		return
 	}
 	p.endRadio()
+	p.smartGen++
+	p.smartFeeding = false
+	p.smartAdded = nil
 	p.queue = []spotify.Track{track}
 	p.order = []int{0}
 	p.loadSkipping(0, 0, !paused, max(0, position))
@@ -87,9 +104,16 @@ func (p *Player) MirrorConnect(track spotify.Track, position time.Duration, play
 	output, remote := p.out.(*remoteOutput)
 	if !remote || p.track == nil || p.track.URI() != track.URI() {
 		p.endRadio()
+		p.smartGen++
+		p.smartFeeding = false
+		p.smartAdded = nil
 		p.queue = []spotify.Track{track}
 		p.order = []int{0}
+		// Prevent cue() -> refillSmart() from injecting local recommendations into a mirrored remote queue.
+		smart := p.smartShuffle
+		p.smartShuffle = false
 		p.cue(0, false, 0)
+		p.smartShuffle = smart
 		output = &remoteOutput{duration: track.Length()}
 		p.out = output
 	}

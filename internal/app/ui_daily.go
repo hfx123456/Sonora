@@ -506,9 +506,9 @@ func (a *app) dailyPage(c *ui.Context) {
 					if pillButton(c.Key("play"), iconPlay, "播放全部", p.accent, p.onAccent).Clicked() {
 						a.playQueue(songs, firstPlayable(songs))
 					}
-					if pillButton(c.Key("shuffle"), iconShuffle, "随机播放", p.hover.Over(p.bg), p.text).Clicked() {
+					if a.secondaryPillButton(c.Key("shuffle"), iconShuffle, "随机播放").Clicked() {
 						a.enableShuffle()
-						a.playQueue(songs, firstPlayable(songs))
+						a.playQueue(songs, randomPlayable(songs))
 					}
 				})
 			})

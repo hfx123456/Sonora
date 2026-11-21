@@ -27,6 +27,7 @@ static class BridgePolicy
         var artist = CompareHelper.CompareArtist(track.Artists, candidate.Artists);
         var artistMatch = artist is CompareHelper.ArtistMatchType.Perfect or CompareHelper.ArtistMatchType.VeryHigh or CompareHelper.ArtistMatchType.High;
         var extraVersion = HasExtraVersionTag(track.Title, track.Album, candidate.Title);
+        if (extraVersion) return false;
 
         if (title is CompareHelper.NameMatchType.Perfect or CompareHelper.NameMatchType.VeryHigh or CompareHelper.NameMatchType.High)
         {
@@ -35,17 +36,17 @@ static class BridgePolicy
             return title is CompareHelper.NameMatchType.Perfect or CompareHelper.NameMatchType.VeryHigh
                 && album is CompareHelper.NameMatchType.Perfect or CompareHelper.NameMatchType.VeryHigh
                 && track.DurationMs is > 0 && candidate.DurationMs is > 0
-                && Cjk(track.Artist ?? "") != Cjk(candidate.Artist)
+                && CrossScript(track.Artist ?? "", candidate.Artist ?? "")
                 && !string.IsNullOrWhiteSpace(track.Artist) && !string.IsNullOrWhiteSpace(candidate.Artist);
         }
 
-        if (!artistMatch || extraVersion) return false;
+        if (!artistMatch) return false;
         if (BilingualParenMatch(track.Title, candidate.Title)) return true;
 
         return track.DurationMs is > 0 && candidate.DurationMs is > 0
             && AlbumMatches(track.Album, candidate.Album)
             && !string.IsNullOrWhiteSpace(track.Title) && !string.IsNullOrWhiteSpace(candidate.Title)
-            && Cjk(track.Title) != Cjk(candidate.Title);
+            && CrossScript(track.Title, candidate.Title);
     }
 
     public static Response? Best(IEnumerable<Response?> responses) => responses
@@ -63,8 +64,8 @@ static class BridgePolicy
         if (wantFold.Length == 0) return false;
         var (outer, parens) = SplitParens(candidate);
         if (outer.Length == 0 || parens.Count == 0) return false;
-        if (Fold(outer) == wantFold && parens.Any(p => Cjk(outer) != Cjk(p))) return true;
-        return parens.Any(p => Fold(p) == wantFold && Cjk(outer) != Cjk(p));
+        if (Fold(outer) == wantFold && parens.Any(p => CrossScript(outer, p))) return true;
+        return parens.Any(p => Fold(p) == wantFold && CrossScript(outer, p));
     }
 
     static bool AlbumMatches(string? want, string? got)
@@ -151,5 +152,26 @@ static class BridgePolicy
 
     static string Fold(string s) => new(s.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 
-    static bool Cjk(string value) => value.Any(character => character is >= '\u3040' and <= '\u30ff' or >= '\u3400' and <= '\u9fff' or >= '\uac00' and <= '\ud7af');
+    static bool CrossScript(string a, string b)
+    {
+        static (bool latin, bool han, bool kana, bool hangul) Scan(string s)
+        {
+            bool latin = false, han = false, kana = false, hangul = false;
+            foreach (var ch in s)
+            {
+                if (ch is >= '\uac00' and <= '\ud7af' or >= '\u1100' and <= '\u11ff' or >= '\u3130' and <= '\u318f') hangul = true;
+                else if (ch is >= '\u3040' and <= '\u30ff') kana = true;
+                else if (ch is >= '\u3400' and <= '\u9fff') han = true;
+                else if (ch is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '\u00c0' and <= '\u024f') latin = true;
+            }
+            return (latin, han, kana, hangul);
+        }
+        var sa = Scan(a);
+        var sb = Scan(b);
+        var cjkA = sa.han || sa.kana || sa.hangul;
+        var cjkB = sb.han || sb.kana || sb.hangul;
+        if (cjkA != cjkB) return (sa.latin && !cjkA && cjkB) || (sb.latin && !cjkB && cjkA);
+        if (cjkA && cjkB) return (sa.hangul != sb.hangul || sa.kana != sb.kana) && !(sa.han && sb.han);
+        return false;
+    }
 }

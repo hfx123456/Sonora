@@ -7,7 +7,7 @@ import sys
 from urllib.parse import urlsplit
 
 from PyQt6.QtCore import QByteArray, QBuffer, QCoreApplication, QDateTime, QEvent, QIODevice, QSocketNotifier, QTimer, Qt, QUrl, QT_VERSION_STR
-from PyQt6.QtNetwork import QNetworkCookie, QNetworkProxy
+from PyQt6.QtNetwork import QNetworkCookie, QNetworkProxy, QNetworkProxyFactory
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineSettings, QWebEngineUrlRequestInfo, QWebEngineUrlRequestInterceptor
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -19,15 +19,29 @@ profile_dir = Path(options.parse_args().profile)
 profile_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 app = QApplication(sys.argv[:1])
 app.setQuitOnLastWindowClosed(False)
-proxy_url = urlsplit(os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY') or '')
-if proxy_url.hostname and proxy_url.scheme in ['http', 'socks5', 'socks5h']:
-    proxy_type = QNetworkProxy.ProxyType.HttpProxy if proxy_url.scheme == 'http' else QNetworkProxy.ProxyType.Socks5Proxy
-    proxy = QNetworkProxy(proxy_type, proxy_url.hostname, proxy_url.port or 1080)
+raw_proxy = os.environ.get('https_proxy') or os.environ.get('HTTPS_PROXY') or os.environ.get('all_proxy') or os.environ.get('ALL_PROXY') or ''
+proxy_url = urlsplit(raw_proxy)
+try:
+    proxy_port = proxy_url.port
+except ValueError:
+    proxy_port = None
+if proxy_url.hostname and proxy_url.scheme in ['http', 'https', 'socks5', 'socks5h']:
+    is_http = proxy_url.scheme in ['http', 'https']
+    proxy_type = QNetworkProxy.ProxyType.HttpProxy if is_http else QNetworkProxy.ProxyType.Socks5Proxy
+    default_port = 8080 if is_http else 1080
+    proxy = QNetworkProxy(proxy_type, proxy_url.hostname, proxy_port or default_port)
     if proxy_url.username:
         from urllib.parse import unquote
         proxy.setUser(unquote(proxy_url.username))
         proxy.setPassword(unquote(proxy_url.password or ''))
-    QNetworkProxy.setApplicationProxy(proxy)
+    no_proxy_hosts = [item.strip().lower() for item in (os.environ.get('no_proxy') or os.environ.get('NO_PROXY') or '').split(',') if item.strip()]
+    class LocalBypassProxyFactory(QNetworkProxyFactory):
+        def queryProxy(self, query):
+            host = (query.peerHostName() or '').lower()
+            if host in ('', '127.0.0.1', 'localhost', '::1') or any(host == entry or (entry.startswith('.') and host.endswith(entry)) for entry in no_proxy_hosts):
+                return [QNetworkProxy(QNetworkProxy.ProxyType.NoProxy)]
+            return [proxy]
+    QNetworkProxyFactory.setApplicationProxyFactory(LocalBypassProxyFactory())
 profile = QWebEngineProfile('MySpotify')
 profile.setPersistentStoragePath(str(profile_dir))
 profile.setCachePath(str(profile_dir / 'cache'))
@@ -96,10 +110,12 @@ class Page(QWebEnginePage):
 # Qt creates its browser context lazily. Initialize it before a cookie-only RPC;
 # otherwise imports made before the first page may remain queued indefinitely.
 bootstrap_page = Page(profile)
+bootstrap_done = False
 bootstrap_page.load(QUrl('about:blank'))
 
 def bootstrap_finished(ok):
-    global bootstrap_page
+    global bootstrap_page, bootstrap_done
+    bootstrap_done = True
     bootstrap_page.deleteLater()
     bootstrap_page = None
     profile.cookieStore().loadAllCookies()
@@ -252,16 +268,25 @@ def dispatch(request):
         QTimer.singleShot(5000, expired)
     elif method == 'cookies.clear':
         close_auth()
-        profile.cookieStore().deleteAllCookies()
         deadline = QDateTime.currentMSecsSinceEpoch() + 5000
+        deleted = False
         def cleared():
+            nonlocal deleted
+            if not bootstrap_done and QDateTime.currentMSecsSinceEpoch() < deadline - 500:
+                QTimer.singleShot(100, cleared)
+                return
+            if not deleted:
+                deleted = True
+                profile.cookieStore().deleteAllCookies()
+                QTimer.singleShot(250, cleared)
+                return
             if not cookies:
                 reply(identifier, True)
             elif QDateTime.currentMSecsSinceEpoch() >= deadline:
                 reply(identifier, error='登录 Cookie 清理未完成')
             else:
                 QTimer.singleShot(100, cleared)
-        QTimer.singleShot(250, cleared)
+        QTimer.singleShot(100, cleared)
     else:
         reply(identifier, error='未知 WebEngine 操作')
 

@@ -1,11 +1,13 @@
 package app
 
 import (
+	"cmp"
 	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -51,6 +53,8 @@ func loadPlayed() (played []spotify.Track, from []spotify.HomeItem) {
 	return played, from
 }
 
+var playedWriteMu sync.Mutex
+
 // keepPlayed writes v down as name, unless in the scenes and tests, which
 // keep the listener's as it was.
 func (a *app) keepPlayed(name string, v any) {
@@ -59,9 +63,17 @@ func (a *app) keepPlayed(name string, v any) {
 	}
 	b, _ := json.Marshal(v)
 	go func() {
+		playedWriteMu.Lock()
+		defer playedWriteMu.Unlock()
 		path, err := playedPath(name)
 		if err == nil {
-			err = os.WriteFile(path, b, 0o600)
+			part := path + ".part"
+			if err = os.WriteFile(part, b, 0o600); err == nil {
+				err = os.Rename(part, path)
+				if err != nil {
+					os.Remove(part)
+				}
+			}
 		}
 		if err != nil {
 			log.Printf("%s: %v", name, err)
@@ -153,10 +165,13 @@ func (a *app) loadRecent() {
 		return
 	}
 	a.recentLoading = true
-	user := a.profile.UserID
+	user, gen := a.profile.UserID, a.accountGen
 	go func() {
 		lists, artists, err := recentlyPlayed(user)
 		a.post(func() {
+			if a.accountGen != gen {
+				return
+			}
 			a.recentLoading = false
 			if err != nil {
 				log.Printf("recently played: %v", err)
@@ -177,22 +192,40 @@ func (a *app) recentPage(c *ui.Context) {
 	header := func(c *ui.Context) {
 		a.heading(c, "最近播放", "")
 		if !elsewhere {
+			if len(a.played) > 0 {
+				a.setPageTint(c, pageRecent, a.coverTint(a.played[0].Album.PicURL, 96))
+			}
 			return
 		}
 		ui.Column(c).PaddingX(12).Margin(0, 0, 8, 0).Children(func() {
 			title(c, "在 Spotify 其他应用里")
+			var hoveredTint, fallbackTint ui.Color
 			if lists := a.recentLists; len(lists) > 0 {
 				cols := a.columns(c, 150)
-				ui.Grid(c).Columns(cols).GapX(20).GapY(28).Children(func() {
+				ui.Grid(c).Columns(cols).GapX(0).GapY(12).Margin(0, -10, 0, -10).Children(func() {
 					for i := range lists[:min(len(lists), cols)] {
-						a.playlistCard(c.Key(lists[i].ID), &lists[i])
+						t, hov := a.playlistCard(c.Key(lists[i].ID), &lists[i])
+						if hov && t != (ui.Color{}) {
+							hoveredTint = t
+						}
+						if i == 0 && fallbackTint == (ui.Color{}) {
+							fallbackTint = t
+						}
 					}
 				})
 			}
 			if len(a.recentArtists) > 0 {
 				ui.Box(c).Height(24)
-				a.artistRow(c, a.recentArtists)
+				if t, hov := a.artistRow(c, a.recentArtists); hov {
+					hoveredTint = cmp.Or(t, hoveredTint)
+				} else if fallbackTint == (ui.Color{}) {
+					fallbackTint = t
+				}
 			}
+			if fallbackTint == (ui.Color{}) && len(a.played) > 0 {
+				fallbackTint = a.coverTint(a.played[0].Album.PicURL, 96)
+			}
+			a.setPageTint(c, pageRecent, cmp.Or(hoveredTint, fallbackTint))
 			ui.Box(c).Height(16)
 			title(c, "在 "+appName+" 里")
 		})

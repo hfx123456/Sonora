@@ -35,6 +35,10 @@ type fusionState struct {
 	hover           fusionHover
 	hoverGeneration int
 	placing         bool
+	movedAt         time.Time
+	lockRevealed    bool
+	lockRevealUntil time.Time
+	lockDown        bool
 	captureOnly     bool
 	pauseHidden     bool
 	manualShow      bool
@@ -45,7 +49,7 @@ type fusionState struct {
 
 var (
 	fetchFusion        = fusion.Fetch
-	neteaseTranslation = spotify.NetEaseTranslation
+	neteaseTranslation = spotify.NetEaseTranslationFor
 )
 
 func hasFusionTranslation(lines []lyrics.Line) bool {
@@ -61,7 +65,7 @@ func hasFusionTranslation(lines []lyrics.Line) bool {
 }
 
 func fusionCacheUsable(cached lyrics.Cached) bool {
-	if len(cached.Lines) == 0 || cached.Lines[0].Unsynced {
+	if len(cached.Lines) == 0 || cached.Lines[0].Unsynced || fusionInstrumentalNotice(cached.Lines) {
 		return false
 	}
 	return fusionChinese(cached.Lines) || hasFusionTranslation(cached.Lines)
@@ -113,7 +117,7 @@ func (a *app) ensureFusion(refresh bool) {
 		return
 	}
 	state := &a.fusion
-	if !a.settings.FusionPanel && a.settings.FusionMode == "" {
+	if !a.settings.FusionPanel && a.settings.FusionMode == "" && !a.nowPlaying {
 		if state.cancel != nil {
 			state.cancel()
 			state.cancel = nil
@@ -182,7 +186,7 @@ func (a *app) ensureFusion(refresh bool) {
 func fetchFusionWithTranslationFallback(ctx context.Context, cacheDir string, track spotify.Track, input fusion.Request, refresh bool) (fusion.Result, error) {
 	result, err := fetchFusion(ctx, cacheDir, input, refresh)
 	if !track.Local() && ctx.Err() == nil && (err != nil || len(result.Lines) == 0 || (!fusionChinese(result.Lines) && !hasFusionTranslation(result.Lines))) {
-		if synced, tr, netErr := neteaseTranslation(track); netErr == nil && synced != "" && tr != "" {
+		if synced, tr, netErr := neteaseTranslation(track, result.Lines); netErr == nil && synced != "" && tr != "" {
 			if built := lyrics.Build(synced, tr, ""); hasFusionTranslation(built) {
 				return fusion.Result{Source: "网易云 · 翻译", Lines: built}, nil
 			}
@@ -209,7 +213,11 @@ func (a *app) receiveFusion(key string, generation int, result fusion.Result, er
 		lyrics.SaveCached(player.LyricsCacheDir, a.pl.Current().URI(), result.Source, rawLines)
 	}
 	if cur, loaded := a.pl.Lyrics(); shouldSyncFusionLyricsToPlayer(cur, loaded, result.Source, rawLines) {
-		a.pl.AdoptLyrics(a.pl.Current().URI(), rawLines)
+		if !loaded && !fusionChinese(rawLines) && !hasFusionTranslation(rawLines) {
+			a.pl.UseFallbackLyrics(a.pl.Current().URI(), rawLines)
+		} else {
+			a.pl.AdoptLyrics(a.pl.Current().URI(), rawLines)
+		}
 	}
 	state.lines, state.source = prepareFusionLines(result.Lines), result.Source
 	state.message = ""
@@ -246,36 +254,57 @@ func (a *app) fusionPosition() time.Duration {
 	return a.pl.SongPosition() + time.Duration(a.settings.FusionOffset)*time.Millisecond
 }
 
-func (a *app) fusionCurrent() (lyrics.Line, string) {
+func (a *app) fusionCurrent() fusionCaption {
 	if a.pl.Current() == nil {
-		return lyrics.Line{Text: appName}, "等待播放"
+		return fusionCaption{line: lyrics.Line{Text: appName}, detail: "等待播放"}
 	}
 	if a.fusion.loading {
-		return lyrics.Line{Text: fusionWaitingNotes}, ""
+		return fusionCaption{line: lyrics.Line{Text: fusionWaitingNotes}}
 	}
 	if a.fusion.message != "" {
-		return lyrics.Line{Text: a.pl.Current().Name}, a.fusion.message
+		return fusionCaption{line: lyrics.Line{Text: a.pl.Current().Name}, detail: a.fusion.message}
 	}
 	if fusionInstrumentalNotice(a.fusion.lines) {
-		return lyrics.Line{Text: fusionWaitingNotes}, ""
+		return fusionCaption{line: lyrics.Line{Text: fusionWaitingNotes}}
 	}
-	index := lyrics.Index(a.fusion.lines, a.fusionPosition())
+	position := a.fusionPosition()
+	index := lyrics.Index(a.fusion.lines, position)
 	if index < 0 {
 		if len(a.fusion.lines) > 0 && a.fusion.lines[0].Unsynced {
-			return lyrics.Line{Text: a.pl.Current().Name}, "无时间轴歌词，请打开内部面板查看"
+			return fusionCaption{line: lyrics.Line{Text: a.pl.Current().Name}, detail: "无时间轴歌词，请打开内部面板查看"}
 		}
-		return lyrics.Line{Text: fusionWaitingNotes}, ""
+		return fusionCaption{line: lyrics.Line{Text: fusionWaitingNotes}}
 	}
 	line := a.fusion.lines[index]
-	if isInstrumentalText(line.Text) {
-		return lyrics.Line{Text: fusionWaitingNotes}, ""
+	if strings.TrimSpace(line.Text) == "" || isInstrumentalText(line.Text) {
+		return fusionCaption{line: lyrics.Line{Text: fusionWaitingNotes}}
 	}
 	longGap := index+1 >= len(a.fusion.lines) || a.fusion.lines[index+1].At-line.End >= 6*time.Second
-	if longGap && a.fusionPosition() >= line.End+2*time.Second {
+	if longGap && position >= line.End+2*time.Second {
 		track := a.pl.Current()
-		return lyrics.Line{Text: "♪  " + track.Name}, track.ArtistNames()
+		return fusionCaption{line: lyrics.Line{Text: "♪  " + track.Name}, detail: track.ArtistNames()}
 	}
-	return line, visibleFusionTranslation(line, fusionChinese(a.fusion.lines), a.settings.FusionHideTranslation)
+	caption := fusionCaption{line: line, position: position}
+	if !fusionChinese(a.fusion.lines) {
+		caption.detail = visibleFusionTranslation(line, false, a.settings.FusionHideTranslation)
+		return caption
+	}
+	if lyrics.IsCredit(line.Text) {
+		return caption
+	}
+	for i := index + 1; i < len(a.fusion.lines); i++ {
+		next := a.fusion.lines[i]
+		// Index selects the last line when multiple entries share a timestamp.
+		if i+1 < len(a.fusion.lines) && next.At == a.fusion.lines[i+1].At {
+			continue
+		}
+		text := strings.TrimSpace(next.Text)
+		if text != "" && !next.Unsynced && !lyrics.IsCredit(text) && !isInstrumentalText(text) {
+			caption.detail, caption.preview = text, true
+			break
+		}
+	}
+	return caption
 }
 
 func fusionChinese(lines []lyrics.Line) bool {
@@ -341,8 +370,17 @@ func (a *app) changeFusionIslandWidth(delta int) {
 func (a *app) toggleFusionLock() {
 	a.settings.FusionLocked = !a.settings.FusionLocked
 	a.settings.save()
+	a.fusion.lockRevealed = false
+	a.fusion.lockRevealUntil = time.Time{}
+	a.fusion.lockDown = false
 	if a.fusion.win != nil {
-		a.updateFusionHover()
+		if a.settings.FusionLocked || a.settings.FusionMode == "capsule" {
+			a.startFusionHover()
+		} else {
+			a.fusion.hoverGeneration++
+			a.updateFusionHover()
+		}
+		a.fusion.win.Invalidate()
 	}
 	a.redraw()
 }
@@ -363,7 +401,7 @@ func (a *app) syncFusionVisibility() {
 			if a.fusion.win != nil {
 				a.fusion.win.ShowInactive()
 			}
-			if a.settings.FusionMode == "capsule" {
+			if a.settings.FusionMode == "capsule" || a.settings.FusionLocked {
 				a.startFusionHover()
 			}
 		}
@@ -381,7 +419,7 @@ func (a *app) syncFusionVisibility() {
 	}
 	if playing {
 		a.fusion.win.ShowInactive()
-		if a.settings.FusionMode == "capsule" {
+		if a.settings.FusionMode == "capsule" || a.settings.FusionLocked {
 			a.startFusionHover()
 		}
 	} else {
@@ -401,7 +439,8 @@ func (a *app) fusionTick(c *ui.Context, floating bool) {
 	if floating {
 		delay = fusionFloatingDelay(a.fusion.lines, a.fusionPosition(), a.pl.Playing(), still)
 	} else {
-		delay = fusionFrameDelay(a.fusion.lines, a.fusionPosition(), a.pl.Playing(), still)
+		// Internal panel sweeps via karaokeText (paint-only timer), so only rebuild on line/gap transitions.
+		delay = fusionFrameDelay(a.fusion.lines, a.fusionPosition(), a.pl.Playing(), true)
 	}
 	if delay > 0 {
 		c.After(delay)

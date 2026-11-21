@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -117,10 +118,13 @@ type app struct {
 	facets        map[string][]spotify.HomeSection // the home's sections with a chip chosen, by chip
 	sectionAll    map[string][]spotify.HomeItem    // all of a section's cards, by its URI
 	homeTint      ui.Color                         // the color over the top of the home page
+	pageTints     map[pageKind]ui.Color            // dynamic top-wash colors for browse/charts/recent pages
 
-	playlists map[string]*spotify.Playlist
-	loadingPl map[string]bool
-	plErr     map[string]string
+	playlists      map[string]*spotify.Playlist
+	loadingPl      map[string]bool
+	plThenPlay     map[string]bool
+	plRefreshAgain map[string]bool
+	plErr          map[string]string
 
 	artists    map[string]*spotify.ArtistPage
 	loadingAr  map[string]bool
@@ -131,13 +135,14 @@ type app struct {
 	loadingTr map[string]bool
 	trErr     map[string]string
 
-	cats      []spotify.Category               // the tiles of the browse page
-	catPages  map[string]*spotify.CategoryPage // by URI
-	users     map[string]*spotify.UserPage     // profiles, by username
-	shelfOpen map[string]bool                  // a category's rows shown whole
-	loading   map[string]bool                  // what fetch loads, by key
-	loadErr   map[string]string                // why it did not, by key
-	trackList ui.ListState
+	cats            []spotify.Category               // the tiles of the browse page
+	catPages        map[string]*spotify.CategoryPage // by URI
+	users           map[string]*spotify.UserPage     // profiles, by username
+	shelfOpen       map[string]bool                  // a category's rows shown whole
+	loading         map[string]bool                  // what fetch loads, by key
+	loadErr         map[string]string                // why it did not, by key
+	trackList       ui.ListState
+	trackListHandle ui.Handle
 	// Where the page and the sidebar are scrolled, kept while Now Playing
 	// covers them, unbuilt.
 	pageScroll ui.ScrollState
@@ -199,28 +204,44 @@ type app struct {
 	mvMovedAt      time.Time // when the pointer last moved over the video
 	lyricsToast    string    // how far the lyrics over a video were moved, to show
 
-	settings       settings
-	localTracks    []spotify.Track
-	localLoading   bool
-	localLoaded    bool
-	localAgain     bool
-	localWarnings  []string
-	localQuery     string
-	localSearchBox ui.Handle
-	proxyText      string          // the proxy as typed in the settings, till it is set
-	proxyErr       string          // why what was typed cannot be set
-	proxyTyping    bool            // the proxy's field had the focus last frame
-	recording      string          // the action whose global shortcut the settings wait for
-	recFocused     bool            // and its button has had the focus since
-	hotkeyErr      map[string]bool // the actions whose shortcut the system would not take
-	cacheUsed      int64           // the bytes the cache of tracks takes, -1 until measured
-	upd            updates         // a newer version, looked for and installed
+	settings        settings
+	localTracks     []spotify.Track
+	localLoading    bool
+	localLoaded     bool
+	localAgain      bool
+	localWarnings   []string
+	localQuery      string
+	localSort       playlistSort
+	localOrderCache playlistOrderCache
+	localSearchBox  ui.Handle
+	proxyText       string          // the proxy as typed in the settings, till it is set
+	proxyErr        string          // why what was typed cannot be set
+	proxyTyping     bool            // the proxy's field had the focus last frame
+	recording       string          // the action whose global shortcut the settings wait for
+	recFocused      bool            // and its button has had the focus since
+	hotkeyErr       map[string]bool // the actions whose shortcut the system would not take
+	cacheUsed       int64           // the bytes the cache of tracks takes, -1 until measured
+	cacheMeasureGen int             // guards stale async cache size measurements
+	upd             updates         // a newer version, looked for and installed
 
-	restored     bool   // playback picked up where it was left
-	accountGen   int    // signed in or out how many times: a sign-in asked before is no one's
-	savedSession string // the session as last kept
-	sessionDue   bool   // a save of the session is due
-	homeFile     string // where what the home page shows is kept, "" to keep none
+	restored       bool   // playback picked up where it was left
+	accountGen     int    // signed in or out how many times: a sign-in asked before is no one's
+	accountSession uint32 // 1 while an account session may exist; prevents guest requests from spawning hidden WebViews
+	savedSession   string // the session as last kept
+	sessionDue     bool   // a save of the session is due
+	homeFile       string // where what the home page shows is kept, "" to keep none
+}
+
+func (a *app) hasAccountSession() bool {
+	return atomic.LoadUint32(&a.accountSession) != 0
+}
+
+func (a *app) setAccountSession(on bool) {
+	var v uint32
+	if on {
+		v = 1
+	}
+	atomic.StoreUint32(&a.accountSession, v)
 }
 
 // post runs fn on the main thread and redraws both windows. Without a
@@ -315,7 +336,13 @@ func Run() error {
 	if t, ok := http.DefaultTransport.(*http.Transport); ok {
 		t.Proxy = spotify.Proxy
 	}
-	os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", strings.TrimSpace(os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")+" --autoplay-policy=no-user-gesture-required --in-process-gpu --disable-gpu"))
+	wvArgs := strings.Fields(os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"))
+	for _, flag := range []string{"--autoplay-policy=no-user-gesture-required", "--in-process-gpu", "--disable-gpu"} {
+		if !slices.Contains(wvArgs, flag) {
+			wvArgs = append(wvArgs, flag)
+		}
+	}
+	os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", strings.Join(wvArgs, " "))
 	// What decoding a page of covers takes goes back to the system after,
 	// rather than staying in the heap (20 MB).
 	if os.Getenv("GOMEMLIMIT") == "" {
@@ -377,6 +404,9 @@ func Run() error {
 			BackgroundColor:      "light-dark(#ffffff, #141416)",
 			Content:              ui.View(a.view),
 		})
+		if err := a.win.SetIcon(trayIcon); err != nil {
+			log.Printf("window icon: %v", err)
+		}
 		// Music videos play in a web view of the window, which Now Playing
 		// shows where the cover goes.
 		a.pl.NewVideo = func() (*player.Web, error) { return player.NewVideoWeb(a.win) }
@@ -455,7 +485,7 @@ func Run() error {
 		}
 		a.keepFusionPosition()
 		a.closeSignin()
-		a.stopConnect()
+		a.stopConnectWait(1500 * time.Millisecond)
 		if a.mineTimer != nil {
 			a.mineTimer.Stop()
 		}
@@ -463,6 +493,7 @@ func Run() error {
 		if a.pl != nil {
 			a.settings.ShuffleMode = int(a.pl.ShuffleMode())
 			a.settings.RepeatMode = int(a.pl.Repeat())
+			a.settings.PlaybackModesSaved = true
 		}
 		a.settings.save()
 		a.saveSession()

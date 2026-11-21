@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -26,6 +27,51 @@ func Supported(path string) bool {
 	return false
 }
 
+func isPlayableLocalFile(info fs.FileInfo) bool {
+	if info == nil {
+		return false
+	}
+	return info.Mode()&(os.ModeDir|os.ModeSymlink|os.ModeNamedPipe|os.ModeSocket|os.ModeDevice|os.ModeCharDevice) == 0
+}
+
+func dedupPathKey(path string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(path)
+	}
+	return path
+}
+
+func writeCoverAtomic(coverDir, cover string, data []byte) error {
+	if _, err := os.Stat(cover); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(coverDir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(coverDir, "cover-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if werr != nil || cerr != nil {
+		os.Remove(tmpName)
+		if werr != nil {
+			return werr
+		}
+		return cerr
+	}
+	if err := os.Rename(tmpName, cover); err != nil {
+		os.Remove(tmpName)
+		if _, statErr := os.Stat(cover); statErr == nil {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 func Scan(roots []string, coverDir string) ([]spotify.Track, []string) {
 	var tracks []spotify.Track
 	var warnings []string
@@ -40,10 +86,14 @@ func Scan(roots []string, coverDir string) ([]spotify.Track, []string) {
 				return nil
 			}
 			absolute, err := filepath.Abs(path)
-			if err != nil || seen[absolute] {
+			if err != nil {
 				return nil
 			}
-			seen[absolute] = true
+			key := dedupPathKey(absolute)
+			if seen[key] {
+				return nil
+			}
+			seen[key] = true
 			track, err := Read(absolute, coverDir)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s：%v", path, err))
@@ -84,26 +134,26 @@ func Read(path, coverDir string) (spotify.Track, error) {
 	}
 	defer file.Close()
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	if err != nil || !isPlayableLocalFile(info) {
 		return track, fmt.Errorf("无法读取音频文件")
 	}
 	var probe [1]byte
 	if _, err := file.ReadAt(probe[:], 0); err != nil {
 		return track, err
 	}
-	track.Duration = duration(file, info.Size()).Milliseconds()
+	track.Duration = duration(file, info.Size(), strings.ToLower(filepath.Ext(path))).Milliseconds()
 	file.Seek(0, 0)
 	if metadata, err := tag.ReadFrom(file); err == nil {
 		track.Name = cmp.Or(strings.TrimSpace(metadata.Title()), track.Name)
-		if artist := cmp.Or(metadata.Artist(), metadata.AlbumArtist()); artist != "" {
+		if artist := cmp.Or(strings.TrimSpace(metadata.Artist()), strings.TrimSpace(metadata.AlbumArtist())); artist != "" {
 			track.Artists = []spotify.Artist{{Name: artist}}
 		}
-		track.Album.Name = metadata.Album()
+		track.Album.Name = strings.TrimSpace(metadata.Album())
 		track.LocalLyrics = metadata.Lyrics()
 		if picture := metadata.Picture(); picture != nil && len(picture.Data) <= 10<<20 && coverDir != "" {
 			hash := sha256.Sum256(picture.Data)
 			cover := filepath.Join(coverDir, hex.EncodeToString(hash[:16])+".img")
-			if os.MkdirAll(coverDir, 0o700) == nil && os.WriteFile(cover, picture.Data, 0o600) == nil {
+			if writeCoverAtomic(coverDir, cover, picture.Data) == nil {
 				track.Album.PicURL = spotify.FileURL(cover)
 			}
 		}
@@ -117,7 +167,7 @@ func Read(path, coverDir string) (spotify.Track, error) {
 	if track.Album.PicURL == "" {
 		for _, name := range []string{"cover.jpg", "cover.png", "folder.jpg", "folder.png"} {
 			cover := filepath.Join(filepath.Dir(path), name)
-			if info, err := os.Stat(cover); err == nil && info.Mode().IsRegular() && info.Size() <= 10<<20 {
+			if info, err := os.Stat(cover); err == nil && isPlayableLocalFile(info) && !cloudOnly(info) && info.Size() <= 10<<20 {
 				track.Album.PicURL = spotify.FileURL(cover)
 				break
 			}

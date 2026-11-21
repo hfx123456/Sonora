@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 
 	"vinyl/internal/localmusic"
 	"vinyl/internal/lyrics"
@@ -20,20 +19,32 @@ func hasTranslation(lines []lyrics.Line) bool {
 }
 
 func trackLyrics(track spotify.Track) []lyrics.Line {
+	var cachedUnsynced []lyrics.Line
 	if !track.Local() && !track.Episode {
 		if cached := lyrics.LoadCached(LyricsCacheDir, track.URI()); len(cached.Lines) > 0 {
-			if cached.Lines[0].Unsynced || lyrics.Chinese(cached.Lines) || hasTranslation(cached.Lines) {
-				return cached.Lines
+			if cached.Lines[0].Unsynced {
+				cachedUnsynced = cached.Lines
+			} else {
+				if lyrics.Chinese(cached.Lines) || hasTranslation(cached.Lines) {
+					return cached.Lines
+				}
+				decorated := track
+				if decorated.Unnamed() {
+					decorated = rename(decorated, spotify.Decorate)
+				}
+				lines := localize(decorated, cached.Lines, netEaseTranslator(cached.Lines))
+				if hasTranslation(lines) {
+					lyrics.SaveCached(LyricsCacheDir, track.URI(), "播放器歌词", lines)
+				}
+				return lines
 			}
-			lines := localize(track, cached.Lines, netEaseTranslator(cached.Lines))
-			if hasTranslation(lines) {
-				lyrics.SaveCached(LyricsCacheDir, track.URI(), "播放器歌词", lines)
-			}
-			return lines
 		}
 	}
 	lines := uncachedTrackLyrics(track)
-	if !track.Local() && !track.Episode {
+	if len(lines) == 0 && len(cachedUnsynced) > 0 {
+		return cachedUnsynced
+	}
+	if !track.Local() && !track.Episode && len(lines) > 0 {
 		lyrics.SaveCached(LyricsCacheDir, track.URI(), "播放器歌词", lines)
 	}
 	return lines
@@ -58,20 +69,22 @@ func uncachedTrackLyrics(track spotify.Track) []lyrics.Line {
 	if track.Episode {
 		return episodeLyrics(track, transcriptOf)
 	}
+	decorated := track
 	lines := findLyrics(track, spotify.Lyrics, func(t spotify.Track) (string, string, error) {
 		return lookupByNames(t, spotify.Decorate, func(t spotify.Track) (string, string, error) {
+			decorated = t
 			return firstTimed(t, spotify.NetEaseLyrics, spotify.LRCLyrics, spotify.LRCSearch)
 		})
 	})
-	return localize(track, lines, netEaseTranslator(lines))
+	if len(lines) > 0 && !lines[0].Unsynced && !lyrics.Chinese(lines) && decorated.Unnamed() {
+		decorated = rename(decorated, spotify.Decorate)
+	}
+	return localize(decorated, lines, netEaseTranslator(lines))
 }
 
 func netEaseTranslator(lines []lyrics.Line) func(spotify.Track) (string, string, error) {
 	return func(t spotify.Track) (string, string, error) {
-		return spotify.NetEaseTranslationMatching(t, func(synced, translation string) bool {
-			tl := lyrics.Build(synced, translation, "")
-			return hasTranslation(tl) && sameWords(lines, tl)
-		})
+		return spotify.NetEaseTranslationFor(t, lines)
 	}
 }
 
@@ -98,39 +111,10 @@ func localize(track spotify.Track, lines []lyrics.Line, translated func(spotify.
 		log.Printf("lyrics: translation of %s: %v", track.ID, err)
 		return lines
 	}
-	if tl := lyrics.Build(synced, translation, ""); slices.ContainsFunc(tl, func(l lyrics.Line) bool { return l.Translation != "" }) && sameWords(lines, tl) {
+	if tl := lyrics.Build(synced, translation, ""); hasTranslation(tl) && lyrics.MatchingWords(lines, tl) {
 		return tl
 	}
 	return lines
-}
-
-// sameWords reports whether at least half of a's lines are b's too, case,
-// spaces and punctuation aside: NetEase can have another version of a song
-// under its title and near its length (Voyaging Star's Farewell, Russian
-// ver.), whose lines would replace Spotify's.
-func sameWords(a, b []lyrics.Line) bool {
-	fold := func(s string) string {
-		return strings.Map(func(r rune) rune {
-			if unicode.IsLetter(r) || unicode.IsNumber(r) {
-				return unicode.ToLower(r)
-			}
-			return -1
-		}, s)
-	}
-	have := map[string]bool{}
-	for _, l := range b {
-		have[fold(l.Text)] = true
-	}
-	n, same := 0, 0
-	for _, l := range a {
-		if k := fold(l.Text); k != "" {
-			n++
-			if have[k] {
-				same++
-			}
-		}
-	}
-	return n > 0 && 2*same >= n
 }
 
 // firstTimed asks sources in turn for t's lyrics until one has them timed,

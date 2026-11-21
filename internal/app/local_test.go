@@ -2,7 +2,10 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -107,5 +110,108 @@ func TestLocalSearchCapsuleAndFullQueuePlayback(t *testing.T) {
 	tester.Frame()
 	if a.localQuery != "" {
 		t.Fatal("clear button did not clear local search")
+	}
+}
+
+// Scrolling local music pins the search toolbar at the top, clips scrolled rows behind it, and returns below the hero when scrolled back.
+func TestLocalToolbarPinsAndClipsWhenScrolled(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.profile, a.localLoaded = nil, true
+	for i := range 60 {
+		a.localTracks = append(a.localTracks, spotify.Track{
+			ID:        fmt.Sprintf("local:%d", i),
+			LocalPath: fmt.Sprintf("song%d.mp3", i),
+			Name:      fmt.Sprintf("本地歌曲%d", i),
+			Duration:  200000,
+		})
+	}
+	a.route = route{page: pageLocal}
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+	before, ok := tt.Find("筛选本地音乐")
+	if !ok {
+		t.Fatal("local search is missing before scrolling")
+	}
+	scroll := func(delta float32) ui.Rect {
+		t.Helper()
+		tt.Scroll(900, 550, 0, delta)
+		tt.Advance(time.Second)
+		tt.Frame()
+		r, ok := tt.Find("筛选本地音乐")
+		if !ok {
+			t.Fatal("local search left the viewport")
+		}
+		return r
+	}
+	pinned := scroll(320)
+	if pinned.Y >= before.Y-100 {
+		t.Fatalf("local toolbar did not pin at top: before=%v, after=%v", before, pinned)
+	}
+	for range 2 {
+		if err := tt.Click("筛选本地音乐"); err != nil {
+			t.Fatalf("pinned local search was not clickable: %v", err)
+		}
+	}
+	if a.pl.Current() != nil {
+		t.Fatalf("clicking pinned local search hit a track underneath: %+v", a.pl.Current())
+	}
+	// Verify the sort control stays aligned on the same pinned toolbar row.
+	bar, ok := tt.Find("本地音乐排序")
+	if !ok {
+		t.Fatal("local sort control missing after scrolling")
+	}
+	if bar.Y+bar.H < pinned.Y+pinned.H {
+		t.Fatalf("local sort control misaligned with search: search=%v sort=%v", pinned, bar)
+	}
+	if again := scroll(1600); again.Y != pinned.Y {
+		t.Fatalf("local toolbar moved after pinning: %v to %v", pinned, again)
+	}
+	if back := scroll(-100000); back.Y != before.Y {
+		t.Fatalf("local toolbar did not return below the hero: %v to %v", before, back)
+	}
+}
+
+// Sorting local music, typing a space-containing query, and double-clicking a result keeps playback running and preserves the full sorted queue.
+func TestLocalSortAndSearchPlayback(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.profile, a.localLoaded = nil, true
+	a.localTracks = []spotify.Track{
+		{ID: "local:c", LocalPath: "c.mp3", Name: "Zebra Song", Duration: 240000},
+		{ID: "local:b", LocalPath: "b.mp3", Name: "Beta Song", Duration: 200000},
+		{ID: "local:a", LocalPath: "a.mp3", Name: "Alpha Song", Duration: 180000},
+	}
+	a.pl.PlayQueue(a.localTracks, 0)
+	a.route = route{page: pageLocal}
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+	if err := tt.Click("本地音乐排序"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("歌曲名称"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.pl.Current().ID != "local:c" || !slices.Equal(playlistTrackIDs(a.pl.Queue()), []string{"local:c", "local:b", "local:a"}) {
+		t.Fatal("sorting local music changed the active queue")
+	}
+	if err := tt.Click("筛选本地音乐"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Type("beta song")
+	tt.Frame()
+	tt.Frame()
+	if a.localQuery != "beta song" || !a.pl.Playing() {
+		t.Fatalf("typing space in local search changed playback or query=%q playing=%v", a.localQuery, a.pl.Playing())
+	}
+	for range 2 {
+		if err := tt.Click("Beta Song"); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+	}
+	if a.pl.Current() == nil || a.pl.Current().ID != "local:b" || !slices.Equal(playlistTrackIDs(a.pl.Queue()), []string{"local:a", "local:b", "local:c"}) {
+		t.Fatalf("filtered local playback lost sorted queue: cur=%v queue=%v", a.pl.Current(), playlistTrackIDs(a.pl.Queue()))
 	}
 }

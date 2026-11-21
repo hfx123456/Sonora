@@ -6,7 +6,59 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"vinyl/internal/lyrics"
 )
+
+// A song with an English catalog title can find its translation by a Japanese
+// lyric fragment even when the provider combines rows Spotify splits apart.
+func TestNetEaseTranslationForFindsOriginalTitleByLyric(t *testing.T) {
+	old := Client
+	t.Cleanup(func() { Client = old })
+	track := Track{
+		Name: "Rainy Morning (Movie Edit)", Duration: 156160,
+		Artists: []Artist{{Name: "Example Band"}}, Album: Album{Name: "A Film"},
+	}
+	lines := lyrics.Build("[00:15]窓を開けたら\n[00:21]街が見えた\n[00:28]風が吹いて\n[00:34]雲が流れた", "", "")
+	var requests []string
+	Client = &http.Client{Transport: lyricsTransport(func(req *http.Request) (*http.Response, error) {
+		var body string
+		query := req.URL.Query()
+		switch req.URL.Path {
+		case "/api/cloudsearch/pc":
+			body = `{"code":200,"result":{"songs":[]}}`
+			if query.Get("type") == "1006" && query.Get("s") == "窓を開けたら" {
+				body = `{"code":200,"result":{"songs":[
+					{"id":1,"name":"雨の朝","ar":[{"name":"Different Artist"}],"dt":156160},
+					{"id":2,"name":"雨の朝 (Live)","ar":[{"name":"Example Band"}],"dt":156160},
+					{"id":3,"name":"雨の朝","ar":[{"name":"Example Band"}],"dt":247000},
+					{"id":4,"name":"雨の朝","ar":[{"name":"Example Band"}],"dt":156160},
+					{"id":5,"name":"雨の朝","ar":[{"name":"Example Band"}],"dt":156163}
+				]}}`
+			}
+		case "/api/song/lyric":
+			id := query.Get("id")
+			requests = append(requests, id)
+			switch id {
+			case "4":
+				body = `{"code":200,"lrc":{"lyric":"[00:15]窓を開けたら\n[00:21]雨が降っていた\n[00:28]夜は静かだった"},"tlyric":{"lyric":"[00:15]打开窗"}}`
+			case "5":
+				body = `{"code":200,"lrc":{"lyric":"[00:15]窓を開けたら、街が見えた\n[00:28]風が吹いて 雲が流れた"},"tlyric":{"lyric":"[00:15]推开窗便看见街道\n[00:28]风吹云动"}}`
+			default:
+				t.Fatalf("fetched mismatched song %s", id)
+			}
+		default:
+			t.Fatalf("unexpected path %s", req.URL.Path)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+
+	synced, translation, err := NetEaseTranslationFor(track, lines)
+	got := lyrics.Build(synced, translation, "")
+	if err != nil || len(got) != 2 || got[0].Translation != "推开窗便看见街道" || strings.Join(requests, ",") != "4,5" {
+		t.Fatalf("requests=%v lyrics=%+v err=%v", requests, got, err)
+	}
+}
 
 // NetEase is asked by name and artist only, and of its songs the one of
 // the same title nearest in length gives the lyrics: not a cover a little
@@ -66,12 +118,43 @@ func TestSameTitle(t *testing.T) {
 		{"Drenched", "drenched", true},
 		{"Song - Remastered 2011", "Song", true},
 		{"周旋", "旋转木马", false},
+		{"七里香", "晴天啊", false},
+		{"爱我", "恨你", false},
 		{"Rain", "Pain", false},
 		{"(Intro)", "(Intro)", false},
 	} {
 		if got := sameTitle(c.a, c.b); got != c.same {
 			t.Errorf("sameTitle(%q, %q) = %v", c.a, c.b, got)
 		}
+	}
+}
+
+func TestParseIdentityZeroExpiresAndSignOutEpoch(t *testing.T) {
+	id, ok := ParseIdentity(`{"token":{"accessToken":"tok-zero","accessTokenExpirationTimestampMs":0,"isAnonymous":false}}`)
+	if !ok || id.Token != "tok-zero" || id.Expires.IsZero() {
+		t.Fatalf("ParseIdentity zero expires failed: ok=%v id=%+v", ok, id)
+	}
+	SignOut()
+	defer SignOut()
+	started, release := make(chan struct{}), make(chan struct{})
+	oldRenew := Renew
+	Renew = func() (Identity, error) {
+		close(started)
+		<-release
+		return Identity{Token: "stale-account", Expires: id.Expires}, nil
+	}
+	defer func() { Renew = oldRenew }()
+
+	done := make(chan Identity, 1)
+	go func() {
+		got, _ := RenewedIdentity()
+		done <- got
+	}()
+	<-started
+	SignOut()
+	close(release)
+	if got := <-done; got.Token != "" {
+		t.Fatalf("SignOut allowed in-flight Renew to resurrect token %q", got.Token)
 	}
 }
 

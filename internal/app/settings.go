@@ -56,15 +56,16 @@ type settings struct {
 	Volume float64 `json:"volume"`
 	// ShuffleMode (0: off, 1: shuffle, 2: smart shuffle) and RepeatMode
 	// (0: off, 1: repeat all, 2: repeat one) persist across restarts.
-	ShuffleMode int `json:"shuffleMode,omitempty"`
-	RepeatMode  int `json:"repeatMode,omitempty"`
+	ShuffleMode        int  `json:"shuffleMode,omitempty"`
+	RepeatMode         int  `json:"repeatMode,omitempty"`
+	PlaybackModesSaved bool `json:"playbackModesSaved,omitempty"`
 	// Fog fills Now Playing's backdrop with fog of the cover's color,
 	// rising and swelling with the bass: an experiment the listener turns
 	// on.
 	Fog bool `json:"fog"`
 	// Flow fills Now Playing's backdrop with an Apple Music-style fluid
-	// backdrop from the cover's blurred artwork and palette, drifting and
-	// breathing with the music.
+	// mesh gradient of the cover's palette, drifting and breathing with
+	// the music.
 	Flow bool `json:"flow"`
 	// MVFill has music videos fill Now Playing, rather than show where
 	// the cover goes; and MVLyrics shows the lines sung over them then.
@@ -98,6 +99,7 @@ type settings struct {
 
 func defaultSettings() settings {
 	return settings{
+		FusionNoAvoid: true,
 		NotchActivity: true,
 		Appearance:    "system",
 		Glass:         true,

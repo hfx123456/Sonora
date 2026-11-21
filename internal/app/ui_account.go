@@ -41,6 +41,7 @@ var captureMu sync.Mutex
 func (a *app) boot() {
 	a.homeLoading = true
 	spotify.Renew = a.renewIdentity
+	spotify.RenewFull = a.renewWebViewIdentity
 	// Browsing works signed out too: the app gets itself the identity an
 	// anonymous visitor has, instead of waiting for someone to sign in.
 	spotify.RenewGuest = spotify.AnonymousIdentity
@@ -50,6 +51,7 @@ func (a *app) boot() {
 		// the web player would only take ten seconds to say so. The
 		// visitor's pages show at once instead.
 		if !hasAccountCookies() {
+			a.setAccountSession(false)
 			a.post(func() {
 				if a.profile == nil {
 					a.signedIn(nil)
@@ -57,6 +59,7 @@ func (a *app) boot() {
 			})
 			return
 		}
+		a.setAccountSession(true)
 		prof, err := keptAccount()
 		a.post(func() { a.tookSignIn(gen, 0, prof, err) })
 	}()
@@ -174,6 +177,9 @@ func (a *app) closeSignin() {
 // renewIdentity loads the web player out of sight and waits for its token,
 // anonymous if nobody is signed in. It blocks, so it runs on a goroutine.
 func (a *app) renewIdentity() (spotify.Identity, error) {
+	if !a.hasAccountSession() {
+		return spotify.Identity{}, spotify.ErrSignedOut
+	}
 	if qtweb.Enabled() {
 		return a.renewQtIdentity()
 	}
@@ -187,12 +193,16 @@ func (a *app) renewIdentity() (spotify.Identity, error) {
 	if kept != "" {
 		id, err := spotify.AccountIdentity(kept)
 		switch {
-		case err == nil && accountEpoch() != epoch:
+		case err == nil && (accountEpoch() != epoch || !a.hasAccountSession()):
 			return spotify.Identity{}, spotify.ErrSignedOut
 		case err == nil:
 			log.Printf("renew: as the listener, without the web view")
 			// What loadEmail asks with, as it would the web view's.
-			mygo.RunOnMain(func() { a.signin.cookies = kept })
+			mygo.RunOnMain(func() {
+				if accountEpoch() == epoch && a.hasAccountSession() {
+					a.signin.cookies = kept
+				}
+			})
 			return id, nil
 		case errors.Is(err, spotify.ErrStaleCookies):
 			log.Printf("renew: the cookies kept are signed out; dropped")
@@ -202,32 +212,58 @@ func (a *app) renewIdentity() (spotify.Identity, error) {
 			log.Printf("renew as the listener, without the web view: %v", err)
 		}
 	}
+	return a.renewWebViewIdentity()
+}
+
+// renewWebViewIdentity loads the hidden web player page to capture a
+// full-scope token when a cookie-only renewal is insufficient.
+func (a *app) renewWebViewIdentity() (spotify.Identity, error) {
+	if !a.hasAccountSession() {
+		return spotify.Identity{}, spotify.ErrSignedOut
+	}
+	if qtweb.Enabled() {
+		return a.renewQtIdentity()
+	}
+	epoch := accountEpoch()
+	kept := loadAccountCookies()
 	captureMu.Lock()
 	defer captureMu.Unlock()
+	if accountEpoch() != epoch || !a.hasAccountSession() {
+		return spotify.Identity{}, spotify.ErrSignedOut
+	}
 	var w *mygo.Window
-	mygo.RunOnMain(func() { w = a.signinWindow(spotify.WebPlayerURL) })
+	mygo.RunOnMain(func() {
+		if accountEpoch() == epoch && a.hasAccountSession() && !a.quitting {
+			w = a.signinWindow(spotify.WebPlayerURL)
+		}
+	})
 	if w == nil {
-		return spotify.Identity{}, errors.New("no web player")
+		return spotify.Identity{}, spotify.ErrSignedOut
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	id, err := capture(ctx, w.Page(), false)
 	cookies := ""
 	switch {
-	case err == nil && accountEpoch() != epoch:
+	case err == nil && (accountEpoch() != epoch || !a.hasAccountSession()):
 		id, err = spotify.Identity{}, spotify.ErrSignedOut
 	case err == nil && !id.Anonymous:
 		cookies = accountCookies()
 		// Kept for the next renewal to ask with, so that the web view is
 		// opened for signing in, and not once an hour after.
 		saveAccountCookies(epoch, cookies)
-	case err == nil && kept != "":
-		// Signed out on the web player too: what was kept is no one's, and
-		// asking with it again would only cost a request every start.
-		dropAccountCookies(kept)
+	case err == nil:
+		// Signed out on the web player too: stop spawning hidden web views on
+		// subsequent guest requests until the listener signs in again.
+		a.setAccountSession(false)
+		if kept != "" {
+			dropAccountCookies(kept)
+		}
 	}
 	mygo.RunOnMain(func() {
-		a.signin.cookies = cookies
+		if accountEpoch() == epoch && a.hasAccountSession() {
+			a.signin.cookies = cookies
+		}
 		if !a.signin.shown {
 			a.closeSignin()
 		}
@@ -284,45 +320,68 @@ func (a *app) openLogin() {
 	s.shown = true
 	epoch := accountEpoch()
 	go func() {
-		captureMu.Lock()
-		defer captureMu.Unlock()
-		var w *mygo.Window
-		mygo.RunOnMain(func() {
-			if gen == s.gen {
-				w = a.signinWindow(spotify.LoginURL)
-				w.Show()
-				w.Focus()
-			}
-		})
-		if w == nil {
-			return
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		// Closing the window stops the wait.
-		go func() {
-			for ctx.Err() == nil {
-				time.Sleep(time.Second)
-				var closed bool
-				mygo.RunOnMain(func() { closed = gen != s.gen })
-				if closed {
-					cancel()
+		id, cookies, ok := func() (spotify.Identity, string, bool) {
+			captureMu.Lock()
+			defer captureMu.Unlock()
+			var w *mygo.Window
+			mygo.RunOnMain(func() {
+				if gen == s.gen && !a.quitting {
+					w = a.signinWindow(spotify.LoginURL)
+					w.Show()
+					w.Focus()
 				}
+			})
+			if w == nil {
+				return spotify.Identity{}, "", false
 			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// Closing the window stops the wait.
+			go func() {
+				for ctx.Err() == nil {
+					time.Sleep(time.Second)
+					var closed bool
+					mygo.RunOnMain(func() { closed = gen != s.gen || a.quitting })
+					if closed {
+						cancel()
+					}
+				}
+			}()
+			id, err := capture(ctx, w.Page(), true)
+			if err != nil || accountEpoch() != epoch {
+				return spotify.Identity{}, "", false
+			}
+			cookies := accountCookies()
+			if ctx.Err() != nil || accountEpoch() != epoch {
+				return spotify.Identity{}, "", false
+			}
+			accepted := false
+			mygo.RunOnMain(func() {
+				if gen == s.gen && !a.quitting && accountEpoch() == epoch && ctx.Err() == nil {
+					accepted = true
+				}
+			})
+			if !accepted {
+				return spotify.Identity{}, "", false
+			}
+			saveAccountCookies(epoch, cookies)
+			a.setAccountSession(true)
+			spotify.SetIdentity(id)
+			return id, cookies, true
 		}()
-		id, err := capture(ctx, w.Page(), true)
-		if err != nil {
+		if !ok {
 			return
 		}
-		cookies := accountCookies()
-		saveAccountCookies(epoch, cookies)
-		spotify.SetIdentity(id)
+		_ = id
+		// captureMu is released before calling spotify.Account so a 401
+		// renewal inside Account() cannot deadlock on captureMu.
 		prof, err := spotify.Account()
 		a.post(func() {
-			a.signin.cookies = cookies
-			if gen == s.gen {
-				a.closeSignin()
+			if gen != s.gen || a.quitting || accountEpoch() != epoch {
+				return
 			}
+			a.signin.cookies = cookies
+			a.closeSignin()
 			if err != nil {
 				a.toast = "登录失败，请稍后再试"
 				return
@@ -349,25 +408,30 @@ func (a *app) signedIn(prof *spotify.Profile) {
 		a.startConnect()
 	}
 	a.liked, a.liking = nil, nil
+	a.loadingPl = map[string]bool{}
+	a.plThenPlay, a.plRefreshAgain = nil, nil
 	if !same {
 		a.homeShelves = nil
 		a.mine, a.saved, a.followed = nil, nil, nil
 		a.homeSections, a.homeShortcuts, a.daily = nil, nil, nil
 		a.facets, a.sectionAll = nil, nil
+		a.loading, a.loadErr = nil, nil
+		a.artists = map[string]*spotify.ArtistPage{}
+		a.arErr = map[string]string{}
+		// Who listens changed: load the lists again.
+		a.playlists = map[string]*spotify.Playlist{}
+		a.playlistQueries = nil
+		a.playlistSorts = nil
+		a.playlistOrderCache = playlistOrderCache{}
+		a.playlistFilterCache = trackFilterCache{}
+		a.loadingPl = map[string]bool{}
+		a.playlistSync = playlistSyncState{}
+		a.plErr = map[string]string{}
 	}
-	a.artists = map[string]*spotify.ArtistPage{}
-	a.arErr = map[string]string{}
-	// Who listens changed: load the lists again.
-	a.playlists = map[string]*spotify.Playlist{}
-	a.playlistQueries = nil
-	a.playlistSorts = nil
-	a.playlistOrderCache = playlistOrderCache{}
-	a.playlistFilterCache = trackFilterCache{}
-	a.loadingPl = map[string]bool{}
-	a.playlistSync = playlistSyncState{}
-	a.plErr = map[string]string{}
 	if prof == nil {
+		a.setAccountSession(false)
 		a.signin.cookies = ""
+		a.spots = nil
 		// Nobody is signed in: the app browses as the visitor the web
 		// player shows someone who has not signed in, so search, the home
 		// page and every page Spotify keeps for everyone stay. What is a
@@ -382,9 +446,12 @@ func (a *app) signedIn(prof *spotify.Profile) {
 		a.loadHome()
 		return
 	}
+	a.setAccountSession(true)
 	// Playback picks up where it was left, once there is someone to play to.
 	a.restoreSession()
-	a.show(a.route)
+	if !same {
+		a.show(a.route)
+	}
 	if a.searched != "" {
 		a.runSearch(a.searched)
 	}
@@ -477,15 +544,28 @@ func (a *app) profileAvatar(c *ui.Context, prof *spotify.Profile, size float32) 
 }
 
 func (a *app) signOut() {
+	a.setAccountSession(false)
 	a.signin.gen++
 	a.closeSignin()
+	a.naming = nameDialog{}
+	a.deleting = deleteDialog{}
+	a.plThenPlay = nil
+	a.plRefreshAgain = nil
+	a.recentLoading = false
+	// Pause playback and deregister Connect while the account token is still
+	// valid, before wiping credentials and cookies.
+	if a.pl.Playing() {
+		a.pl.TogglePlay()
+	}
+	a.stopConnect()
+	if cur := a.pl.Current(); cur != nil && !cur.Local() {
+		a.pl.Clear()
+	}
+	a.clearSession()
 	forgetAccountCookies()
 	// Forgets the guest too, so that browsing goes on as a new one rather
 	// than as whoever was here before.
 	spotify.SignOut()
-	if a.pl.Playing() {
-		a.pl.TogglePlay()
-	}
 	a.signedIn(nil)
 	go func() {
 		if qtweb.Enabled() {
@@ -494,6 +574,8 @@ func (a *app) signOut() {
 			}
 			return
 		}
+		captureMu.Lock()
+		defer captureMu.Unlock()
 		if err := mygo.Cookies.Clear(); err != nil {
 			log.Printf("sign out: %v", err)
 		}
@@ -724,20 +806,14 @@ func (a *app) myPlaylists(c *ui.Context, title string, lists []spotify.Playlist,
 // myPlaylist is one of the listener's lists in the sidebar: a row, or in the
 // grid a cover over its name.
 func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid bool) {
-	p := a.pal
 	selected := a.route.page == pagePlaylist && a.route.playlist == pl.ID && !a.nowPlaying
-	b := ui.ButtonBase(c.Key(pl.ID)).Radius(8).FocusRing(false).Label(pl.Name)
+	b := ui.ButtonBase(c.Key(pl.ID)).Radius(10).FocusRing(false).Label(pl.Name)
 	if grid {
 		b.Column().Padding(6).Gap(6).AlignItems(ui.Stretch)
 	} else {
 		b.Height(34).PaddingX(8).Gap(10).AlignItems(ui.Center).Justify(ui.Start)
 	}
-	switch {
-	case selected:
-		b.Background(p.press)
-	case b.Hovered():
-		b.Background(p.hover)
-	}
+	a.styleSidebarItem(b, selected, b.Hovered())
 	b.Children(func() {
 		if grid {
 			ui.Box(c).AspectRatio(1).Radius(6).Children(func() { a.listArt(c, pl, 200, 6) })

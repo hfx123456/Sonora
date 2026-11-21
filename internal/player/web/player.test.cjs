@@ -11,6 +11,7 @@ let timerID = 0;
 class Hls {
   static Events = { ERROR: 'error' };
   static ErrorTypes = { NETWORK_ERROR: 'networkError', MEDIA_ERROR: 'mediaError', KEY_SYSTEM_ERROR: 'keySystemError' };
+  static ErrorDetails = { KEY_SYSTEM_SERVER_CERTIFICATE_REQUEST_FAILED: 'keySystemServerCertificateRequestFailed' };
   constructor(config) { this.config = config; this.starts = []; instances.push(this); }
   on(name, fn) { if (name === Hls.Events.ERROR) this.onError = fn; }
   loadSource() {}
@@ -123,6 +124,24 @@ assert.equal(timers.size, 0);
 session.handlers.nexttrack();
 assert.equal(events.filter(event => event.type === 'system-next').length, 1);
 
+// A certificate promise can reject after a track is replaced; it must never stop the new track.
+player.load(9);
+const certificateRejected = (gen) => {
+  const reason = new Error('certificate request failed');
+  reason.data = {
+    details: Hls.ErrorDetails.KEY_SYSTEM_SERVER_CERTIFICATE_REQUEST_FAILED,
+    type: Hls.ErrorTypes.KEY_SYSTEM_ERROR,
+    response: { url: 'http://127.0.0.1/cert?gen=' + gen, code: 502 },
+  };
+  context.window.handlers.unhandledrejection({ reason, preventDefault() {} });
+};
+const beforeCertificate = events.length;
+certificateRejected(8);
+assert.equal(events.length, beforeCertificate);
+certificateRejected(9);
+assert.deepEqual(events.slice(beforeCertificate).map(({ gen, type }) => [gen, type]), [[9, 'error']]);
+player.unload(9);
+
 async function checkEndings() {
   // A fully buffered tail that stops advancing used to wait forever for ended.
   player.load(3);
@@ -227,6 +246,27 @@ async function checkEndings() {
   player.unload(8);
   assert.equal(timers.size, 0);
   assert.equal(intervals.size, 0);
+
+  // Consecutive native media-error recoveries must preserve t.seek across retries instead of resetting to 0.
+  player.load(99, 'file');
+  player.play(99);
+  const fileAudio = elements.at(-1);
+  fileAudio.currentTime = 42.5;
+  fileAudio.handlers.error();
+  assert.equal(timers.size, 1);
+  let recoverStep = [...timers.values()][0];
+  timers.clear();
+  recoverStep();
+  fileAudio.currentTime = 0; // src reload resets currentTime to 0 before second error
+  fileAudio.handlers.error();
+  assert.equal(timers.size, 1);
+  recoverStep = [...timers.values()][0];
+  timers.clear();
+  recoverStep();
+  fileAudio.handlers.loadedmetadata();
+  assert.equal(fileAudio.currentTime, 42.5);
+  player.unload(99);
+
   console.log('player lifecycle and ending JS tests passed');
 }
 checkEndings().catch(error => { console.error(error); process.exitCode = 1; });

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -1045,16 +1046,26 @@ type libraryTrack struct {
 
 func libraryPage(offset, limit int) ([]libraryTrack, error) {
 	var res struct {
-		Me struct {
-			Library struct {
-				Tracks struct {
+		Me *struct {
+			Library *struct {
+				Tracks *struct {
 					Items []libraryTrack `json:"items"`
 				} `json:"tracks"`
 			} `json:"library"`
 		} `json:"me"`
 	}
 	err := query("fetchLibraryTracks", map[string]any{"offset": offset, "limit": limit}, &res)
-	return res.Me.Library.Tracks.Items, err
+	if err != nil {
+		return nil, err
+	}
+	if res.Me == nil || res.Me.Library == nil || res.Me.Library.Tracks == nil {
+		log.Printf("spotify: fetchLibraryTracks returned nil structure (offset=%d me=%v)", offset, res.Me != nil)
+		return nil, errors.New("spotify: fetchLibraryTracks returned empty library tracks")
+	}
+	if offset == 0 && len(res.Me.Library.Tracks.Items) == 0 {
+		log.Printf("spotify: fetchLibraryTracks returned 0 items at offset 0")
+	}
+	return res.Me.Library.Tracks.Items, nil
 }
 
 // likedSongs returns the listener's liked songs, the latest first.

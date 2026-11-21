@@ -25,12 +25,16 @@ const npSettle = 600 * time.Millisecond
 func (a *app) npState(c *ui.Context) (open, settled bool) {
 	open = a.nowPlaying && a.pl.Current() != nil
 	now := c.Now()
+	settle := npSettle
+	if !a.pl.VideoOn() {
+		settle = genieTime
+	}
 	if open != a.npOpen {
 		a.npFrom = a.genieAmount(now)
 		a.npOpen, a.npChangedAt = open, now
 		// A build once it is at rest: to stop painting what it covers, or
 		// itself once gone.
-		c.After(npSettle)
+		c.After(settle)
 		// The window buttons light over its dark backdrop, and as the
 		// theme over the pages (Windows).
 		if a.win != nil {
@@ -41,7 +45,7 @@ func (a *app) npState(c *ui.Context) (open, settled bool) {
 			a.win.SetWindowButtonsTheme(buttons)
 		}
 	}
-	return open, now.Sub(a.npChangedAt) >= npSettle
+	return open, now.Sub(a.npChangedAt) >= settle
 }
 
 // nowPlayingLayer holds Now Playing over the whole window, pouring out of
@@ -65,6 +69,7 @@ func (a *app) nowPlayingLayer(c *ui.Context, open, settled bool) {
 		layer.Invisible()
 		a.queueAt = -1
 		a.mvShown = false
+		a.npCoverState.flung, a.npCoverState.off, a.npCoverState.swipe, a.npCoverState.enter = 0, ui.Point{}, 0, 0
 		return
 	}
 	if !open {
@@ -144,10 +149,8 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *spotify.Track, art *artwork, acc
 			reveal(tabs, pointerIn).Children(func() { a.paneTabs(c) })
 		})
 		if a.npPane == paneStage {
-			// The stage takes the whole view: the lyrics are the show, the
-			// controls a slim bar at the foot.
 			a.stage(c, tr, accent)
-			a.stageBar(c, tr, art, accent)
+			a.stageControls(c, accent, pointerIn)
 			return
 		}
 
@@ -179,7 +182,7 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *spotify.Track, art *artwork, acc
 					a.likeButton(c.Key("like"), tr, 22, white.Alpha(0.7))
 					a.songMenu(c.Key("more"), tr, 22, white.Alpha(0.7)).Margin(0, -8, 0, 0)
 				})
-				a.scrubber(c.Key("np-scrub"), &a.npScrub, white.Alpha(0.18), white.Alpha(0.9), 16, accent.Mix(white, 0.35))
+				a.scrubber(c.Key("np-scrub"), &a.npScrub, white.Alpha(0.18), white.Alpha(0.9), 16, accent.Mix(white, 0.35), nil)
 				ui.Row(c).Children(func() {
 					ui.Text(c, clock(pl.Position())).FontSize(11).FontFeatures("tnum").TextColor(white.Alpha(0.5))
 					ui.Spacer(c)
@@ -262,9 +265,37 @@ func (a *app) paneTabs(c *ui.Context) {
 	a.paneTab(c, paneQueue, "列表")
 }
 
-// stageBar is the slim bar along the foot of the stage: what plays, where
-// it is, and the controls.
-func (a *app) stageBar(c *ui.Context, tr *spotify.Track, art *artwork, accent ui.Color) {
+// stageControls fades the transport and progress without moving the lyrics.
+func (a *app) stageControls(c *ui.Context, accent ui.Color, pointerIn bool) {
+	w, _ := c.Size()
+	bar := ui.Column(c.Key("stage-controls")).AlignSelf(ui.Center).Width(min(520, max(0, w-48))).
+		Height(74).Margin(0, 0, 18, 0).Gap(6)
+	target := float32(0)
+	if pointerIn || a.npScrub.held {
+		target = 1
+	}
+	opacity := bar.AnimateTo("visibility", target, ui.Animation{Duration: 200 * time.Millisecond, NonMotion: true})
+	if opacity <= 0 && target == 0 {
+		// A release still needs to reach the scrubber if it ended off-window.
+		if !a.npScrub.active {
+			return
+		}
+		bar.Invisible()
+	}
+	var surface ui.Material
+	if a.glassEnabled() {
+		lens := a.nowPlayingGlass()
+		lens.Interactive = true
+		surface = lens
+	}
+	bar.Opacity(opacity).Children(func() {
+		a.transport(c, white.Alpha(.95), white.Alpha(.62), white, 24)
+		a.scrubber(c.Key("stage-scrub"), &a.npScrub, white.Alpha(.22), white.Alpha(.84), 22, accent.Mix(white, .35), surface)
+	})
+}
+
+// mvTransportBar keeps the song details and controls together over the video.
+func (a *app) mvTransportBar(c *ui.Context, tr *spotify.Track, art *artwork, accent ui.Color) {
 	pl := a.pl
 	w, _ := c.Size()
 	bar := ui.Column(c).AlignSelf(ui.Center).Width(min(960, max(0, w-64))).Margin(0, 0, 16, 0).
@@ -294,7 +325,7 @@ func (a *app) stageBar(c *ui.Context, tr *spotify.Track, art *artwork, accent ui
 				ui.Text(c, clock(pl.Position())+" / "+clock(pl.Duration())).FontSize(11).FontFeatures("tnum").TextColor(white.Alpha(0.6))
 			})
 		})
-		a.scrubber(c.Key("stage-scrub"), &a.npScrub, white.Alpha(0.16), white.Alpha(0.85), 12, accent.Mix(white, 0.35))
+		a.scrubber(c.Key("mv-scrub"), &a.npScrub, white.Alpha(0.16), white.Alpha(0.85), 12, accent.Mix(white, 0.35), nil)
 	})
 }
 
@@ -322,9 +353,19 @@ func (a *app) paneTab(c *ui.Context, i int, label string) {
 	}
 }
 
+func (a *app) nowPlayingLyrics(tr *spotify.Track) ([]lyrics.Line, bool) {
+	lines, loaded := a.pl.Lyrics()
+	if tr != nil && a.fusion.key == fusionTrackKey(tr) && len(a.fusion.lines) > 0 && !fusionInstrumentalNotice(a.fusion.lines) {
+		if len(lines) == 0 || (lines[0].Unsynced && !a.fusion.lines[0].Unsynced) || hasFusionTranslation(a.fusion.lines) || !hasFusionTranslation(lines) {
+			return a.fusion.lines, true
+		}
+	}
+	return lines, loaded
+}
+
 func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 	pl := a.pl
-	lines, loaded := pl.Lyrics()
+	lines, loaded := a.nowPlayingLyrics(tr)
 	if len(lines) == 0 {
 		col := ui.Column(c).Grow(1)
 		if loaded {
@@ -339,16 +380,22 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 		})
 		return
 	}
+	trackKey := tr.URI()
 	if lines[0].Unsynced {
-		if a.lyricTrack != tr.ID {
-			a.lyricTrack, a.lyricAt = tr.ID, -2
+		if a.lyricTrack != trackKey {
+			a.lyricTrack, a.lyricAt = trackKey, -2
 			a.lyricScroll, a.lyricGlide = ui.ScrollState{}, lyricGlide{}
 		}
 		ui.Scroll(c.Key("plain-lyrics")).Grow(1).TrackScroll(&a.lyricScroll).Padding(0, 8, 24, 0).Children(func() {
 			ui.Column(c).Gap(16).Padding(10, 12).Children(func() {
-				ui.Text(c, "LRCLIB · 无时间轴歌词").FontSize(13).TextColor(white.Alpha(0.5))
+				ui.Text(c, "无时间轴歌词").FontSize(13).TextColor(white.Alpha(0.5))
 				for _, line := range lines {
-					ui.Text(c, line.Text).FontSize(30).FontWeight(800).LineHeight(1.25).TextColor(white.Alpha(0.85))
+					ui.Column(c).Gap(6).Children(func() {
+						ui.Text(c, line.Text).FontSize(30).FontWeight(800).LineHeight(1.25).TextColor(white.Alpha(0.85))
+						if line.Translation != "" {
+							ui.Text(c, line.Translation).FontSize(17).FontWeight(600).TextColor(white.Alpha(0.65))
+						}
+					})
 				}
 			})
 		})
@@ -358,10 +405,12 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 	cur := lyrics.Index(lines, pos)
 	// Redraw as the next line begins.
 	if pl.Playing() && cur+1 < len(lines) {
-		c.After(lines[cur+1].At - pos + 20*time.Millisecond)
+		if wait := lines[cur+1].At - pos + 20*time.Millisecond; wait > 0 {
+			c.After(wait)
+		}
 	}
-	if a.lyricTrack != tr.ID {
-		a.lyricTrack, a.lyricAt = tr.ID, -2
+	if a.lyricTrack != trackKey {
+		a.lyricTrack, a.lyricAt = trackKey, -2
 		a.lyricScroll, a.lyricGlide = ui.ScrollState{}, lyricGlide{}
 	}
 	lag := a.lyricGlide.step(c, &a.lyricScroll)
@@ -375,7 +424,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 	box := scroll.Bounds()
 	if len(lines) > lyricsAll {
 		rows = &a.lyricRows
-		rows.fit(tr.ID, lines, box.W)
+		rows.fit(trackKey, lines, box.W)
 		view := box.H
 		if view <= 0 {
 			view = h
@@ -420,14 +469,26 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 						text.Blur(min(1.5, float32(math.Abs(float64(i-cur)))*.45)).Cache()
 					}
 					text.Children(func() {
-						if on && len(l.Words) > 0 {
-							karaokeText(c.Key("words"), l, ui.Font{Family: c.Theme().Font, Size: 30, Weight: 800, LineHeight: 1.25},
+						words := l.Words
+						if on && len(words) == 0 && !l.Unsynced && !lyrics.IsCredit(l.Text) {
+							words = stageLineWords(lines, i)
+						}
+						if on && len(words) > 0 {
+							activeLine := l
+							activeLine.Words = words
+							karaokeText(c.Key("words"), activeLine, ui.Font{Family: c.Theme().Font, Size: 30, Weight: 800, LineHeight: 1.25},
 								white.Alpha(.38), white, pl.SongPosition, pl.Playing, c.Preferences().ReduceMotion)
 						} else {
 							ui.Text(c, l.Text).FontSize(30).FontWeight(800).LineHeight(1.25).LetterSpacing(-0.4).TextColor(white)
 						}
 						if l.Translation != "" {
-							ui.Text(c, l.Translation).FontSize(17).FontWeight(600).TextColor(white.Alpha(0.7))
+							if trWords := stageTranslationWords(lines, i, words); on && len(trWords) > 0 {
+								trLine := lyrics.Line{Text: l.Translation, At: l.At, End: l.End, Words: trWords}
+								karaokeText(c.Key("translation"), trLine, ui.Font{Family: c.Theme().Font, Size: 17, Weight: 600, LineHeight: 1.35},
+									white.Alpha(.34), white.Alpha(.88), pl.SongPosition, pl.Playing, c.Preferences().ReduceMotion)
+							} else {
+								ui.Text(c, l.Translation).FontSize(17).FontWeight(600).TextColor(white.Alpha(0.7))
+							}
 						}
 					})
 				})
@@ -452,6 +513,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 		if rows != nil {
 			// Where the heights known put it: it may not be built yet.
 			if box.H <= 0 {
+				c.AnimationFrame()
 				return // not laid out yet: the next frame scrolls
 			}
 			if cur >= 0 {
@@ -462,6 +524,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 			if lb := active.LayoutBounds(); lb.H > 0 && box.H > 0 {
 				target = lb.Y - box.Y + a.lyricScroll.Y - box.H*0.3
 			} else {
+				c.AnimationFrame()
 				return // not laid out yet: the next frame scrolls
 			}
 		}

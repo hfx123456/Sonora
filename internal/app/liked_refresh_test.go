@@ -86,3 +86,28 @@ func TestLikesOutliveListsAskedBefore(t *testing.T) {
 		t.Fatalf("a list from after: hearts %v, held %d", a.liked, len(a.liking))
 	}
 }
+
+func TestSignedInSameUserKeepsLikedHeartsFromCachedPlaylist(t *testing.T) {
+	defer func(old func(string) (*spotify.Playlist, error)) { playlistDetail = old }(playlistDetail)
+	done := make(chan struct{})
+	playlistDetail = func(id string) (*spotify.Playlist, error) {
+		defer close(done)
+		return nil, errors.New("offline")
+	}
+
+	a := newTestApp()
+	a.restored = true
+	a.playlistCacheRoot = t.TempDir()
+	a.profile = &spotify.Profile{UserID: "user1"}
+	a.playlists[spotify.LikedURI] = &spotify.Playlist{
+		ID:     spotify.LikedURI,
+		Tracks: []spotify.Track{{ID: "song1"}},
+	}
+	a.loadingPl[spotify.LikedURI] = true
+
+	a.signedIn(&spotify.Profile{UserID: "user1"})
+	<-done
+	if !a.liked["song1"] {
+		t.Fatalf("expected cached liked song heart to stay filled after signedIn(same), got %v", a.liked)
+	}
+}

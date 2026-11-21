@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"vinyl/internal/lyrics"
 )
 
 var qqKey = []byte("!@#)(*$%123ZXC!@!@#)(NHL")
@@ -107,18 +109,32 @@ func fetchNetEaseLyricsByID(ctx context.Context, client *http.Client, songID str
 	if json.Unmarshal(body, &parsed) != nil || parsed.Code != http.StatusOK || parsed.PureMusic {
 		return "", "", false
 	}
-	if yrc := strings.TrimSpace(parsed.Yrc.Lyric); yrc != "" {
+	yrc := strings.TrimSpace(parsed.Yrc.Lyric)
+	lrc := strings.TrimSpace(parsed.Lrc.Lyric)
+	if yrc != "" && (lrc == "" || hasSubstantiveYRC(yrc)) {
 		tr := strings.TrimSpace(parsed.Ytlrc.Lyric)
 		if tr == "" {
 			tr = strings.TrimSpace(parsed.Tlyric.Lyric)
 		}
 		return yrc, tr, true
 	}
-	lrc := strings.TrimSpace(parsed.Lrc.Lyric)
 	if lrc == "" {
 		return "", "", false
 	}
 	return lrc, strings.TrimSpace(parsed.Tlyric.Lyric), true
+}
+
+func hasSubstantiveYRC(yrc string) bool {
+	sung := 0
+	for _, line := range lyrics.Build("", "", yrc) {
+		if strings.TrimSpace(line.Text) != "" && !lyrics.IsCredit(line.Text) {
+			sung++
+			if sung >= 2 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var (

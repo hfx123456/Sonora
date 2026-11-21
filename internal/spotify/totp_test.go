@@ -78,7 +78,7 @@ func TestTokenQuery(t *testing.T) {
 	// The second step of the epoch: counter 1, whose code the RFC gives.
 	now := time.Unix(30, 0)
 	got := tokenQuery(key, 61, now, now.Add(3*time.Second))
-	const want = "reason=init&productType=web_player&totp=287082&totpServer=287082&totpVer=61"
+	const want = "reason=init&productType=web-player&totp=287082&totpServer=287082&totpVer=61"
 	if got != want {
 		t.Fatalf("query is %q, want %q", got, want)
 	}

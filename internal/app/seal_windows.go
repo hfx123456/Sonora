@@ -63,6 +63,9 @@ func seal(b []byte) ([]byte, error) {
 	r, _, err := procProtectData.Call(uintptr(unsafe.Pointer(in)), 0, uintptr(unsafe.Pointer(entropy)),
 		0, 0, cryptprotectUIForbidden, uintptr(unsafe.Pointer(&out)))
 	runtime.KeepAlive(b)
+	runtime.KeepAlive(in)
+	runtime.KeepAlive(entropy)
+	runtime.KeepAlive(&out)
 	if r == 0 {
 		return nil, fmt.Errorf("DPAPI: %w", err)
 	}
@@ -78,6 +81,10 @@ func unsealWith(b, key []byte) ([]byte, error) {
 	r, _, _ := procUnprotectData.Call(uintptr(unsafe.Pointer(in)), 0, uintptr(unsafe.Pointer(entropy)),
 		0, 0, cryptprotectUIForbidden, uintptr(unsafe.Pointer(&out)))
 	runtime.KeepAlive(b)
+	runtime.KeepAlive(key)
+	runtime.KeepAlive(in)
+	runtime.KeepAlive(entropy)
+	runtime.KeepAlive(&out)
 	if r == 0 {
 		return nil, errUnreadable
 	}

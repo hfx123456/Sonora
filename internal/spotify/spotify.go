@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,6 +69,7 @@ type Identity struct {
 	ClientToken string
 	Expires     time.Time
 	Anonymous   bool
+	Full        bool
 }
 
 // ParseIdentity reads what CaptureJS noted (window.__vinyl, as JSON). It
@@ -85,11 +87,15 @@ func ParseIdentity(s string) (Identity, bool) {
 	if json.Unmarshal([]byte(s), &v) != nil {
 		return Identity{}, false
 	}
-	id := Identity{ClientToken: v.ClientToken}
+	id := Identity{ClientToken: v.ClientToken, Full: true}
 	switch {
 	case v.Token != nil && v.Token.AccessToken != "":
 		id.Token, id.Anonymous = v.Token.AccessToken, v.Token.Anonymous
-		id.Expires = time.UnixMilli(v.Token.Expires)
+		if v.Token.Expires > 0 {
+			id.Expires = time.UnixMilli(v.Token.Expires)
+		} else {
+			id.Expires = time.Now().Add(45 * time.Minute)
+		}
 	case v.Bearer != "":
 		// Seen on a request only: its lifetime unknown, an hour at most.
 		id.Token, id.Expires = v.Bearer, time.Now().Add(45*time.Minute)
@@ -127,14 +133,25 @@ func RetryAfter(h http.Header) time.Duration {
 	return 0
 }
 
+type renewCall struct {
+	done chan struct{}
+	full bool
+	id   Identity
+	err  error
+}
+
 var (
 	idMu     sync.Mutex
 	current  Identity
-	renewing chan struct{} // closed once the renewal under way ends
-	renewErr error
+	idEpoch  uint64
+	renewing *renewCall
 	// Renew, set by the app, gets a fresh identity from the web player,
 	// blocking until it has one.
 	Renew func() (Identity, error)
+	// RenewFull, set by the app, gets a full-scope identity through the
+	// web player view when a cookie-only renewal lacks permissions (e.g.
+	// fetchLibraryTracks).
+	RenewFull func() (Identity, error)
 	// held is a token a renewal handed back with no more than renewAhead
 	// of it left. /api/token answers with the token it gave until that one
 	// runs out, so asking again sooner gets the same one again: it is used
@@ -148,8 +165,8 @@ var (
 	// another.
 	guest      Identity
 	guestMu    sync.Mutex
-	guestGoing chan struct{} // closed once the guest ask under way ends
-	guestErr   error
+	guestEpoch uint64
+	guestGoing *renewCall
 	// RenewGuest, set by the app if it wants browsing to work signed out,
 	// gets an anonymous identity, blocking until it has one.
 	RenewGuest func() (Identity, error)
@@ -173,40 +190,49 @@ func guestIdentity() (Identity, error) {
 		return g, ErrSignedOut
 	}
 	// One ask at a time; whoever else asks waits for it.
-	wait := guestGoing
-	if wait == nil {
-		wait = make(chan struct{})
-		guestGoing = wait
+	call := guestGoing
+	if call == nil {
+		call = &renewCall{done: make(chan struct{})}
+		guestGoing = call
+		startEpoch := guestEpoch
+		renewFn := RenewGuest
 		go func() {
-			next, err := RenewGuest()
+			next, err := renewFn()
 			guestMu.Lock()
-			if err == nil {
-				guest = next
+			if guestEpoch != startEpoch {
+				call.id, call.err = Identity{}, ErrSignedOut
+			} else {
+				if err == nil {
+					guest = next
+				}
+				call.id, call.err = next, err
 			}
-			guestErr, guestGoing = err, nil
+			if guestGoing == call {
+				guestGoing = nil
+			}
 			guestMu.Unlock()
-			close(wait)
+			close(call.done)
 		}()
 	}
 	guestMu.Unlock()
-	<-wait
-	guestMu.Lock()
-	defer guestMu.Unlock()
-	if guestErr != nil {
-		return guest, guestErr
+	<-call.done
+	if call.err != nil {
+		return Identity{}, call.err
 	}
-	if guest.Token == "" {
-		return guest, ErrSignedOut
+	if call.id.Token == "" {
+		return call.id, ErrSignedOut
 	}
-	return guest, nil
+	return call.id, nil
 }
 
 // SignOut forgets who was signed in and what browsing went as.
 func SignOut() {
 	idMu.Lock()
+	idEpoch++
 	current, held = Identity{}, ""
 	idMu.Unlock()
 	guestMu.Lock()
+	guestEpoch++
 	guest = Identity{}
 	guestMu.Unlock()
 }
@@ -214,7 +240,8 @@ func SignOut() {
 // SetIdentity makes id the one requests go as.
 func SetIdentity(id Identity) {
 	idMu.Lock()
-	current = id
+	idEpoch++
+	current, held = id, ""
 	idMu.Unlock()
 }
 
@@ -244,7 +271,37 @@ func identity(stale bool) (Identity, error) {
 		idMu.Unlock()
 		return id, nil
 	}
-	if Renew == nil {
+	return renewIdentityWith(Renew, false)
+}
+
+// renewFullIdentity obtains a full-scope identity via RenewFull (e.g. the
+// hidden web player view) when the current token lacks permissions.
+func renewFullIdentity() (Identity, error) {
+	idMu.Lock()
+	id := current
+	left := time.Until(id.Expires)
+	if id.Full && id.Token != "" && !id.Anonymous && left > renewAhead {
+		idMu.Unlock()
+		return id, nil
+	}
+	return renewIdentityWith(RenewFull, true)
+}
+
+// renewIdentityWith runs renewFn under idMu (already held), coalescing
+// concurrent calls.
+func renewIdentityWith(renewFn func() (Identity, error), markFull bool) (Identity, error) {
+	if markFull && renewing != nil && !renewing.full {
+		wait := renewing.done
+		idMu.Unlock()
+		<-wait
+		idMu.Lock()
+		if id := current; id.Full && id.Token != "" && !id.Anonymous && time.Until(id.Expires) > renewAhead {
+			idMu.Unlock()
+			return id, nil
+		}
+	}
+	id := current
+	if renewFn == nil {
 		idMu.Unlock()
 		if id.Token == "" || id.Anonymous {
 			return id, ErrSignedOut
@@ -252,35 +309,50 @@ func identity(stale bool) (Identity, error) {
 		return id, nil
 	}
 	// One renewal at a time; whoever else asks waits for it.
-	wait := renewing
-	if wait == nil {
-		wait = make(chan struct{})
-		renewing = wait
+	call := renewing
+	if call == nil {
+		call = &renewCall{done: make(chan struct{}), full: markFull}
+		renewing = call
+		startEpoch := idEpoch
 		go func() {
-			next, err := Renew()
-			idMu.Lock()
-			if err == nil {
-				current = next
-				if time.Until(next.Expires) <= renewAhead {
-					held = next.Token
-				}
+			next, err := renewFn()
+			if err == nil && markFull {
+				next.Full = true
 			}
-			renewErr, renewing = err, nil
+			idMu.Lock()
+			if idEpoch != startEpoch {
+				// SignOut or SetIdentity ran while renewal was in flight:
+				// never overwrite the newer state with a stale token.
+				if current.Token == "" || current.Anonymous {
+					call.id, call.err = Identity{}, ErrSignedOut
+				} else {
+					call.id, call.err = current, nil
+				}
+			} else {
+				if err == nil {
+					current = next
+					if time.Until(next.Expires) <= renewAhead {
+						held = next.Token
+					}
+				}
+				call.id, call.err = next, err
+			}
+			if renewing == call {
+				renewing = nil
+			}
 			idMu.Unlock()
-			close(wait)
+			close(call.done)
 		}()
 	}
 	idMu.Unlock()
-	<-wait
-	idMu.Lock()
-	defer idMu.Unlock()
-	if renewErr != nil {
-		return current, renewErr
+	<-call.done
+	if call.err != nil {
+		return Identity{}, call.err
 	}
-	if current.Anonymous || current.Token == "" {
-		return current, ErrSignedOut
+	if call.id.Anonymous || call.id.Token == "" {
+		return call.id, ErrSignedOut
 	}
-	return current, nil
+	return call.id, nil
 }
 
 // do sends the request build makes as the web player, renewing the
@@ -388,6 +460,8 @@ var ops = map[string]string{
 	"searchPodcasts":                     "0195d9f61b43606d490bca64c3456e3593528cea6cc05c7e822c7c42beed0f4e",
 }
 
+var errNotAuthorized = errors.New("spotify: user is not authorized")
+
 // query runs the web player's GraphQL operation op with vars, decoding its
 // data into out: again, once, if the service no longer knew the query, and
 // the web player's scripts say another hash.
@@ -396,6 +470,16 @@ func query(op string, vars map[string]any, out any) error {
 	err := queryAs(op, h, vars, out)
 	if errors.Is(err, errStaleQuery) && refreshOps(op, h) {
 		err = queryAs(op, opHash(op), vars, out)
+	}
+	if op == "fetchLibraryTracks" && errors.Is(err, errNotAuthorized) && RenewFull != nil {
+		idMu.Lock()
+		alreadyFull := current.Full
+		idMu.Unlock()
+		if !alreadyFull {
+			if _, rerr := renewFullIdentity(); rerr == nil {
+				err = queryAs(op, opHash(op), vars, out)
+			}
+		}
 	}
 	return err
 }
@@ -430,13 +514,28 @@ func queryAs(op, h string, vars map[string]any, out any) error {
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}
-	if len(res.Errors) > 0 && (len(res.Data) == 0 || string(res.Data) == "null") {
-		if strings.Contains(res.Errors[0].Message, "PersistedQueryNotFound") {
-			return fmt.Errorf("%s: %w", op, errStaleQuery)
+	if len(res.Errors) > 0 {
+		for _, e := range res.Errors {
+			if strings.Contains(e.Message, "PersistedQueryNotFound") {
+				return fmt.Errorf("%s: %w", op, errStaleQuery)
+			}
 		}
-		return fmt.Errorf("%s: %s", op, res.Errors[0].Message)
+		if len(res.Data) == 0 || string(res.Data) == "null" {
+			return fmt.Errorf("%s: %s", op, res.Errors[0].Message)
+		}
 	}
-	return json.Unmarshal(res.Data, out)
+	if err := json.Unmarshal(res.Data, out); err != nil {
+		return err
+	}
+	if op == "fetchLibraryTracks" && len(res.Errors) > 0 {
+		log.Printf("spotify: %s errors (data=%s): %s", op, snippet(res.Data), res.Errors[0].Message)
+		for _, e := range res.Errors {
+			if strings.Contains(strings.ToLower(e.Message), "not authorized") {
+				return fmt.Errorf("%s: %w", op, errNotAuthorized)
+			}
+		}
+	}
+	return nil
 }
 
 // spGet gets path from spclient, as the web player does.
@@ -468,5 +567,5 @@ func Fetch(url string) ([]byte, error) {
 	if res.StatusCode != http.StatusOK {
 		return nil, errors.New(res.Status)
 	}
-	return io.ReadAll(res.Body)
+	return io.ReadAll(io.LimitReader(res.Body, 20<<20))
 }

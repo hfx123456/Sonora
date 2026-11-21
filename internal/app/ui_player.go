@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"vinyl/internal/player"
+	"vinyl/internal/spotify"
 )
 
 // scrubState is a progress bar's own: the value dragged, while it is, and
@@ -17,7 +18,8 @@ type scrubState struct {
 	// held is set while the pointer pressed on the bar is down, wherever
 	// it has gone since: Pressed is false off the bar, which is thin.
 	held   bool
-	active bool // dragged since the last frame, to seek once let go
+	active bool           // dragged since the last frame, to seek once let go
+	track  *spotify.Track // the track on which the drag began
 	level  barState
 }
 
@@ -28,7 +30,7 @@ func secs(s float64) time.Duration { return time.Duration(s * float64(time.Secon
 // smoke color, the bar is a comet while music plays: what has played is a
 // streak brightening to the playhead, which glows and trails smoke that
 // rises and fades, thicker as the music is louder.
-func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, height float32, smoke ui.Color) ui.Element {
+func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, height float32, smoke ui.Color, surface ui.Material) ui.Element {
 	pl := a.pl
 	dur := pl.Duration().Seconds()
 	if !st.active && !st.held {
@@ -38,11 +40,17 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 	// The press and its release come to the bar wherever the pointer is,
 	// and go on to the slider, which follows the pointer.
 	s.HandleInput(func(ev ui.InputEvent) bool {
+		if ev.Button != 0 {
+			return false
+		}
 		switch ev.Kind {
 		case ui.InputPointerDown:
-			st.held = ev.Button == 0
+			st.held, st.track = true, pl.Current()
 		case ui.InputPointerUp:
 			st.held = false
+			if ev.Canceled {
+				st.active, st.track = false, nil
+			}
 		}
 		return false
 	})
@@ -52,13 +60,17 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 		st.active = true
 	case st.active:
 		// Let go: there, but not right at the end, which would end the
-		// song as it begins to play.
+		// song as it begins to play. A new track has its own playhead.
 		st.active = false
-		pl.Seek(secs(min(st.v, max(0, dur-1))))
+		if st.track != nil && st.track == pl.Current() {
+			pl.Seek(secs(min(st.v, max(0, dur-1))))
+		}
+		st.track = nil
 	case s.Changed():
 		pl.Seek(secs(min(st.v, max(0, dur-1))))
 	}
-	hot := s.Hovered() || pressed
+	scrubbing := pressed && st.track == pl.Current()
+	hot := s.Hovered() || scrubbing
 	thick := float32(4)
 	if hot {
 		thick = 6
@@ -71,13 +83,13 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 	knob = s.AnimateTo("knob", knob, ui.Snappy)
 	// The smoke settles away as the music pauses, and while dragging.
 	smoking := float32(0)
-	if smoke.A > 0 && a.settings.Smoke && pl.Playing() && !pl.Loading() && !st.active {
+	if smoke.A > 0 && a.settings.Smoke && pl.Playing() && !pl.Loading() && !scrubbing {
 		smoking = 1
 	}
 	smoking = s.AnimateTo("smoke", smoking, ui.Animation{Duration: 600 * time.Millisecond})
 	s.Draw(func(p *ui.Painter, r ui.Rect) {
 		at := st.v
-		if !st.active {
+		if !scrubbing {
 			at = pl.Position().Seconds()
 		}
 		frac := float32(0)
@@ -86,9 +98,17 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 		}
 		y := r.Y + (r.H-thick)/2
 		head, cy := r.X+r.W*frac, r.Y+r.H/2
-		p.Fill(ui.Rect{X: r.X, Y: y, W: r.W, H: thick}, track, thick/2)
+		rail := ui.Rect{X: r.X, Y: y, W: r.W, H: thick}
+		radius := thick / 2
+		if surface == nil {
+			p.Fill(rail, track, radius)
+		} else {
+			surface.PaintMaterial(p, rail, [4]float32{radius, radius, radius, radius})
+			p.Stroke(rail, white.Alpha(.20), radius, 1)
+		}
 		played := ui.Rect{X: r.X, Y: y, W: max(thick, head-r.X), H: thick}
-		if smoking > 0.01 {
+		switch {
+		case smoking > 0.01:
 			// A streak of light, brightest at the head.
 			p.FillGradient(played, ui.LinearGradient{Angle: 90, Oklab: true,
 				From: fill.Mix(smoke, smoking).Alpha(0.3), To: fill.Mix(smoke, 0.8*smoking)}, thick/2)
@@ -101,8 +121,10 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 			p.Shadow(ui.Rect{X: head, Y: cy}, 0, 0, 0, glow, 2.5+2.5*bass, smoke.Alpha(0.95*smoking))
 			core := thick * (1 + 0.25*bass)
 			p.Fill(ui.Rect{X: head - core/2, Y: cy - core/2, W: core, H: core}, white.Mix(smoke, 0.15).Alpha(smoking), core/2)
-		} else {
-			p.Fill(played, fill, thick/2)
+		case surface != nil:
+			p.FillGradient(played, ui.LinearGradient{Angle: 180, From: white.Alpha(.88), To: fill.Alpha(.66)}, radius)
+		default:
+			p.Fill(played, fill, radius)
 		}
 		if knob > 0.01 {
 			k := 12 * knob
@@ -115,7 +137,7 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 			// a second, which show it smooth for a quarter of what a 120 Hz
 			// display would draw.
 			p.After(time.Second / 30)
-		case pl.Playing() && !st.active && dur > 0:
+		case pl.Playing() && !scrubbing && dur > 0:
 			// Again when the fill has moved a pixel of the screen, which
 			// takes a good part of a second, rather than every frame.
 			perPixel := dur / float64(r.W*p.Scale())
@@ -325,6 +347,7 @@ func (a *app) applySavedPlaybackModes() {
 func (a *app) setShuffleMode(mode player.ShuffleMode) {
 	a.pl.SetShuffleMode(mode)
 	a.settings.ShuffleMode = int(a.pl.ShuffleMode())
+	a.settings.PlaybackModesSaved = true
 	a.settings.save()
 	a.keepSession()
 }
@@ -341,6 +364,7 @@ func (a *app) cycleShuffle() {
 	}
 	mode := a.pl.CycleShuffle()
 	a.settings.ShuffleMode = int(mode)
+	a.settings.PlaybackModesSaved = true
 	a.settings.save()
 	a.keepSession()
 }
@@ -348,6 +372,7 @@ func (a *app) cycleShuffle() {
 func (a *app) cycleRepeat() {
 	a.pl.CycleRepeat()
 	a.settings.RepeatMode = int(a.pl.Repeat())
+	a.settings.PlaybackModesSaved = true
 	a.settings.save()
 	a.keepSession()
 }
@@ -461,7 +486,7 @@ func (a *app) playerBar(c *ui.Context) {
 			a.transport(c, p.text, p.muted, p.accent, 18)
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Margin(-4, 0, 0, 0).Children(func() {
 				ui.Text(c, clock(pl.Position())).FontSize(11).FontFeatures("tnum").TextColor(p.muted).Width(34).TextAlign(ui.End)
-				a.scrubber(c.Key("bar-scrub"), &a.barScrub, p.press, p.text.Alpha(0.75), 14, p.accent).Grow(1)
+				a.scrubber(c.Key("bar-scrub"), &a.barScrub, p.press, p.text.Alpha(0.75), 14, p.accent, nil).Grow(1)
 				ui.Text(c, clock(pl.Duration())).FontSize(11).FontFeatures("tnum").TextColor(p.muted).Width(34)
 			})
 		})

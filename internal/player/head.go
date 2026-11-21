@@ -2,6 +2,7 @@ package player
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -108,7 +109,11 @@ func (w *Web) Prefetch(m *spotify.Media) {
 		wg.Add(1)
 		go func(p headPart) {
 			defer wg.Done()
-			req, err := http.NewRequest(http.MethodGet, source, nil)
+			reqCtx := w.ctx
+			if reqCtx == nil {
+				reqCtx = context.Background()
+			}
+			req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, source, nil)
 			if err != nil {
 				ok.Store(false)
 				return
@@ -120,7 +125,9 @@ func (w *Web) Prefetch(m *spotify.Media) {
 				return
 			}
 			defer res.Body.Close()
-			if res.StatusCode != http.StatusPartialContent && res.StatusCode != http.StatusOK {
+			// Never accept 200 OK for a non-zero offset range request: its body
+			// starts at byte 0 and would corrupt data[p.from:].
+			if res.StatusCode != http.StatusPartialContent && !(res.StatusCode == http.StatusOK && p.from == 0 && len(parts) == 1) {
 				ok.Store(false)
 				return
 			}

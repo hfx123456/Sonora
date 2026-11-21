@@ -67,13 +67,20 @@ func (c *Connect) requestOnce(ctx context.Context, method, path, connection stri
 	if err != nil {
 		return nil, errors.New("Connect: 请重新登录")
 	}
+	return c.requestWithIdentity(ctx, id, method, path, connection, body, renew)
+}
+
+func (c *Connect) requestWithIdentity(ctx context.Context, id Identity, method, path, connection string, body any, renew bool) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, method, "https://"+c.host+path, bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(reqCtx, method, "https://"+c.host+path, bytes.NewReader(raw))
 	if err != nil {
 		return nil, errors.New("Connect: 请求地址无效")
 	}
@@ -97,10 +104,11 @@ func (c *Connect) requestOnce(ctx context.Context, method, path, connection stri
 		return nil, err
 	}
 	if res.StatusCode == http.StatusUnauthorized && renew {
-		if _, err := RenewedIdentity(); err != nil {
+		next, err := RenewedIdentity()
+		if err != nil {
 			return nil, errors.New("Connect: 身份刷新失败，请重新登录")
 		}
-		return c.requestOnce(ctx, method, path, connection, body, false)
+		return c.requestWithIdentity(ctx, next, method, path, connection, body, false)
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		turned := &ConnectError{Path: path, Status: res.StatusCode}
@@ -119,7 +127,11 @@ func (c *Connect) requestOnce(ctx context.Context, method, path, connection stri
 func (c *Connect) loop(receiver bool) {
 	delay := time.Second
 	for c.ctx.Err() == nil {
+		started := time.Now()
 		err := c.session(receiver)
+		if time.Since(started) > 30*time.Second {
+			delay = time.Second
+		}
 		kind := "observer_offline"
 		if receiver {
 			kind = "receiver_offline"
@@ -144,8 +156,11 @@ func (c *Connect) session(receiver bool) error {
 	ctx, cancel := context.WithCancel(c.ctx)
 	defer cancel()
 	address := "wss://dealer.spotify.com/?access_token=" + url.QueryEscape(id.Token)
-	conn, _, err := websocket.Dial(ctx, address, &websocket.DialOptions{HTTPClient: Client, HTTPHeader: http.Header{"User-Agent": {UserAgent}}})
+	conn, res, err := websocket.Dial(ctx, address, &websocket.DialOptions{HTTPClient: Client, HTTPHeader: http.Header{"User-Agent": {UserAgent}}})
 	if err != nil {
+		if res != nil && res.StatusCode == http.StatusUnauthorized {
+			_, _ = RenewedIdentity()
+		}
 		return errors.New("Connect: Dealer 连接失败")
 	}
 	defer conn.CloseNow()
@@ -177,9 +192,9 @@ func (c *Connect) session(receiver bool) error {
 		cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
 		defer stop()
 		if receiver {
-			_, _ = c.request(cleanup, http.MethodDelete, "/track-playback/v1/devices/"+c.ID, "", map[string]any{"debug_source": "deregister"})
+			_, _ = c.requestWithIdentity(cleanup, id, http.MethodDelete, "/track-playback/v1/devices/"+c.ID, "", map[string]any{"debug_source": "deregister"}, false)
 		} else {
-			_, _ = c.request(cleanup, http.MethodDelete, "/connect-state/v1/devices/"+c.ID+"-observer", connection, nil)
+			_, _ = c.requestWithIdentity(cleanup, id, http.MethodDelete, "/connect-state/v1/devices/"+c.ID+"-observer", connection, nil, false)
 		}
 	}()
 	for {

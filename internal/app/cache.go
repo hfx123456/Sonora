@@ -42,9 +42,16 @@ func (a *app) partCache() *player.Cache {
 func (a *app) applyCacheLimit() {
 	if cache := a.partCache(); cache != nil {
 		limit := int64(a.settings.CacheMB) << 20
+		a.cacheMeasureGen++
+		gen := a.cacheMeasureGen
 		go func() {
 			cache.SetLimit(limit)
-			a.measureCache()
+			n := cache.Size()
+			a.post(func() {
+				if a.cacheMeasureGen == gen {
+					a.cacheUsed = n
+				}
+			})
 		}()
 	}
 }
@@ -56,18 +63,31 @@ func (a *app) measureCache() {
 	if cache == nil {
 		return
 	}
+	a.cacheMeasureGen++
+	gen := a.cacheMeasureGen
 	go func() {
 		n := cache.Size()
-		a.post(func() { a.cacheUsed = n })
+		a.post(func() {
+			if a.cacheMeasureGen == gen {
+				a.cacheUsed = n
+			}
+		})
 	}()
 }
 
 func (a *app) clearCache() {
 	if cache := a.partCache(); cache != nil {
+		a.cacheMeasureGen++
+		gen := a.cacheMeasureGen
 		a.cacheUsed = 0
 		go func() {
 			cache.Clear()
-			a.measureCache()
+			n := cache.Size()
+			a.post(func() {
+				if a.cacheMeasureGen == gen {
+					a.cacheUsed = n
+				}
+			})
 		}()
 	}
 }

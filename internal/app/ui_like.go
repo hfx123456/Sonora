@@ -20,6 +20,15 @@ var likedIDs = spotify.LikedIDs
 // loadLiked loads the listener's liked songs.
 func (a *app) loadLiked(uid string) {
 	if a.playlistCacheRoot != "" && a.profile != nil && a.profile.UserID == uid {
+		if pl := a.playlists[spotify.LikedURI]; pl != nil {
+			ids := make([]string, len(pl.Tracks))
+			for i, t := range pl.Tracks {
+				ids[i] = t.ID
+			}
+			a.likedFrom(ids, time.Now())
+			a.requestPlaylist(spotify.LikedURI, false, true)
+			return
+		}
 		a.loadPlaylist(spotify.LikedURI, false)
 		return
 	}
@@ -67,7 +76,7 @@ func (a *app) likedFrom(ids []string, asked time.Time) {
 // Spotify, which may refuse: the heart goes back then. Signed out, it asks
 // the listener to sign in.
 func (a *app) toggleLike(tr *spotify.Track) {
-	if tr.Local() {
+	if tr.Local() || tr.Episode {
 		return
 	}
 	if a.profile == nil {
@@ -115,7 +124,7 @@ func (a *app) toggleLike(tr *spotify.Track) {
 // (⌘D), which shows no heart: a toast says which it did.
 func (a *app) likeCurrent() {
 	tr := a.pl.Current()
-	if tr == nil {
+	if tr == nil || tr.Local() || tr.Episode {
 		return
 	}
 	a.toggleLike(tr)

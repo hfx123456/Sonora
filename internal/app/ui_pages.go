@@ -69,7 +69,11 @@ func (a *app) chartsPage(c *ui.Context) {
 		return
 	}
 	top, bottom := a.insets(c)
-	ui.Scroll(c.Key("charts")).TrackScroll(&a.pageScroll).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0).Children(func() {
+	scroll := ui.Scroll(c.Key("charts")).TrackScroll(&a.pageScroll).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0)
+	if !a.glassEnabled() {
+		a.pageWash(c, scroll, top, a.pageTint(pageCharts))
+	}
+	scroll.Children(func() {
 		a.startMark(c)
 		defer a.endMark(c)
 		a.heading(c, "排行榜", "Spotify 官方榜单")
@@ -81,32 +85,44 @@ func (a *app) chartsPage(c *ui.Context) {
 			return
 		}
 		official := a.charts[:min(4, len(a.charts))]
-		cols := min(4, max(2, a.columns(c, 260)))
-		ui.Grid(c).Columns(cols).Gap(20).Children(func() {
+		cols := a.officialChartColumns(c, len(official))
+		var hoveredTint, fallbackTint ui.Color
+		ui.Grid(c).Columns(cols).Gap(8).Margin(0, -12, 0, -12).Children(func() {
 			for i := range official {
-				a.chartCard(c.Key(official[i].ID), &official[i])
+				t, hov := a.chartCard(c.Key(official[i].ID), &official[i])
+				if hov && t != (ui.Color{}) {
+					hoveredTint = t
+				}
+				if i == 0 && fallbackTint == (ui.Color{}) {
+					fallbackTint = t
+				}
 			}
 		})
 		if len(a.charts) > 4 {
 			a.section(c, "全部榜单")
 			rest := a.charts[4:]
-			ui.Grid(c).Columns(a.columns(c, 150)).GapX(20).GapY(28).Children(func() {
+			ui.Grid(c).Columns(a.columns(c, 150)).GapX(0).GapY(12).Margin(0, -10, 0, -10).Children(func() {
 				for i := range rest {
-					a.playlistCard(c.Key(rest[i].ID), &rest[i])
+					if t, hov := a.playlistCard(c.Key(rest[i].ID), &rest[i]); hov && t != (ui.Color{}) {
+						hoveredTint = t
+					}
 				}
 			})
 		}
+		a.setPageTint(c, pageCharts, cmp.Or(hoveredTint, fallbackTint))
 	})
 }
 
 // playlistCard is a square cover with the playlist's name below: it lifts
 // under the pointer, where a play button shows on it.
-func (a *app) playlistCard(c *ui.Context, pl *spotify.Playlist) {
+func (a *app) playlistCard(c *ui.Context, pl *spotify.Playlist) (ui.Color, bool) {
 	p := a.pal
 	// Justify(Start) resets ButtonBase's centering, which in a grid pushes
 	// the cover down beside a taller card.
-	card := ui.ButtonBase(c).Column().Gap(10).AlignItems(ui.Stretch).Justify(ui.Start).FocusRing(false).Label(pl.Name)
+	card := ui.ButtonBase(c).Column().Gap(10).Padding(10).AlignItems(ui.Stretch).Justify(ui.Start).FocusRing(false).Label(pl.Name)
 	hovered := card.Hovered()
+	a.styleBorderlessCard(card, 12, hovered)
+	var tint ui.Color
 	card.Children(func() {
 		art := ui.Box(c).AspectRatio(1).Radius(10)
 		lift := ui.Pose{}
@@ -118,7 +134,7 @@ func (a *app) playlistCard(c *ui.Context, pl *spotify.Playlist) {
 		}
 		art.AnimatePose(lift, ui.Snappy)
 		art.Children(func() {
-			a.listArt(c, pl, 400, 10)
+			tint = a.listArt(c, pl, 400, 10)
 			a.coverPlayButton(c, pl.ID, hovered)
 		})
 		ui.Text(c, pl.Name).FontSize(13).FontWeight(500).MaxLines(2).LineHeight(1.35)
@@ -129,6 +145,7 @@ func (a *app) playlistCard(c *ui.Context, pl *spotify.Playlist) {
 	if card.Clicked() {
 		a.goTo(route{page: pagePlaylist, playlist: pl.ID})
 	}
+	return tint, hovered
 }
 
 // coverFill fills its parent with a cover, its corners rounded by radius.
@@ -145,13 +162,15 @@ func (a *app) coverFill(c *ui.Context, url string, px int, radius float32) {
 }
 
 // listArt fills its parent with pl's cover, the liked songs' drawn as
-// everywhere else.
-func (a *app) listArt(c *ui.Context, pl *spotify.Playlist, px int, radius float32) {
+// everywhere else, and returns the cover's tint once loaded.
+func (a *app) listArt(c *ui.Context, pl *spotify.Playlist, px int, radius float32) ui.Color {
 	if pl.Liked() {
 		likedArt(c, radius, float32(px)/6)
-		return
+		return ui.Hex("#5038a0")
 	}
-	a.coverFill(c, pl.Cover(), px, radius)
+	url := pl.Cover()
+	a.coverFill(c, url, px, radius)
+	return a.coverTint(url, px)
 }
 
 // coverPlayButton plays a playlist from its card, without opening it.
@@ -173,19 +192,24 @@ func (a *app) coverPlayButton(c *ui.Context, id string, shown bool) {
 	}
 }
 
-// chartCard shows a chart with its top three songs beside its cover.
-func (a *app) chartCard(c *ui.Context, pl *spotify.Playlist) {
-	p := a.pal
-	card := ui.ButtonBase(c).Gap(14).Padding(12).Radius(14).AlignItems(ui.Center).FocusRing(false).Label(pl.Name)
-	hovered := card.Hovered()
-	bg := p.hover
-	if hovered {
-		bg = p.press
+func (a *app) officialChartColumns(c *ui.Context, n int) int {
+	cols := min(4, max(2, a.columns(c, 260)))
+	if n == 4 && cols == 3 {
+		return 2
 	}
-	card.Background(card.AnimateColor("bg", bg, ui.Animation{Duration: 140 * time.Millisecond}))
+	return cols
+}
+
+// chartCard shows a chart with its top three songs beside its cover.
+func (a *app) chartCard(c *ui.Context, pl *spotify.Playlist) (ui.Color, bool) {
+	p := a.pal
+	card := ui.ButtonBase(c).Gap(14).Padding(12).AlignItems(ui.Center).FocusRing(false).Label(pl.Name)
+	hovered := card.Hovered()
+	a.styleBorderlessCard(card, 14, hovered)
+	cover := pl.Cover()
 	card.Children(func() {
 		ui.Box(c).Size(84, 84).Radius(9).Shadow(0, 3, 10, -2, p.cardShade).Children(func() {
-			a.coverFill(c, pl.Cover(), 200, 9)
+			a.coverFill(c, cover, 200, 9)
 		})
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(5).Children(func() {
 			ui.Text(c, pl.Name).FontSize(14).FontWeight(700).SingleLine()
@@ -203,6 +227,7 @@ func (a *app) chartCard(c *ui.Context, pl *spotify.Playlist) {
 	if card.Clicked() {
 		a.open(route{page: pagePlaylist, playlist: pl.ID})
 	}
+	return a.coverTint(cover, 200), hovered
 }
 
 func (a *app) playlistPage(c *ui.Context) {
@@ -222,34 +247,22 @@ func (a *app) playlistPage(c *ui.Context) {
 	if a.playlistHeaderHeights == nil {
 		a.playlistHeaderHeights = map[string]float32{}
 	}
-	a.trackRows(c, tracks, false, func(c *ui.Context) {
+	list := a.trackRows(c, tracks, false, func(c *ui.Context) {
 		header := ui.Column(c.Key("playlist-hero")).Children(func() { a.playlistHeader(c, pl) })
-		if height := header.LayoutBounds().H; height > 0 {
+		if height := header.LayoutBounds().H; height > 0 && height != a.playlistHeaderHeights[id] {
 			a.playlistHeaderHeights[id] = height
+			c.AnimationFrame()
 		}
 		ui.Box(c.Key("playlist-search-space")).Height(playlistToolbarHeight)
 		if len(tracks) == 0 && strings.TrimSpace(a.playlistQueries[id]) != "" {
 			ui.Text(c, "此歌单中没有匹配的歌曲").FontSize(14).TextColor(a.pal.muted).Padding(30, 12)
 		}
 	}, nil)
-	top, _ := a.insets(c)
 	headerHeight := a.playlistHeaderHeights[id]
 	if headerHeight <= 0 {
 		headerHeight = playlistCoverSize + playlistHeaderGap
 	}
-	offset, headerVisible := a.trackHeaderOffset()
-	if !headerVisible {
-		offset = headerHeight
-	}
-	searchTop := top + pageGap + max(0, headerHeight-offset)
-	bar := ui.Column(c.Key("playlist-search-toolbar")).Absolute().Top(searchTop).Left(0).Right(0).Height(playlistToolbarHeight).PaddingX(pagePad - 12)
-	// The sticky controls cover the rows scrolling beneath them, including
-	// in glass mode, so text from two rows never competes for attention.
-	if offset >= headerHeight {
-		ui.Box(c.Key("playlist-top-cover")).Absolute().Top(0).Left(0).Right(0).Height(top + pageGap).Background(a.pal.bg)
-		bar.Background(a.pal.bg)
-	}
-	bar.Children(func() {
+	a.pinTrackToolbar(c, list, "playlist-search-toolbar", headerHeight, func() {
 		ui.Box(c).PaddingX(12).Children(func() { a.playlistSearch(c, pl) })
 		a.playlistColumns(c, pl)
 	})
@@ -303,24 +316,16 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 				if pillButton(c.Key("play"), iconPlay, "播放", p.accent, p.onAccent).Clicked() {
 					a.playFrom(spotify.HomeItem{List: pl}, tracks, firstPlayable(tracks))
 				}
-				shuffle := pillButton(c.Key("shuffle"), iconShuffle, "随机播放", p.hover.Over(p.bg), p.text)
-				if a.glassEnabled() {
-					shuffle.Material(a.liquidGlass(true, ui.Color{}))
-				}
-				if shuffle.Clicked() {
+				if a.secondaryPillButton(c.Key("shuffle"), iconShuffle, "随机播放").Clicked() {
 					a.enableShuffle()
-					a.playFrom(spotify.HomeItem{List: pl}, tracks, firstPlayable(tracks))
+					a.playFrom(spotify.HomeItem{List: pl}, tracks, randomPlayable(tracks))
 				}
 				if a.profile != nil && !pl.Liked() && a.editable(pl.ID) == nil {
 					icon, label := iconPlus, "收藏"
 					if a.isSaved(pl.ID) {
 						icon, label = iconCheck, "已收藏"
 					}
-					save := pillButton(c.Key("save"), icon, label, p.hover.Over(p.bg), p.text)
-					if a.glassEnabled() {
-						save.Material(a.liquidGlass(true, ui.Color{}))
-					}
-					if save.Clicked() {
+					if a.secondaryPillButton(c.Key("save"), icon, label).Clicked() {
 						a.toggleSaved(pl)
 					}
 				}
@@ -369,9 +374,14 @@ func (a *app) searchPage(c *ui.Context) {
 			title := func(s string) {
 				ui.Text(c, s).FontSize(19).FontWeight(700).LetterSpacing(-0.3).Margin(4, 0, 14, 0)
 			}
+			var hoveredTint, fallbackTint ui.Color
 			if len(a.found) > 0 {
 				title("艺人")
-				a.artistRow(c, a.found)
+				if t, hov := a.artistRow(c, a.found); hov {
+					hoveredTint = cmp.Or(t, hoveredTint)
+				} else if fallbackTint == (ui.Color{}) {
+					fallbackTint = t
+				}
 				ui.Box(c).Height(26)
 			}
 			// A row of each, the best: the rest a search more precise finds.
@@ -384,12 +394,19 @@ func (a *app) searchPage(c *ui.Context) {
 					continue
 				}
 				title(s.name)
-				ui.Grid(c.Key(s.name)).Columns(cols).GapX(20).Margin(0, 0, 26, 0).Children(func() {
+				ui.Grid(c.Key(s.name)).Columns(cols).GapX(0).GapY(8).Margin(0, -10, 26, -10).Children(func() {
 					for i := range s.lists[:min(len(s.lists), cols)] {
-						a.playlistCard(c.Key(s.lists[i].ID), &s.lists[i])
+						t, hov := a.playlistCard(c.Key(s.lists[i].ID), &s.lists[i])
+						if hov && t != (ui.Color{}) {
+							hoveredTint = t
+						}
+						if i == 0 && fallbackTint == (ui.Color{}) {
+							fallbackTint = t
+						}
 					}
 				})
 			}
+			a.setPageTint(c, pageSearch, cmp.Or(hoveredTint, fallbackTint))
 			ui.Text(c, "歌曲").FontSize(19).FontWeight(700).LetterSpacing(-0.3).Margin(4, 0, 6, 0)
 		})
 	}, nil)
@@ -397,7 +414,7 @@ func (a *app) searchPage(c *ui.Context) {
 
 // trackRows lists tracks under a header, and over a footer if any, which
 // scroll with them; a click plays the list from the track clicked.
-func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, header, footer func(c *ui.Context)) {
+func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, header, footer func(c *ui.Context)) ui.Element {
 	p := a.pal
 	cur := a.pl.Current()
 	w, _ := c.Size()
@@ -421,7 +438,7 @@ func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, head
 	if footer != nil {
 		n++
 	}
-	list := ui.List(c.Key(a.route), &a.trackList, n, func(i int) {
+	return ui.List(c.Key(a.route), &a.trackList, n, func(i int) {
 		if i == 0 {
 			ui.Column(c).Children(func() {
 				a.startMark(c)
@@ -484,7 +501,11 @@ func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, head
 						}
 						ui.Text(c, label).FontSize(9).FontWeight(800).TextColor(p.accent).Padding(0, 4).Radius(3).Border(1, p.accent.Alpha(0.6))
 					} else if tr.Video && a.mvTag(c.Key("mv"), tr).Clicked() {
-						a.playMV(a.routeItem(), tracks, i)
+						if pid != "" && strings.TrimSpace(a.playlistQueries[pid]) != "" {
+							a.playPlaylistMVMatch(pid, *tr)
+						} else {
+							a.playMV(a.routeItem(), tracks, i)
+						}
 					}
 					a.artistLinks(c.Key("by"), tr.Artists, 12.5, p.muted, p.text)
 				})
@@ -524,7 +545,6 @@ func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, head
 			}
 		}
 	}).Grow(1).Padding(top+pageGap, pagePad-12, bottom+32, pagePad-12).ScrollbarInsets(top, 0, bottom, 0)
-	_ = list
 }
 
 func (a *app) trackHeaderOffset() (offset float32, visible bool) {

@@ -323,7 +323,7 @@ func (a *app) mvStage(c *ui.Context, tr *spotify.Track, art *artwork, accent ui.
 			}
 		})
 	})
-	reveal(foot, shown).Children(func() { a.stageBar(c, tr, art, accent) })
+	reveal(foot, shown).Children(func() { a.mvTransportBar(c, tr, art, accent) })
 }
 
 // mvQueueWidth is how wide the queue beside a music video filling Now

@@ -150,6 +150,9 @@ func withResponseSource(raw []byte, source string) []byte {
 }
 
 func runBridgeProcess(ctx context.Context, executable string, request Request) ([]byte, Result, error) {
+	if strings.HasPrefix(strings.ToLower(request.Proxy), "socks5h://") {
+		request.Proxy = "socks5://" + request.Proxy[len("socks5h://"):]
+	}
 	data, err := json.Marshal(request)
 	if err != nil {
 		return nil, Result{}, err
@@ -229,10 +232,8 @@ func betterResult(cand, cur Result) bool {
 }
 
 func reusableCache(path string, result Result) bool {
-	for _, line := range result.Lines {
-		if !line.Unsynced {
-			return true
-		}
+	if !needsAlternateTitle(result, nil) {
+		return true
 	}
 	info, err := os.Stat(path)
 	return err == nil && time.Since(info.ModTime()) < 10*time.Minute

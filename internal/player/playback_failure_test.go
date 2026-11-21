@@ -1,13 +1,62 @@
 package player
 
 import (
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"vinyl/internal/spotify"
 )
+
+// A temporary certificate gateway error used to reach the audio page before a successful retry.
+func TestCertificateRequestRecoversFromBadGateway(t *testing.T) {
+	attempts := 0
+	req := httptest.NewRequest(http.MethodGet, "https://example.test/application-certificate", nil)
+	res, err := requestCertificate(req, func(*http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("certificate"))}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK || attempts != 2 {
+		t.Fatalf("certificate response %d after %d attempts", res.StatusCode, attempts)
+	}
+}
+
+// An exhausted certificate request keeps the audio page and retries the same song once.
+func TestCertificateFailureRetriesSameTrack(t *testing.T) {
+	ch, p, waits := licensed(t, func(http.ResponseWriter, *http.Request) {})
+	web := p.Web
+	p.out.Seek(12 * time.Second)
+	report := func(gen string) {
+		t.Helper()
+		page(p, http.MethodPost, "/event", `{"gen":`+gen+`,"type":"error","msg":"keySystemError keySystemServerCertificateRequestFailed"}`)
+		next(t, ch)
+	}
+	report("1")
+	if len(*waits) != 1 || p.Web != web || !p.Playing() || p.Current().ID != "1" || p.Position() != 12*time.Second {
+		t.Fatal("certificate failure lost the active page, song, or position")
+	}
+	(*waits)[0]()
+	next(t, ch)
+	next(t, ch)
+	if p.out == nil || p.Current().ID != "1" || p.Position() != 12*time.Second {
+		t.Fatal("retry did not reopen the song at its saved position")
+	}
+	report("2")
+	if len(*waits) != 1 || p.Web != web || p.Playing() || p.Current().ID != "1" || p.Position() != 12*time.Second {
+		t.Fatal("persistent failure restarted the page, advanced the queue, or lost the position")
+	}
+}
 
 // A page that never becomes ready must release playback so the same song can be retried.
 func TestAudioPageStartupTimeout(t *testing.T) {
@@ -99,5 +148,23 @@ func TestConsecutivePlaybackFailuresStop(t *testing.T) {
 	}
 	if p.playing || p.at != 2 || p.loading || p.gen != 3 || p.err == "" {
 		t.Fatalf("advanced past consecutive failure limit: %+v", p)
+	}
+}
+
+// A video backend error while showsVideo is true must close p.Video and fall back to audio without panicking on nil p.Web.
+func TestVideoBackendErrorFallsBackWithoutClosingAudioWeb(t *testing.T) {
+	ch, p, _ := licensed(t, func(w http.ResponseWriter, r *http.Request) {})
+	audioWeb := p.Web
+	videoClosed, audioClosed := false, false
+	audioWeb.stopBrowser = func() { audioClosed = true }
+	p.Video = audioWeb
+	p.Web = nil // simulate audio web not yet initialized
+	p.video, p.showsVideo = true, true
+	p.Video.stopBrowser = func() { videoClosed = true }
+
+	p.Video.browserFailed()
+	next(t, ch)
+	if !videoClosed || audioClosed || p.Video != nil || p.showsVideo || p.video {
+		t.Fatalf("video backendError did not isolate Video backend: videoClosed=%v audioClosed=%v Video=%v showsVideo=%v", videoClosed, audioClosed, p.Video, p.showsVideo)
 	}
 }

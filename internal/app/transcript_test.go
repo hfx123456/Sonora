@@ -27,10 +27,9 @@ func numberedLines(n int) []lyrics.Line {
 
 // settle lets the lyrics glide to the line said.
 func settle(tt *ui.Tester) {
-	for range 40 {
-		tt.Advance(time.Second / 25)
-		tt.Frame()
-	}
+	tt.Frame()
+	tt.Advance(1600 * time.Millisecond)
+	tt.Frame()
 }
 
 // An episode's transcript, thousands of lines, builds only those about

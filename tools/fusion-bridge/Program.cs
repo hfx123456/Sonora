@@ -21,13 +21,21 @@ try
 {
     var request = JsonSerializer.Deserialize<Request>(await Console.In.ReadToEndAsync(), options) ?? new Request();
     using var handler = new HttpClientHandler();
-    if (!string.IsNullOrEmpty(request.Proxy)) handler.Proxy = new WebProxy(request.Proxy);
+    if (!string.IsNullOrEmpty(request.Proxy))
+    {
+        var proxyUri = request.Proxy;
+        if (proxyUri.StartsWith("socks5h://", StringComparison.OrdinalIgnoreCase))
+            proxyUri = "socks5://" + proxyUri["socks5h://".Length..];
+        handler.Proxy = new WebProxy(proxyUri);
+    }
     BaseApi.HttpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(7) };
     Response? local = null;
     if (!string.IsNullOrWhiteSpace(request.Raw))
     {
         local = ConvertLyrics(request.Raw, request.Translation, "本地歌词 · Lyricify");
-        if (local.Lines.Any(line => line.Translation.Length > 0) || request.ParseOnly)
+        if (local.Lines.Any(line => line.Translation.Length > 0)
+            || (local.Lines.Any(line => !line.Unsynced) && local.Lines.Any(line => Chinese(line.Text)))
+            || request.ParseOnly)
         {
             Console.Write(JsonSerializer.Serialize(local, options));
             return;
@@ -115,11 +123,14 @@ static Response ConvertLyrics(string raw, string translation, string source)
     {
         var line = lines[index];
         var start = line.StartTime ?? 0;
-        var end = line.EndTime ?? (index + 1 < lines.Count ? lines[index + 1].StartTime ?? start + 6000 : start + 6000);
+        var nextStart = index + 1 < lines.Count ? lines[index + 1].StartTime ?? start + 6000 : start + 6000;
+        var end = line.EndTime ?? Math.Min(start + 6000, nextStart);
         var chinese = (line as IFullLineInfo)?.ChineseTranslation ?? "";
         if (string.IsNullOrWhiteSpace(chinese) && line is IFullLineInfo full)
             chinese = full.Translations.FirstOrDefault(item => item.Key.StartsWith("zh", StringComparison.OrdinalIgnoreCase)).Value ?? "";
-        var nearest = translated?.Lines?.Where(item => item.StartTime.HasValue && Math.Abs(item.StartTime.Value - start) <= 500)
+        var nearest = translated?.Lines?.Where(item => item.StartTime.HasValue
+                && !string.IsNullOrWhiteSpace(item.Text) && item.Text.Trim() != "//"
+                && Math.Abs(item.StartTime.Value - start) <= 500)
             .OrderBy(item => Math.Abs(item.StartTime!.Value - start)).FirstOrDefault();
         if (string.IsNullOrWhiteSpace(chinese) && nearest != null
             && !lines.Any(other => Math.Abs((other.StartTime ?? 0) - nearest.StartTime!.Value) < Math.Abs(start - nearest.StartTime!.Value)))
@@ -137,7 +148,7 @@ static Response ConvertLyrics(string raw, string translation, string source)
     {
         var line = result.Lines[index];
         if (index + 1 < result.Lines.Count && result.Lines[index + 1].At > line.At && line.Words.Count == 0)
-            line.End = result.Lines[index + 1].At;
+            line.End = Math.Min(line.End > line.At ? line.End : line.At + 6000, result.Lines[index + 1].At);
     }
     return result;
 }

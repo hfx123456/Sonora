@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -122,10 +123,10 @@ func clientToken(clientID string) (string, error) {
 
 // deviceID is what clienttoken wants to see stay the same across requests
 // from one machine. It need not be stable beyond a run of the app.
-func deviceID() string {
+var deviceID = sync.OnceValue(func() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "vinyl0000000000000000000000000000"
 	}
 	return hex.EncodeToString(b)
-}
+})

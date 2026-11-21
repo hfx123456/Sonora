@@ -193,7 +193,7 @@ func (a *app) npCover(c *ui.Context, tr *spotify.Track, art *artwork, size float
 	ry := wrap.AnimateTo("ry", tx*7+swing, tilt)
 	rx := wrap.AnimateTo("rx", -ty*7, tilt)
 	shine := float32(0)
-	if over {
+	if over && !c.Preferences().ReduceMotion {
 		shine = 1
 	}
 	shine = wrap.AnimateTo("shine", shine, ui.Animation{Duration: 300 * time.Millisecond})

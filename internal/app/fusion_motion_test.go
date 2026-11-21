@@ -74,7 +74,7 @@ func TestFusionIslandTranslationSpace(t *testing.T) {
 	}
 }
 
-// Single-line Chinese songs must expand the capsule window height during long interludes/outros when track + artist two-line caption appears.
+// After the final Chinese lyric, the capsule expands again to show the outro's track and artist.
 func TestFusionChineseInterludeWindowHeight(t *testing.T) {
 	a := newTestApp()
 	a.settings.FusionMode = "capsule"
@@ -83,7 +83,7 @@ func TestFusionChineseInterludeWindowHeight(t *testing.T) {
 		{At: 24 * time.Second, End: 28 * time.Second, Text: "错过的恋情飘零任风去打听"},
 		{At: 123 * time.Second, End: 128 * time.Second, Text: "等爱情我永无止境"},
 	}
-	a.pl.Hold(25 * time.Second)
+	a.pl.Hold(124 * time.Second)
 	_, singingH := a.fusionWindowSize()
 	a.pl.Hold(132 * time.Second)
 	_, outroH := a.fusionWindowSize()
@@ -136,8 +136,8 @@ func TestFusionIslandWidthControls(t *testing.T) {
 func TestFusionCaptionTransitions(t *testing.T) {
 	base := time.Unix(100, 0)
 	var motion fusionCaptionMotion
-	motion.update("song", lyrics.Line{At: time.Second, Text: "第一句"}, "", time.Second, base)
-	motion.update("song", lyrics.Line{At: 3 * time.Second, Text: "第二句"}, "", 3*time.Second, base.Add(time.Second))
+	motion.update("song", fusionCaption{line: lyrics.Line{At: time.Second, Text: "第一句"}}, base)
+	motion.update("song", fusionCaption{line: lyrics.Line{At: 3 * time.Second, Text: "第二句"}}, base.Add(time.Second))
 	if motion.previous.line.Text != "第一句" || motion.phase(base.Add(time.Second), false) != 0 {
 		t.Fatal("line changed without an outgoing caption")
 	}
@@ -147,7 +147,7 @@ func TestFusionCaptionTransitions(t *testing.T) {
 	if motion.phase(base.Add(2*time.Second), false) != 1 {
 		t.Fatal("caption transition never settles")
 	}
-	motion.update("other", lyrics.Line{Text: "新歌"}, "", 0, base.Add(3*time.Second))
+	motion.update("other", fusionCaption{line: lyrics.Line{Text: "新歌"}}, base.Add(3*time.Second))
 	if motion.previous.line.Text != "" || motion.phase(base.Add(3*time.Second), false) != 1 {
 		t.Fatal("old song leaked into the new song")
 	}
@@ -283,5 +283,63 @@ func TestFusionCapsuleHitBounds(t *testing.T) {
 	}
 	if clamped := fusionCapsuleHitBounds(full, 900, 120); clamped != full {
 		t.Fatalf("oversized capsule escaped bounds: %+v", clamped)
+	}
+}
+
+// Dragged island positions restore across displays and switch between top-attached and floating shapes by position.
+func TestFusionIslandMultiDisplayRestoreAndEdgeDetection(t *testing.T) {
+	displays := []mygo.Display{
+		{Primary: true, Bounds: mygo.Rectangle{X: 0, Y: 0, Width: 2560, Height: 1440}, WorkArea: mygo.Rectangle{X: 0, Y: 0, Width: 2560, Height: 1392}},
+		{Bounds: mygo.Rectangle{X: 2560, Y: -120, Width: 1920, Height: 1080}, WorkArea: mygo.Rectangle{X: 2560, Y: -120, Width: 1920, Height: 1032}},
+	}
+	if !fusionAtTopEdge(mygo.Rectangle{X: 3100, Y: -116, Width: 680, Height: 60}, displays) {
+		t.Fatal("island near secondary display top edge was not detected as top-attached")
+	}
+	if fusionAtTopEdge(mygo.Rectangle{X: 3100, Y: 220, Width: 680, Height: 60}, displays) {
+		t.Fatal("island dragged into middle of secondary display was treated as top-attached")
+	}
+	if restored, ok := fusionRestoreBounds([2]int{3100, -115}, 680, 60, "capsule", false, displays); !ok || restored.X != 3100 || restored.Y != -120 {
+		t.Fatalf("top-edge restore on secondary display = %+v, ok=%v", restored, ok)
+	}
+	if restored, ok := fusionRestoreBounds([2]int{3100, 320}, 680, 60, "capsule", false, displays); !ok || restored.X != 3100 || restored.Y != 320 {
+		t.Fatalf("floating restore on secondary display = %+v, ok=%v", restored, ok)
+	}
+	if _, ok := fusionRestoreBounds([2]int{6000, 300}, 680, 60, "capsule", false, displays); ok {
+		t.Fatal("disconnected display coordinates were restored")
+	}
+}
+
+// Locked floating lyrics and capsule reveal a clickable unlock button that unlocks on click.
+func TestFusionLockedRevealAndUnlock(t *testing.T) {
+	for _, mode := range []string{"desktop", "capsule"} {
+		a := newTestApp()
+		a.settings = defaultSettings()
+		a.settings.FusionMode = mode
+		a.settings.FusionLocked = true
+		a.fusion.lockRevealed = true
+		a.fusion.capsuleW, a.fusion.capsuleH = 360, 48
+		a.pl.Cue([]spotify.Track{{ID: "lock", Name: "Song"}})
+		a.pl.Hold(time.Second)
+
+		w, h := a.fusionWindowSize()
+		tester := ui.NewTester(a.fusionOverlay, w, h)
+		tester.Frame()
+		if !tester.HasText("解锁") {
+			t.Fatalf("%s mode did not show unlock button when locked and revealed", mode)
+		}
+		if err := tester.Click("解锁桌面歌词"); err != nil {
+			t.Fatalf("%s mode unlock click failed: %v", mode, err)
+		}
+		if a.settings.FusionLocked {
+			t.Fatalf("%s mode remained locked after clicking unlock", mode)
+		}
+	}
+	desk := fusionUnlockRect(mygo.Rectangle{X: 100, Y: 200, Width: 800, Height: 140}, "desktop", 0, 0, 1)
+	if desk.X <= 100 || desk.X+desk.Width >= 900 || desk.Y != 204 {
+		t.Fatalf("unexpected desktop unlock rect: %+v", desk)
+	}
+	capRect := fusionUnlockRect(mygo.Rectangle{X: 100, Y: 0, Width: 700, Height: 80}, "capsule", 300, 48, 1)
+	if capRect.X < 300 || capRect.X+capRect.Width > 600 || capRect.Y < 2 || capRect.Y+capRect.Height > 48 {
+		t.Fatalf("unexpected capsule unlock rect: %+v", capRect)
 	}
 }

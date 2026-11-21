@@ -81,15 +81,23 @@ func (c ConnectCluster) Queue() []Track {
 	return queue
 }
 
+func safeRemoteCoverURL(cover string) string {
+	if strings.HasPrefix(cover, "spotify:image:") {
+		return "https://i.scdn.co/image/" + strings.TrimPrefix(cover, "spotify:image:")
+	}
+	if strings.HasPrefix(cover, "https://") || strings.HasPrefix(cover, "http://") {
+		return cover
+	}
+	return ""
+}
+
 func (t ConnectTrack) track() Track {
 	meta := t.Metadata
 	cover := meta["image_large_url"]
 	if cover == "" {
 		cover = meta["image_url"]
 	}
-	if strings.HasPrefix(cover, "spotify:image:") {
-		cover = "https://i.scdn.co/image/" + strings.TrimPrefix(cover, "spotify:image:")
-	}
+	cover = safeRemoteCoverURL(cover)
 	duration, _ := strconv.ParseInt(meta["duration"], 10, 64)
 	track := Track{ID: connectTrackID(t.URI), UID: t.UID, Episode: strings.HasPrefix(t.URI, "spotify:episode:"), Name: meta["title"], Duration: duration, Album: Album{ID: meta["album_uri"], Name: meta["album_title"], PicURL: cover}}
 	track.LinkedFrom = linkedFrom(track.ID, meta["requested_uri"])
@@ -212,7 +220,7 @@ func (m ConnectMachine) Track(index int) (Track, error) {
 	track := Track{ID: id, Episode: strings.HasPrefix(meta.URI, "spotify:episode:"), Name: meta.Name, Duration: int64(meta.Duration), Album: Album{ID: meta.AlbumURI, Name: meta.Album}}
 	track.LinkedFrom = linkedFrom(id, meta.LinkedFrom)
 	if len(meta.Images) > 0 {
-		track.Album.PicURL = meta.Images[0].URL
+		track.Album.PicURL = safeRemoteCoverURL(meta.Images[0].URL)
 	}
 	for _, artist := range meta.Authors {
 		track.Artists = append(track.Artists, Artist{Name: artist.Name, ID: artist.URI})

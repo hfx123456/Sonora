@@ -17,6 +17,7 @@ func TestBilingualParenMatch(t *testing.T) {
 		{"Haru Haru", "Haru Haru -Japanese Version-", false, ""},
 		{"Haru Haru", "Haru Haru (Part 2)", false, ""},
 		{"Haru Haru", "하루하루 (一天一天)", false, ""},
+		{"一天一天", "하루하루 (一天一天)", true, "하루하루"},
 	}
 	for _, c := range cases {
 		ok, base := BilingualParenMatch(c.want, c.cand)
@@ -29,6 +30,12 @@ func TestBilingualParenMatch(t *testing.T) {
 func TestCrossScriptAndAlbumArtistMatch(t *testing.T) {
 	if !CrossScript("Haru Haru", "하루하루") {
 		t.Fatal("expected CrossScript for Haru Haru vs 하루하루")
+	}
+	if !CrossScript("一天一天", "하루하루") {
+		t.Fatal("expected CrossScript for Han vs Hangul")
+	}
+	if !CrossScript("樱", "さくら") {
+		t.Fatal("expected CrossScript for Han vs Kana")
 	}
 	if !CrossScript("Haru Haru", "하루하루 (一天一天)") {
 		t.Fatal("expected CrossScript for Haru Haru vs 하루하루 (一天一天)")

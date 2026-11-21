@@ -16,3 +16,5 @@ func accountCookieDir() (string, error) { return mygo.App.Path(mygo.PathUserData
 func seal([]byte) ([]byte, error) { return nil, errors.New("no key store to seal them with") }
 
 func unseal([]byte) ([]byte, error) { return nil, errUnreadable }
+
+func unsealLegacyVinyl([]byte) ([]byte, error) { return nil, errUnreadable }

@@ -1,6 +1,8 @@
 package spotify
 
 import (
+	"errors"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -52,6 +54,12 @@ func MatchLocal(uri string) (Track, bool) {
 
 func FileURL(path string) string {
 	path = filepath.ToSlash(path)
+	// Preserve Windows UNC paths (//host/share/file -> file://host/share/file).
+	if strings.HasPrefix(path, "//") {
+		if host, rest, ok := strings.Cut(strings.TrimPrefix(path, "//"), "/"); ok && host != "" {
+			return (&url.URL{Scheme: "file", Host: host, Path: "/" + rest}).String()
+		}
+	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
@@ -74,14 +82,30 @@ func localPlaceholder(uri string) Track {
 	return track
 }
 
+const maxLocalCoverBytes = 10 << 20
+
 func ReadLocalURL(address string) ([]byte, error) {
 	parsed, err := url.Parse(address)
 	if err != nil {
 		return nil, err
 	}
 	path := parsed.Path
-	if len(path) > 2 && path[0] == '/' && path[2] == ':' {
+	if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
+		path = "//" + parsed.Host + path
+	} else if len(path) > 2 && path[0] == '/' && path[2] == ':' {
 		path = path[1:]
 	}
-	return os.ReadFile(filepath.FromSlash(path))
+	f, err := os.Open(filepath.FromSlash(path))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxLocalCoverBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxLocalCoverBytes {
+		return nil, errors.New("local file too large")
+	}
+	return data, nil
 }

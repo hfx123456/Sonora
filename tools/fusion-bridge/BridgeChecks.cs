@@ -17,6 +17,10 @@ static class BridgeChecks
         Require(BridgePolicy.Accept(haru, new NeteaseSearchResult("하루하루", new[] { "BIGBANG" }, "Stand Up", null, 256360, "22673504")), "Cross-script title rejected despite matching artist, album, and duration");
         Require(!BridgePolicy.Accept(haru, new NeteaseSearchResult("Haru Haru (Japanese Version)", new[] { "BIGBANG" }, "Stand Up", null, 255773, "22673344")), "Unrequested Japanese version accepted");
         Require(!BridgePolicy.Accept(haru, new NeteaseSearchResult("하루하루", new[] { "BIGBANG" }, "Other Album", null, 256360, "wrong")), "Unverified cross-script album accepted");
+        var feat = new TrackMultiArtistMetadata { Title = "Super Long Song Title (feat. Guest Artist)", Artists = new[] { "Main Artist" }.ToList(), Album = "Main Album", DurationMs = 210000 };
+        Require(!BridgePolicy.Accept(feat, new NeteaseSearchResult("Super Long Song Title (feat. Guest Artist) (Live)", new[] { "Main Artist" }, "Main Album", null, 210000, "live")), "Unrequested Live version accepted despite high title similarity");
+        var hanTrack = new TrackMultiArtistMetadata { Title = "一天一天", Artists = new[] { "BIGBANG" }.ToList(), Album = "Stand Up", DurationMs = 256359 };
+        Require(BridgePolicy.Accept(hanTrack, new NeteaseSearchResult("하루하루", new[] { "BIGBANG" }, "Stand Up", null, 256360, "22673504")), "Han-vs-Hangul cross-script title rejected");
 
         var synced = new Response { Source = "synced", Lines = new() { new() { Text = "ありがとう", At = 1000, End = 4000 }, new() { Text = "いつも", At = 4000, End = 7000 } } };
         var plain = new Response { Source = "plain", Lines = Enumerable.Range(0, 60).Select(index => new Line { Text = "Plain", Translation = "译文", Unsynced = true }).ToList() };

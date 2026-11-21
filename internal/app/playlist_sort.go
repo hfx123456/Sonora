@@ -29,16 +29,32 @@ type playlistOrderCache struct {
 // orderedPlaylistTracks keeps a view order without changing Spotify's order
 // or the playing queue; only choosing a song starts that order playing.
 func (a *app) orderedPlaylistTracks(pl *spotify.Playlist) []spotify.Track {
-	order := a.playlistSorts[pl.ID]
-	cache := &a.playlistOrderCache
-	// Refreshes and edits replace the source slice, so progress updates and
-	// hover frames can reuse the sorted list without sorting it again.
-	sameSource := len(cache.source) == len(pl.Tracks) && (len(pl.Tracks) == 0 || &cache.source[0] == &pl.Tracks[0])
-	if cache.order != order || !sameSource {
-		*cache = playlistOrderCache{source: pl.Tracks, order: order, tracks: sortPlaylistTracks(pl.Tracks, order)}
+	tracks, changed := orderedTracks(&a.playlistOrderCache, pl.Tracks, a.playlistSorts[pl.ID])
+	if changed {
 		a.playlistFilterCache = trackFilterCache{}
 	}
-	return cache.tracks
+	return tracks
+}
+
+// orderedLocalTracks keeps a display and playback sort order for local music
+// without altering the scanned slice.
+func (a *app) orderedLocalTracks() []spotify.Track {
+	tracks, changed := orderedTracks(&a.localOrderCache, a.localTracks, a.localSort)
+	if changed {
+		a.localFilterCache = trackFilterCache{}
+	}
+	return tracks
+}
+
+func orderedTracks(cache *playlistOrderCache, source []spotify.Track, order playlistSort) ([]spotify.Track, bool) {
+	// Refreshes and edits replace the source slice, so progress updates and
+	// hover frames can reuse the sorted list without sorting it again.
+	sameSource := len(cache.source) == len(source) && (len(source) == 0 || &cache.source[0] == &source[0])
+	if cache.order != order || !sameSource {
+		*cache = playlistOrderCache{source: source, order: order, tracks: sortPlaylistTracks(source, order)}
+		return cache.tracks, true
+	}
+	return cache.tracks, false
 }
 
 func sortPlaylistTracks(tracks []spotify.Track, order playlistSort) []spotify.Track {

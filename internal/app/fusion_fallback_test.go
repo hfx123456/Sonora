@@ -48,7 +48,7 @@ func TestFusionNetEaseTranslationFallback(t *testing.T) {
 	fetchFusion = func(context.Context, string, fusion.Request, bool) (fusion.Result, error) {
 		return fusion.Result{}, errors.New("not found")
 	}
-	neteaseTranslation = func(spotify.Track) (string, string, error) {
+	neteaseTranslation = func(spotify.Track, []lyrics.Line) (string, string, error) {
 		return "[00:01.00]Just want ten minutes", "[00:01.00]只需要十分钟", nil
 	}
 

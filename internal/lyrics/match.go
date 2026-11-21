@@ -43,6 +43,43 @@ func FoldTitle(s string) string {
 	return FoldRaw(CleanTitle(s))
 }
 
+// MatchingWords checks that at least half of the reference lines also occur
+// in the candidate. Providers can split a sung phrase over different rows.
+func MatchingWords(reference, candidate []Line) bool {
+	words := func(lines []Line) []string {
+		var out []string
+		for _, line := range lines {
+			if !IsCredit(line.Text) {
+				if text := FoldRaw(line.Text); text != "" {
+					out = append(out, text)
+				}
+			}
+		}
+		return out
+	}
+	want, got := words(reference), words(candidate)
+	const maxRows = 3
+	phrases := make(map[string]bool, len(got)*maxRows)
+	for i := range got {
+		for end := i + 1; end <= min(i+maxRows, len(got)); end++ {
+			phrases[strings.Join(got[i:end], "")] = true
+		}
+	}
+	matched := 0
+	for i := 0; i < len(want); {
+		rows := 0
+		for end := min(i+maxRows, len(want)); end > i; end-- {
+			if phrases[strings.Join(want[i:end], "")] {
+				rows = end - i
+				break
+			}
+		}
+		matched += rows
+		i += max(rows, 1)
+	}
+	return len(want) > 0 && 2*matched >= len(want)
+}
+
 // ArtistsMatch reports whether any artist in want matches any artist in got,
 // ignoring casing, punctuation, traditional/simplified variants, and trailing
 // parenthetical aliases like "BIGBANG (빅뱅)".
@@ -135,7 +172,7 @@ func CrossScript(a, b string) bool {
 		return (sa.latin && !cjkA && cjkB) || (sb.latin && !cjkB && cjkA)
 	}
 	if cjkA && cjkB {
-		return (sa.hangul != sb.hangul && !sa.han && !sb.han) || (sa.kana != sb.kana && !sa.han && !sb.han)
+		return (sa.hangul != sb.hangul || sa.kana != sb.kana) && !(sa.han && sb.han)
 	}
 	return false
 }

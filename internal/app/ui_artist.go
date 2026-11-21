@@ -3,7 +3,6 @@ package app
 import (
 	"log"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -86,12 +85,20 @@ func (a *app) loadReleases(pg *spotify.ArtistPage, kind spotify.ReleaseKind) {
 // toggleFollow follows the artist of pg, or stops following them, at once
 // in the app and then with Spotify, which may refuse: it goes back then.
 func (a *app) toggleFollow(pg *spotify.ArtistPage) {
+	if a.profile == nil {
+		a.showMain()
+		a.openLogin()
+		return
+	}
 	follow := !pg.Followed
 	pg.Followed = follow
-	uri := pg.ID
+	uri, gen := pg.ID, a.accountGen
 	go func() {
 		err := saveToLibrary(uri, follow)
 		a.post(func() {
+			if a.accountGen != gen {
+				return
+			}
 			if err != nil {
 				if pg := a.artists[uri]; pg != nil {
 					pg.Followed = !follow
@@ -179,24 +186,26 @@ func (a *app) artistHeader(c *ui.Context, pg *spotify.ArtistPage) {
 			if pillButton(c.Key("play"), iconPlay, "播放", p.accent, p.onAccent).Clicked() {
 				a.playFrom(spotify.HomeItem{Artist: &pg.ArtistCard}, pg.TopTracks, firstPlayable(pg.TopTracks))
 			}
-			if pillButton(c.Key("shuffle"), iconShuffle, "随机播放", p.hover.Over(p.bg), p.text).Clicked() {
+			if a.secondaryPillButton(c.Key("shuffle"), iconShuffle, "随机播放").Clicked() {
 				a.enableShuffle()
-				a.playFrom(spotify.HomeItem{Artist: &pg.ArtistCard}, pg.TopTracks, firstPlayable(pg.TopTracks))
+				a.playFrom(spotify.HomeItem{Artist: &pg.ArtistCard}, pg.TopTracks, randomPlayable(pg.TopTracks))
 			}
 			label := "电台"
 			if a.radioStarting == radioName(pg.ID, pg.Name) {
 				label = "正在开启…"
 			}
-			if pillButton(c.Key("radio"), iconRadio, label, p.hover.Over(p.bg), p.text).Clicked() {
+			if a.secondaryPillButton(c.Key("radio"), iconRadio, label).Clicked() {
 				a.startRadio(pg.ID, pg.Name)
 			}
 		}
-		icon, label := iconPlus, "关注"
-		if pg.Followed {
-			icon, label = iconCheck, "已关注"
-		}
-		if pillButton(c.Key("follow"), icon, label, p.hover.Over(p.bg), p.text).Clicked() {
-			a.toggleFollow(pg)
+		if a.profile != nil {
+			icon, label := iconPlus, "关注"
+			if pg.Followed {
+				icon, label = iconCheck, "已关注"
+			}
+			if a.secondaryPillButton(c.Key("follow"), icon, label).Clicked() {
+				a.toggleFollow(pg)
+			}
 		}
 	})
 	if len(pg.TopTracks) > 0 {
@@ -211,7 +220,7 @@ func (a *app) artistFooter(c *ui.Context, pg *spotify.ArtistPage) {
 	ui.Column(c).PaddingX(12).Children(func() {
 		cols := a.columns(c, 168)
 		cards := func(list []spotify.Playlist) {
-			ui.Grid(c).Columns(cols).GapX(20).GapY(28).Children(func() {
+			ui.Grid(c).Columns(cols).GapX(0).GapY(12).Margin(0, -10, 0, -10).Children(func() {
 				for i := range list {
 					a.playlistCard(c.Key(list[i].ID), &list[i])
 				}
@@ -244,7 +253,7 @@ func (a *app) artistFooter(c *ui.Context, pg *spotify.ArtistPage) {
 		}
 		if len(pg.Related) > 0 {
 			a.section(c, "相似艺人")
-			ui.Grid(c).Columns(a.columns(c, 150)).GapX(20).GapY(24).Children(func() {
+			ui.Grid(c).Columns(a.columns(c, 150)).GapX(0).GapY(12).Margin(0, -10, 0, -10).Children(func() {
 				for i := range pg.Related {
 					a.artistCard(c.Key(pg.Related[i].ID), &pg.Related[i])
 				}
@@ -259,10 +268,11 @@ func (a *app) artistFooter(c *ui.Context, pg *spotify.ArtistPage) {
 
 // artistCard is an artist's round picture with their name below: a click
 // opens their page.
-func (a *app) artistCard(c *ui.Context, ar *spotify.ArtistCard) {
+func (a *app) artistCard(c *ui.Context, ar *spotify.ArtistCard) (ui.Color, bool) {
 	p := a.pal
-	card := ui.ButtonBase(c).Column().Gap(10).AlignItems(ui.Stretch).FocusRing(false).Label(ar.Name)
+	card := ui.ButtonBase(c).Column().Gap(10).Padding(10).AlignItems(ui.Stretch).FocusRing(false).Label(ar.Name)
 	hovered := card.Hovered()
+	a.styleBorderlessCard(card, 12, hovered)
 	card.Children(func() {
 		art := ui.Box(c).AspectRatio(1).Radius(999)
 		lift := ui.Pose{}
@@ -282,16 +292,27 @@ func (a *app) artistCard(c *ui.Context, ar *spotify.ArtistCard) {
 	if card.Clicked() {
 		a.openArtist(ar.ID)
 	}
+	return a.coverTint(ar.Avatar, 320), hovered
 }
 
 // artistRow lists artists as cards, as many as fit across, in one row.
-func (a *app) artistRow(c *ui.Context, list []spotify.ArtistCard) {
+func (a *app) artistRow(c *ui.Context, list []spotify.ArtistCard) (ui.Color, bool) {
 	cols := a.columns(c, 150)
-	ui.Grid(c).Columns(cols).GapX(20).Children(func() {
+	var tint ui.Color
+	var anyHovered bool
+	ui.Grid(c).Columns(cols).GapX(0).Margin(0, -10, 0, -10).Children(func() {
 		for i := range list[:min(len(list), cols)] {
-			a.artistCard(c.Key(list[i].ID), &list[i])
+			if t, hov := a.artistCard(c.Key(list[i].ID), &list[i]); hov || i == 0 && tint == (ui.Color{}) {
+				if t != (ui.Color{}) {
+					tint = t
+				}
+				if hov {
+					anyHovered = true
+				}
+			}
 		}
 	})
+	return tint, anyHovered
 }
 
 // link is text that opens something when clicked, brighter under the
@@ -355,13 +376,8 @@ func (a *app) followedArtists(c *ui.Context) {
 	for i := range a.followed {
 		ar := &a.followed[i]
 		selected := a.route.page == pageArtist && a.route.artist == ar.ID && !a.nowPlaying
-		b := ui.ButtonBase(c.Key(ar.ID)).Height(34).PaddingX(8).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(ar.Name)
-		switch {
-		case selected:
-			b.Background(p.press)
-		case b.Hovered():
-			b.Background(b.AnimateColor("bg", p.hover, ui.Animation{Duration: 100 * time.Millisecond}))
-		}
+		b := ui.ButtonBase(c.Key(ar.ID)).Height(34).PaddingX(8).Gap(10).Radius(10).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(ar.Name)
+		a.styleSidebarItem(b, selected, b.Hovered())
 		b.Children(func() {
 			a.avatar(c, ar.Avatar, 22, p.press)
 			ui.Text(c, ar.Name).FontSize(13).SingleLine().Shrink(1).MinWidth(0)

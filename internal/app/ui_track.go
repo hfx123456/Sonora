@@ -91,7 +91,7 @@ func (a *app) trackHeader(c *ui.Context, pg *spotify.TrackPage) {
 				if a.radioStarting == radioName(tr.URI(), tr.Name) {
 					label = "正在开启…"
 				}
-				if pillButton(c.Key("radio"), iconRadio, label, p.hover.Over(p.bg), p.text).Clicked() {
+				if a.secondaryPillButton(c.Key("radio"), iconRadio, label).Clicked() {
 					a.startRadio(tr.URI(), tr.Name)
 				}
 				a.likeButton(c.Key("like"), tr, 20, p.muted).Margin(0, 0, 0, 4)
@@ -127,7 +127,7 @@ func (a *app) trackFooter(c *ui.Context, pg *spotify.TrackPage) {
 		if len(pg.Popular) > 0 {
 			a.section(c, pg.Artist.Name+" 的热门作品")
 			cols := a.columns(c, 150)
-			ui.Grid(c).Columns(cols).GapX(20).GapY(28).Children(func() {
+			ui.Grid(c).Columns(cols).GapX(0).GapY(12).Margin(0, -10, 0, -10).Children(func() {
 				for i := range pg.Popular[:min(len(pg.Popular), cols)] {
 					a.playlistCard(c.Key(pg.Popular[i].ID), &pg.Popular[i])
 				}

@@ -179,7 +179,7 @@ func (n *notch) byeSoon(d time.Duration) {
 		mygo.RunOnMain(func() {
 			switch {
 			case !n.hello:
-			case n.open:
+			case n.open || (!n.lastInside.IsZero() && time.Since(n.lastInside) < 500*time.Millisecond):
 				n.byeSoon(2 * time.Second)
 			default:
 				n.bye()
@@ -257,7 +257,7 @@ func (n *notch) poll() {
 		// Without a notch, the pointer pressed against the top edge of
 		// the screen, about its middle, opens it.
 		cx := n.screenX + n.winW/2
-		inside = px >= cx-n.w0/2 && px <= cx+n.w0/2 && py <= n.screenY+1
+		inside = px >= cx-n.w0/2 && px <= cx+n.w0/2 && py >= n.screenY-2 && py <= n.screenY+1
 	}
 	now := time.Now()
 	changed := false
@@ -267,8 +267,8 @@ func (n *notch) poll() {
 		}
 		n.lastInside = now
 		// A pointer passing by to the menu bar does not open it: one that
-		// rests there does.
-		if !n.open && now.Sub(n.enteredAt) >= 300*time.Millisecond {
+		// rests there does. Keep the greeting visible while hovering its button.
+		if !n.open && !n.hello && now.Sub(n.enteredAt) >= 300*time.Millisecond {
 			n.open, changed = true, true
 		}
 	} else if n.open && now.Sub(n.lastInside) > 300*time.Millisecond {
@@ -454,7 +454,7 @@ func (n *notch) expanded(c *ui.Context, tr *spotify.Track, open, left float32) {
 		})
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, clock(pl.Position())).FontSize(10.5).FontFeatures("tnum").TextColor(white.Alpha(0.5)).Width(30)
-			a.scrubber(c.Key("notch-scrub"), &n.scrub, white.Alpha(0.18), white.Alpha(0.9), 14, ui.Color{}).Grow(1)
+			a.scrubber(c.Key("notch-scrub"), &n.scrub, white.Alpha(0.18), white.Alpha(0.9), 14, ui.Color{}, nil).Grow(1)
 			ui.Text(c, "-"+clock(pl.Duration()-pl.Position())).FontSize(10.5).FontFeatures("tnum").TextColor(white.Alpha(0.5)).Width(34).TextAlign(ui.End)
 		})
 		ui.Box(c).Margin(-6, 0, 0, 0).Children(func() {

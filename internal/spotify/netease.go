@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"vinyl/internal/lyrics"
 )
@@ -29,7 +28,7 @@ var lrcTimed = regexp.MustCompile(`(?m)^\[\d+:\d+`)
 // millisecond. Only the name, the artist and the length leave; NetEase's
 // text is in simplified characters.
 func NetEaseLyrics(t Track) (synced, plain string, err error) {
-	lyric, _, err := neteaseLyrics(t, nil)
+	lyric, _, err := neteaseLyrics(t, false, nil, "")
 	switch {
 	case err != nil || lyric == "":
 		return "", "", err
@@ -51,7 +50,38 @@ func NetEaseTranslation(t Track) (synced, translation string, err error) {
 // album name differs (such as compilations), accepting the first candidate for
 // which match(synced, translation) returns true.
 func NetEaseTranslationMatching(t Track, match func(synced, translation string) bool) (synced, translation string, err error) {
-	lyric, tr, err := neteaseLyrics(t, match)
+	return neteaseTranslationMatching(t, match, "")
+}
+
+// NetEaseTranslationFor verifies translated candidates against the original
+// lyrics. An original-language line can find tracks listed under another title.
+func NetEaseTranslationFor(t Track, lines []lyrics.Line) (synced, translation string, err error) {
+	if len(lines) == 0 || lines[0].Unsynced {
+		return NetEaseTranslation(t)
+	}
+	var lyricQuery string
+	if !t.Local() && !t.Unnamed() {
+		for _, line := range lines {
+			if lyrics.IsCredit(line.Text) || !lyrics.CrossScript(t.Name, line.Text) {
+				continue
+			}
+			if phrase := []rune(strings.TrimSpace(line.Text)); len(phrase) >= 6 {
+				lyricQuery = string(phrase[:min(len(phrase), 80)])
+				break
+			}
+		}
+	}
+	return neteaseTranslationMatching(t, func(synced, translation string) bool {
+		candidate := lyrics.Build(synced, translation, "")
+		return lyrics.MatchingWords(lines, candidate) && slices.ContainsFunc(candidate, func(line lyrics.Line) bool {
+			tr := strings.TrimSpace(line.Translation)
+			return !lyrics.IsCredit(line.Text) && tr != "" && tr != "//"
+		})
+	}, lyricQuery)
+}
+
+func neteaseTranslationMatching(t Track, match func(synced, translation string) bool, lyricQuery string) (synced, translation string, err error) {
+	lyric, tr, err := neteaseLyrics(t, true, match, lyricQuery)
 	if err != nil || !lrcTimed.MatchString(lyric) || !lrcTimed.MatchString(tr) {
 		return "", "", err
 	}
@@ -59,11 +89,11 @@ func NetEaseTranslationMatching(t Track, match func(synced, translation string) 
 }
 
 type neteaseSong struct {
-	ID       int64    `json:"id"`
-	Name     string   `json:"name"`
-	Alia     []string `json:"alia"`
-	Tns      []string `json:"tns"`
-	Artists  []struct {
+	ID      int64    `json:"id"`
+	Name    string   `json:"name"`
+	Alia    []string `json:"alia"`
+	Tns     []string `json:"tns"`
+	Artists []struct {
 		Name string `json:"name"`
 	} `json:"ar"`
 	Album struct {
@@ -72,17 +102,26 @@ type neteaseSong struct {
 	Duration int64 `json:"dt"`
 }
 
+type neteaseQuery struct {
+	text    string
+	byLyric bool
+}
+
 // neteaseLyrics gives the lyrics of t on NetEase and their translation,
 // "" for music without words.
-func neteaseLyrics(t Track, match func(synced, translation string) bool) (lyric, translation string, err error) {
+func neteaseLyrics(t Track, wantTranslation bool, match func(synced, translation string) bool, lyricQuery string) (lyric, translation string, err error) {
 	if t.Episode || t.Name == "" || t.Length() <= 0 {
 		return "", "", nil
 	}
-	queries := []string{t.Name}
+	queries := []neteaseQuery{{text: t.Name}}
 	if cleaned := cleanTitle(t.Name); cleaned != "" && cleaned != strings.TrimSpace(t.Name) {
-		queries = append(queries, cleaned)
+		queries = append(queries, neteaseQuery{text: cleaned})
+	}
+	if lyricQuery != "" {
+		queries = append(queries, neteaseQuery{text: lyricQuery, byLyric: true})
 	}
 	seen := map[int64]bool{}
+	var plainFallback string
 	for _, q := range queries {
 		ids, err := searchNetEaseCandidates(q, t, match != nil)
 		if err != nil {
@@ -98,18 +137,33 @@ func neteaseLyrics(t Track, match func(synced, translation string) bool) (lyric,
 				return "", "", err
 			}
 			if pure {
-				if match == nil {
+				if !wantTranslation && match == nil {
 					return "", "", nil
 				}
 				continue
 			}
 			if match == nil {
-				return lrc, tr, nil
+				if wantTranslation {
+					if lrcTimed.MatchString(lrc) && lrcTimed.MatchString(tr) {
+						return lrc, tr, nil
+					}
+					continue
+				}
+				if lrcTimed.MatchString(lrc) {
+					return lrc, tr, nil
+				}
+				if lrc != "" && plainFallback == "" {
+					plainFallback = lrc
+				}
+				continue
 			}
 			if lrcTimed.MatchString(lrc) && lrcTimed.MatchString(tr) && match(lrc, tr) {
 				return lrc, tr, nil
 			}
 		}
+	}
+	if !wantTranslation && match == nil && plainFallback != "" {
+		return plainFallback, "", nil
 	}
 	return "", "", nil
 }
@@ -133,9 +187,12 @@ func fetchNetEaseSongLyrics(id int64) (lyric, translation string, pureMusic bool
 	return strings.TrimSpace(res.Lrc.Lyric), strings.TrimSpace(res.Tlyric.Lyric), false, nil
 }
 
-func searchNetEaseCandidates(title string, t Track, allowUnmatchedAlbumCrossScript bool) ([]int64, error) {
-	q := title
-	if len(t.Artists) > 0 {
+func searchNetEaseCandidates(query neteaseQuery, t Track, verifyWords bool) ([]int64, error) {
+	q := query.text
+	searchType := "1"
+	if query.byLyric {
+		searchType = "1006"
+	} else if len(t.Artists) > 0 {
 		q += " " + t.Artists[0].Name
 	}
 	var found struct {
@@ -145,13 +202,13 @@ func searchNetEaseCandidates(title string, t Track, allowUnmatchedAlbumCrossScri
 	}
 	// Not search/get/web, which turns a fifth search in a few seconds
 	// down for minutes.
-	if err := netease("/api/cloudsearch/pc?"+url.Values{"s": {q}, "type": {"1"}, "limit": {"10"}}.Encode(), &found); err != nil {
+	if err := netease("/api/cloudsearch/pc?"+url.Values{"s": {q}, "type": {searchType}, "limit": {"10"}}.Encode(), &found); err != nil {
 		return nil, err
 	}
-	return rankNetEaseSongs(found.Result.Songs, t, allowUnmatchedAlbumCrossScript), nil
+	return rankNetEaseSongs(found.Result.Songs, t, verifyWords, query.byLyric), nil
 }
 
-func rankNetEaseSongs(songs []neteaseSong, t Track, allowUnmatchedAlbumCrossScript bool) []int64 {
+func rankNetEaseSongs(songs []neteaseSong, t Track, verifyWords, lyricSearch bool) []int64 {
 	var wantArtists []string
 	for _, a := range t.Artists {
 		if a.Name != "" {
@@ -176,13 +233,15 @@ func rankNetEaseSongs(songs []neteaseSong, t Track, allowUnmatchedAlbumCrossScri
 			}
 		}
 		artistOK := lyrics.ArtistsMatch(wantArtists, gotArtists)
-		if lyrics.HasExtraVersionTag(t.Name, t.Album.Name, s.Name) {
+		if (lyricSearch && !artistOK) || lyrics.HasExtraVersionTag(t.Name, t.Album.Name, s.Name) {
 			continue
 		}
+		crossArtist := !artistOK && len(wantArtists) > 0 && len(gotArtists) > 0 &&
+			lyrics.CrossScript(strings.Join(wantArtists, " "), strings.Join(gotArtists, " "))
 
 		tier := -1
 		switch {
-		case sameTitle(s.Name, t.Name):
+		case sameTitle(s.Name, t.Name) && (artistOK || len(wantArtists) == 0 || len(gotArtists) == 0 || (crossArtist && (lyrics.AlbumMatches(t.Album.Name, s.Album.Name) || t.Album.Name == "" || verifyWords))):
 			tier = 0
 		case artistOK && func() bool { ok, _ := lyrics.BilingualParenMatch(t.Name, s.Name); return ok }():
 			tier = 1
@@ -191,9 +250,11 @@ func rankNetEaseSongs(songs []neteaseSong, t Track, allowUnmatchedAlbumCrossScri
 		case artistOK && lyrics.CrossScript(t.Name, s.Name):
 			if lyrics.AlbumMatches(t.Album.Name, s.Album.Name) {
 				tier = 2
-			} else if allowUnmatchedAlbumCrossScript {
+			} else if verifyWords {
 				tier = 3
 			}
+		case lyricSearch:
+			tier = 3
 		}
 		if tier >= 0 {
 			cands = append(cands, ranked{id: s.ID, tier: tier, diff: d})
@@ -206,10 +267,7 @@ func rankNetEaseSongs(songs []neteaseSong, t Track, allowUnmatchedAlbumCrossScri
 		return cands[i].diff < cands[j].diff
 	})
 	var ids []int64
-	limit := 1
-	if allowUnmatchedAlbumCrossScript {
-		limit = 3
-	}
+	const limit = 3
 	for _, c := range cands {
 		if !slices.Contains(ids, c.id) {
 			ids = append(ids, c.id)
@@ -268,17 +326,11 @@ func netease(path string, out any) error {
 	return json.Unmarshal(b, out)
 }
 
-// sameTitle reports whether two titles name the same song: the same
-// letters, without what is in brackets or after " - ", or, in Chinese, as
-// many characters, NetEase writing in simplified ones what Spotify may in
-// traditional (梁山伯與茱麗葉, 梁山伯与茱丽叶).
+// sameTitle reports whether two titles name the same song after stripping
+// bracketed or dashed suffixes and folding traditional/simplified Han.
 func sameTitle(a, b string) bool {
 	a, b = foldTitle(a), foldTitle(b)
-	if a == "" || b == "" {
-		return false
-	}
-	han := func(r rune) bool { return unicode.Is(unicode.Han, r) }
-	return a == b || len([]rune(a)) == len([]rune(b)) && strings.IndexFunc(a, han) >= 0 && strings.IndexFunc(b, han) >= 0
+	return a != "" && a == b
 }
 
 func cleanTitle(s string) string { return lyrics.CleanTitle(s) }

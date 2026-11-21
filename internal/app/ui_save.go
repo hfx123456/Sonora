@@ -26,7 +26,7 @@ func (a *app) toggleSaved(pl *spotify.Playlist) {
 		return
 	}
 	save := !a.isSaved(pl.ID)
-	uri, user := pl.ID, a.profile.UserID
+	uri, user, gen := pl.ID, a.profile.UserID, a.accountGen
 	kept := *pl
 	kept.Tracks = nil
 	if save {
@@ -42,6 +42,9 @@ func (a *app) toggleSaved(pl *spotify.Playlist) {
 			err = saveToLibrary(uri, save)
 		}
 		a.post(func() {
+			if a.accountGen != gen {
+				return
+			}
 			if err != nil {
 				if save {
 					a.saved = slices.DeleteFunc(slices.Clone(a.saved), func(p spotify.Playlist) bool { return p.ID == uri })

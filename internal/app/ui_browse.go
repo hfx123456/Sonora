@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -30,9 +31,13 @@ func fetch[T any](a *app, key, msg string, get func() (T, error), keep func(T)) 
 	}
 	a.loading[key] = true
 	delete(a.loadErr, key)
+	gen := a.accountGen
 	go func() {
 		v, err := get()
 		a.post(func() {
+			if a.accountGen != gen {
+				return
+			}
 			delete(a.loading, key)
 			if err != nil {
 				log.Printf("%s: %v", key, err)
@@ -81,7 +86,11 @@ func (a *app) loadUser(id string) {
 // content.
 func (a *app) scrollPage(c *ui.Context, key string, content func()) {
 	top, bottom := a.insets(c)
-	ui.Scroll(c.Key(key)).TrackScroll(&a.pageScroll).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0).Children(func() {
+	scroll := ui.Scroll(c.Key(key)).TrackScroll(&a.pageScroll).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0)
+	if !a.glassEnabled() {
+		a.pageWash(c, scroll, top, a.pageTint(a.route.page))
+	}
+	scroll.Children(func() {
 		a.startMark(c)
 		defer a.endMark(c)
 		content()
@@ -112,30 +121,47 @@ func (a *app) browsePage(c *ui.Context) {
 	}
 	a.scrollPage(c, "browse", func() {
 		a.heading(c, "浏览全部", "")
-		a.tiles(c, a.cats)
+		tint, _ := a.tiles(c, a.cats)
+		a.setPageTint(c, pageBrowse, tint)
 	})
 }
 
-func (a *app) tiles(c *ui.Context, cats []spotify.Category) {
+func (a *app) tiles(c *ui.Context, cats []spotify.Category) (ui.Color, bool) {
+	var tint ui.Color
+	var anyHovered bool
 	ui.Grid(c).Columns(a.columns(c, 180)).Gap(20).Children(func() {
 		for i := range cats {
-			a.categoryTile(c.Key(cats[i].ID), &cats[i])
+			if t, hovered := a.categoryTile(c.Key(cats[i].ID), &cats[i]); hovered || i == 0 && tint == (ui.Color{}) {
+				tint = cmp.Or(t, tint)
+				if hovered {
+					anyHovered = true
+				}
+			}
 		}
 	})
+	return tint, anyHovered
 }
 
 // categoryTile is a category's colored tile, its picture tilted in its
 // corner, as on Spotify.
-func (a *app) categoryTile(c *ui.Context, cat *spotify.Category) {
+func (a *app) categoryTile(c *ui.Context, cat *spotify.Category) (ui.Color, bool) {
 	bg := a.pal.press
 	if len(cat.Color) == 7 && cat.Color[0] == '#' {
 		bg = ui.Hex(cat.Color)
+	} else if t := a.coverTint(cat.Image, 200); t != (ui.Color{}) {
+		bg = t
 	}
 	b := ui.ButtonBase(c).Column().AlignItems(ui.Start).Justify(ui.Start).AspectRatio(1.6).Padding(14).Radius(10).Clip().
-		Background(bg).FocusRing(false).Label(cat.Name)
-	if b.Hovered() {
+		FocusRing(false).Label(cat.Name)
+	hovered := b.Hovered()
+	fill := bg
+	var lift ui.Pose
+	if hovered {
+		fill = bg.Mix(white, 0.1)
+		lift = ui.Pose{Y: -3}
 		b.Shadow(0, 10, 24, -8, a.pal.cardShade)
 	}
+	b.Background(b.AnimateColor("bg", fill, ui.Animation{Duration: 140 * time.Millisecond})).AnimatePose(lift, ui.Snappy)
 	b.Children(func() {
 		ui.Text(c, cat.Name).FontSize(17).FontWeight(800).TextColor(white).MaxLines(2).LineHeight(1.25).Margin(0, 56, 0, 0)
 		if cat.Image != "" {
@@ -146,6 +172,7 @@ func (a *app) categoryTile(c *ui.Context, cat *spotify.Category) {
 	if b.Clicked() {
 		a.goTo(route{page: pageCategory, category: cat.ID})
 	}
+	return bg, hovered
 }
 
 // categoryPage lists a category's rows: a row of each, the rest shown on
@@ -159,6 +186,7 @@ func (a *app) categoryPage(c *ui.Context) {
 	a.scrollPage(c, "category", func() {
 		a.heading(c, pg.Name, "分类")
 		cols := a.columns(c, 168)
+		var hoveredTint, fallbackTint ui.Color
 		for i, sh := range pg.Shelves {
 			key := uri + "#" + fmt.Sprint(i)
 			if sh.Title != "" || i > 0 {
@@ -179,20 +207,31 @@ func (a *app) categoryPage(c *ui.Context) {
 				})
 			}
 			if len(sh.Tiles) > 0 {
-				a.tiles(c.Key(key+"t"), sh.Tiles)
+				if t, hov := a.tiles(c.Key(key+"t"), sh.Tiles); hov {
+					hoveredTint = cmp.Or(t, hoveredTint)
+				} else if fallbackTint == (ui.Color{}) {
+					fallbackTint = t
+				}
 			}
 			lists := sh.Lists
 			if !a.shelfOpen[key] {
 				lists = lists[:min(len(lists), cols)]
 			}
 			if len(lists) > 0 {
-				ui.Grid(c.Key(key + "l")).Columns(cols).GapX(20).GapY(28).Children(func() {
+				ui.Grid(c.Key(key + "l")).Columns(cols).GapX(0).GapY(12).Margin(0, -10, 0, -10).Children(func() {
 					for j := range lists {
-						a.playlistCard(c.Key(lists[j].ID), &lists[j])
+						t, hov := a.playlistCard(c.Key(lists[j].ID), &lists[j])
+						if hov && t != (ui.Color{}) {
+							hoveredTint = t
+						}
+						if j == 0 && fallbackTint == (ui.Color{}) {
+							fallbackTint = t
+						}
 					}
 				})
 			}
 		}
+		a.setPageTint(c, pageCategory, cmp.Or(hoveredTint, fallbackTint))
 	})
 }
 
@@ -222,14 +261,25 @@ func (a *app) userPage(c *ui.Context) {
 		})
 		if len(pg.Playlists) == 0 {
 			ui.Text(c, "没有公开歌单").FontSize(13).TextColor(p.muted).Margin(34, 0, 0, 0)
+			if t := a.coverTint(pg.Image, 540); t != (ui.Color{}) {
+				a.setPageTint(c, pageUser, t)
+			}
 			return
 		}
 		a.section(c, "公开歌单")
-		ui.Grid(c).Columns(a.columns(c, 168)).GapX(20).GapY(28).Children(func() {
+		var hoveredTint, fallbackTint ui.Color
+		ui.Grid(c).Columns(a.columns(c, 168)).GapX(0).GapY(12).Margin(0, -10, 0, -10).Children(func() {
 			for i := range pg.Playlists {
-				a.playlistCard(c.Key(pg.Playlists[i].ID), &pg.Playlists[i])
+				t, hov := a.playlistCard(c.Key(pg.Playlists[i].ID), &pg.Playlists[i])
+				if hov && t != (ui.Color{}) {
+					hoveredTint = t
+				}
+				if i == 0 && fallbackTint == (ui.Color{}) {
+					fallbackTint = t
+				}
 			}
 		})
+		a.setPageTint(c, pageUser, cmp.Or(hoveredTint, fallbackTint))
 		if more := pg.Total - len(pg.Playlists); more > 0 {
 			ui.Text(c, fmt.Sprintf("还有 %d 个歌单在 Spotify 上", more)).FontSize(12.5).TextColor(p.muted).Margin(20, 0, 0, 0)
 		}

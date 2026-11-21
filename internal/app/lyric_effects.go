@@ -166,9 +166,11 @@ func karaokeText(c *ui.Context, line lyrics.Line, font ui.Font, dim, lit ui.Colo
 	text.Draw(func(p *ui.Painter, bounds ui.Rect) {
 		cache.fit(line, font, bounds.W, direction)
 		pos := position()
+		lastWord := -1
 		for _, run := range cache.runs {
 			progress, pulse := float32(0), float32(0)
 			if run.word >= 0 {
+				lastWord = run.word
 				word := line.Words[run.word]
 				progress, pulse = fusionWordMotion(word, pos)
 				if still {
@@ -178,6 +180,8 @@ func karaokeText(c *ui.Context, line lyrics.Line, font ui.Font, dim, lit ui.Colo
 						progress = 1
 					}
 				}
+			} else if lastWord >= 0 && pos >= line.Words[lastWord].End {
+				progress = 1
 			}
 			lift := min(2, font.Size*.065) * pulse
 			total := float32(0)

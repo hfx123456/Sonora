@@ -424,3 +424,86 @@ func (a *app) styleGlassPanel(panel ui.Element, radius float32, fill, edge ui.Co
 	}
 	panel.Radius(radius).Background(fill).Border(0.5, edge).Shadow(0, shadowY, shadowBlur, -4, shadowColor)
 }
+
+// styleBorderlessCard keeps shortcut, home, chart, playlist, and artist cards
+// transparent at rest and reveals a subtle translucent highlight on hover.
+func (a *app) styleBorderlessCard(el ui.Element, radius float32, hovered bool) {
+	bg := ui.Transparent
+	if hovered {
+		bg = a.pal.text.Alpha(0.06)
+	}
+	el.Radius(radius).Background(el.AnimateColor("bg", bg, ui.Animation{Duration: 140 * time.Millisecond}))
+}
+
+func (a *app) coverTint(url string, px int) ui.Color {
+	if url == "" || a.art == nil {
+		return ui.Color{}
+	}
+	if art := a.art.get(spotify.Sized(url, px), false); art != nil && !art.failed {
+		return art.tint
+	}
+	return ui.Color{}
+}
+
+func (a *app) pageTint(page pageKind) ui.Color {
+	if page == pageHome {
+		return a.homeTint
+	}
+	return a.pageTints[page]
+}
+
+func (a *app) setPageTint(c *ui.Context, page pageKind, tint ui.Color) {
+	if tint == (ui.Color{}) {
+		return
+	}
+	var prev ui.Color
+	if page == pageHome {
+		prev = a.homeTint
+		a.homeTint = tint
+	} else {
+		if a.pageTints == nil {
+			a.pageTints = map[pageKind]ui.Color{}
+		}
+		prev = a.pageTints[page]
+		a.pageTints[page] = tint
+	}
+	if tint != prev && c != nil && !a.glassEnabled() {
+		c.AnimationFrame()
+	}
+}
+
+// secondaryPillButton draws a secondary capsule action button that adapts to
+// Liquid Glass when enabled and falls back to classic pill fill otherwise.
+func (a *app) secondaryPillButton(c *ui.Context, icon *ui.SVG, label string) ui.Element {
+	p := a.pal
+	b := pillButton(c, icon, label, p.hover.Over(p.bg), p.text)
+	if a.glassEnabled() {
+		b.Material(a.liquidGlass(true, ui.Color{}))
+	}
+	return b
+}
+
+// styleSidebarItem applies the shared sidebar selection and hover surface
+// across navigation items, playlists, and followed artists.
+func (a *app) styleSidebarItem(el ui.Element, selected, hovered bool) {
+	p := a.pal
+	if a.glassEnabled() && (selected || hovered) {
+		var tint ui.Color
+		if selected {
+			tint = p.accent.Alpha(0.14)
+		}
+		el.Material(a.liquidGlass(true, tint))
+		if !p.dark && selected {
+			el.Shadow(0, 2, 8, -2, ui.RGBA(0, 0, 0, 0.06))
+		}
+		return
+	}
+	bg := ui.Transparent
+	switch {
+	case selected:
+		bg = p.press
+	case hovered:
+		bg = p.hover
+	}
+	el.Background(el.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
+}

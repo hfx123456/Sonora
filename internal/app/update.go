@@ -4,11 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	"vinyl/internal/spotify"
 )
 
 // Sonora updates itself with MyGo's signed updates. mygo build signs each
@@ -55,8 +60,45 @@ type updates struct {
 	latest   bool // the last check found nothing newer
 }
 
+// proxiedUpdateSource fetches GitHub release manifests and update archives
+// through spotify.Proxy so Sonora's in-app proxy setting works for self-updates.
+type proxiedUpdateSource struct {
+	client *http.Client
+}
+
+func newProxiedUpdateSource() proxiedUpdateSource {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.Proxy = spotify.Proxy
+	return proxiedUpdateSource{client: &http.Client{Transport: t}}
+}
+
+func (s proxiedUpdateSource) Manifest(ctx context.Context, _ bool) (io.ReadCloser, error) {
+	manifestURL := fmt.Sprintf("%s/latest/download/update-%s-%s.json", releasesPage, runtime.GOOS, runtime.GOARCH)
+	return s.Open(ctx, manifestURL)
+}
+
+func (s proxiedUpdateSource) Open(ctx context.Context, rawURL string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Sonora/"+appVersion())
+	res, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != http.StatusOK {
+		res.Body.Close()
+		return nil, fmt.Errorf("HTTP %d", res.StatusCode)
+	}
+	return res.Body, nil
+}
+
 // myGoUpdates is the updater of a build of mygo build.
 func myGoUpdates(post func(func())) updates {
+	if mygo.Updater.Enabled() {
+		mygo.Updater.SetSource(newProxiedUpdateSource())
+	}
 	return updates{
 		enabled: mygo.Updater.Enabled(),
 		check: func(ctx context.Context) (*release, error) {

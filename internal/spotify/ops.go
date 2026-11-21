@@ -74,7 +74,6 @@ func refreshOps(op, used string) bool {
 	if time.Since(refreshed) < 10*time.Minute {
 		return false
 	}
-	refreshed = time.Now()
 	opsMu.RLock()
 	need := make(map[string]bool, len(ops))
 	for name := range ops {
@@ -86,6 +85,7 @@ func refreshOps(op, used string) bool {
 		log.Printf("spotify: reading the web player's queries: %v", err)
 		return false
 	}
+	refreshed = time.Now()
 	opsMu.Lock()
 	for name, h := range found {
 		if need[name] {

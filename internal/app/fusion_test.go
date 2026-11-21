@@ -103,20 +103,19 @@ func TestFusionWaitingNotesTransition(t *testing.T) {
 	a := newTestApp()
 	a.pl.Cue([]spotify.Track{{ID: "waiting", Name: "Song"}})
 	a.fusion.loading = true
-	line, detail := a.fusionCurrent()
-	if line.Text != fusionWaitingNotes || detail != "" {
+	caption := a.fusionCurrent()
+	if caption.line.Text != fusionWaitingNotes || caption.detail != "" {
 		t.Fatal("loading did not show waiting notes")
 	}
 	a.fusion.loading = false
 	a.fusion.lines = []lyrics.Line{{At: 5 * time.Second, End: 10 * time.Second, Text: "第一句"}}
 	a.pl.Hold(time.Second)
-	line, detail = a.fusionCurrent()
-	if line.Text != fusionWaitingNotes || detail != "" {
+	caption = a.fusionCurrent()
+	if caption.line.Text != fusionWaitingNotes || caption.detail != "" {
 		t.Fatal("intro did not show waiting notes")
 	}
 	a.pl.Hold(5 * time.Second)
-	line, _ = a.fusionCurrent()
-	if line.Text != "第一句" {
+	if a.fusionCurrent().line.Text != "第一句" {
 		t.Fatal("notes did not switch to the first lyric")
 	}
 }
@@ -130,16 +129,16 @@ func TestFusionInstrumentalNoticeShowsNotes(t *testing.T) {
 			a.fusion.lines = []lyrics.Line{{At: time.Second, End: 5 * time.Second, Text: text, Unsynced: unsynced}}
 			for _, position := range []time.Duration{0, 2 * time.Second, 30 * time.Second} {
 				a.pl.Hold(position)
-				line, detail := a.fusionCurrent()
-				if line.Text != fusionWaitingNotes || detail != "" {
-					t.Fatalf("notice %q at %v: %q, %q", text, position, line.Text, detail)
+				caption := a.fusionCurrent()
+				if caption.line.Text != fusionWaitingNotes || caption.detail != "" {
+					t.Fatalf("notice %q at %v: %q, %q", text, position, caption.line.Text, caption.detail)
 				}
 			}
 		}
 	}
 	a.fusion.lines = []lyrics.Line{{At: time.Second, End: 2 * time.Second, Text: "纯音乐，请欣赏"}, {At: 3 * time.Second, End: 8 * time.Second, Text: "真正的歌词"}}
 	a.pl.Hold(4 * time.Second)
-	if line, _ := a.fusionCurrent(); line.Text != "真正的歌词" {
+	if a.fusionCurrent().line.Text != "真正的歌词" {
 		t.Fatal("real lyrics were hidden")
 	}
 }
@@ -150,65 +149,75 @@ func TestFusionInstrumentalShowsTrack(t *testing.T) {
 	a.pl.Cue([]spotify.Track{{ID: "song", Name: "歌名", Artists: []spotify.Artist{{Name: "歌手"}}}})
 	a.fusion.lines = []lyrics.Line{{At: time.Second, End: 3 * time.Second, Text: "第一句"}, {At: 10 * time.Second, End: 15 * time.Second, Text: "下一句"}}
 	a.pl.Hold(6 * time.Second)
-	line, detail := a.fusionCurrent()
-	if line.Text != "♪  歌名" || detail != "歌手" {
-		t.Fatalf("instrumental caption = %q, %q", line.Text, detail)
+	caption := a.fusionCurrent()
+	if caption.line.Text != "♪  歌名" || caption.detail != "歌手" {
+		t.Fatalf("instrumental caption = %q, %q", caption.line.Text, caption.detail)
 	}
 	a.pl.Hold(10 * time.Second)
-	line, _ = a.fusionCurrent()
-	if line.Text != "下一句" {
+	if a.fusionCurrent().line.Text != "下一句" {
 		t.Fatal("instrumental caption did not return to lyrics")
 	}
 }
 
-// The second desktop line is a translation, never the next original lyric.
+// Foreign songs show the current translation when one is available.
 func TestFusionOriginalAndTranslation(t *testing.T) {
 	a := newTestApp()
 	a.pl.Cue([]spotify.Track{{ID: "1", Name: "Song"}})
 	a.pl.Hold(2 * time.Second)
 	a.fusion.lines = []lyrics.Line{{At: time.Second, End: 4 * time.Second, Text: "ありがとう", Translation: "谢谢你"}, {At: 4 * time.Second, End: 8 * time.Second, Text: "いつも"}}
-	line, translation := a.fusionCurrent()
-	if line.Text != "ありがとう" || translation != "谢谢你" {
+	caption := a.fusionCurrent()
+	if caption.line.Text != "ありがとう" || caption.detail != "谢谢你" || caption.preview {
 		t.Fatal("wrong bilingual line")
 	}
 	a.fusion.lines[0].Translation = ""
-	_, translation = a.fusionCurrent()
-	if translation != "" {
+	if translation := a.fusionCurrent().detail; translation != "" {
 		t.Fatalf("substituted another line: %q", translation)
 	}
 	a.settings.FusionOffset = 3000
-	line, _ = a.fusionCurrent()
-	if line.Text != "いつも" {
+	if a.fusionCurrent().line.Text != "いつも" {
 		t.Fatal("offset did not affect current line")
 	}
 }
 
-// Chinese songs have no translation placeholder, duplicate translation, or unused second row.
-func TestFusionChineseHasNoTranslationRow(t *testing.T) {
+// A Chinese preview skips non-lyrics, becomes the current line on time, and follows a backward seek.
+func TestFusionChineseNextLine(t *testing.T) {
 	a := newTestApp()
-	a.settings = defaultSettings()
 	a.settings.FusionMode = "capsule"
-	a.settings.FusionPanel = true
-	a.pl.Cue([]spotify.Track{{ID: "chinese", Name: "表白", Artists: []spotify.Artist{{Name: "萧亚轩"}}}})
-	a.pl.Hold(2 * time.Second)
-	a.fusion.lines = []lyrics.Line{{At: time.Second, End: 8 * time.Second, Text: "晚风轻轻吹过窗前"}, {At: 8 * time.Second, End: 12 * time.Second, Text: "灯光落在旧相片", Translation: "灯光落在旧相片"}}
-	_, translation := a.fusionCurrent()
-	if translation != "" {
-		t.Fatalf("Chinese translation row: %q", translation)
+	a.settings.FusionHideTranslation = true
+	a.settings.FusionOffset = 500
+	a.pl.Cue([]spotify.Track{{ID: "chinese", Name: "表白"}})
+	a.fusion.lines = prepareFusionLines([]lyrics.Line{
+		{At: time.Second, Text: "晚风轻轻吹过窗前", Translation: "晚风轻轻吹过窗前"},
+		{At: 4 * time.Second, Text: " "},
+		{At: 5 * time.Second, Text: "作词：小林"},
+		{At: 6 * time.Second, Text: "纯音乐，请欣赏"},
+		{At: 8 * time.Second, Text: "同一时间戳的另一行"},
+		{At: 8 * time.Second, Text: "灯光落在旧相片"},
+		{At: 12 * time.Second, Text: "再听一遍"},
+	})
+	var twoRows, lastRow int
+	for _, sample := range []struct {
+		ms            int
+		current, next string
+	}{
+		{1000, "晚风轻轻吹过窗前", "灯光落在旧相片"},
+		{7500, "灯光落在旧相片", "再听一遍"},
+		{11500, "再听一遍", ""},
+		{1000, "晚风轻轻吹过窗前", "灯光落在旧相片"},
+	} {
+		a.pl.Hold(time.Duration(sample.ms) * time.Millisecond)
+		caption := a.fusionCurrent()
+		if caption.line.Text != sample.current || caption.detail != sample.next || caption.preview != (sample.next != "") {
+			t.Fatalf("at %d ms: got %+v, want %q above %q", sample.ms, caption, sample.current, sample.next)
+		}
+		if sample.next == "" {
+			_, lastRow = a.fusionWindowSize()
+		} else {
+			_, twoRows = a.fusionWindowSize()
+		}
 	}
-	_, height := a.fusionWindowSize()
-	if height != 50 {
-		t.Fatalf("Chinese lyrics left a second row: height=%d", height)
-	}
-	tester := ui.NewTester(a.view, 1180, 780)
-	tester.Frame()
-	if tester.HasText("暂无中文翻译") {
-		t.Fatal("Chinese song still asks for translation")
-	}
-	a.pl.Hold(9 * time.Second)
-	_, translation = a.fusionCurrent()
-	if translation != "" {
-		t.Fatal("duplicated original as translation")
+	if twoRows <= lastRow {
+		t.Fatalf("capsule height with preview %d, on last line %d", twoRows, lastRow)
 	}
 }
 
@@ -241,8 +250,7 @@ func TestFusionAppearanceMenu(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, translation := a.fusionCurrent()
-	if translation != "" || !a.settings.FusionHideTranslation || !a.settings.FusionFloatingIsland || !a.settings.FusionLocked || a.settings.FusionScale != 110 || !a.pl.Playing() {
+	if a.fusionCurrent().detail != "" || !a.settings.FusionHideTranslation || !a.settings.FusionFloatingIsland || !a.settings.FusionLocked || a.settings.FusionScale != 110 || !a.pl.Playing() {
 		t.Fatal("appearance controls changed the wrong state")
 	}
 	a.toggleFusionLock()

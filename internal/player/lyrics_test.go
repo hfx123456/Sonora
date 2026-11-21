@@ -205,3 +205,30 @@ func TestAdoptLyricsGuardsLateCueResult(t *testing.T) {
 		t.Fatalf("next track kept previous override: loaded=%v lines=%+v", loaded, lines)
 	}
 }
+
+// An original-only fallback used to interrupt the player's lookup for bilingual lyrics.
+func TestFallbackLyricsAllowLateTranslation(t *testing.T) {
+	old := lyricsOf
+	t.Cleanup(func() { lyricsOf = old })
+	started, release := make(chan struct{}), make(chan struct{})
+	lyricsOf = func(spotify.Track) []lyrics.Line {
+		close(started)
+		<-release
+		return []lyrics.Line{{Text: "青い空", Translation: "蓝天", At: time.Second}}
+	}
+	ch := make(chan func(), 16)
+	p := New(func(fn func()) { ch <- fn })
+	p.Cue([]spotify.Track{{ID: "song"}})
+	p.cue(0, false, 0)
+	<-started
+	p.UseFallbackLyrics("spotify:track:song", []lyrics.Line{{Text: "青い空", At: time.Second}})
+	fallback, loaded := p.Lyrics()
+	close(release)
+	next(t, ch)
+	if loaded || len(fallback) != 1 || fallback[0].Translation != "" {
+		t.Fatalf("fallback was not available during lookup: loaded=%v lines=%+v", loaded, fallback)
+	}
+	if lines, loaded := p.Lyrics(); !loaded || len(lines) != 1 || lines[0].Translation != "蓝天" {
+		t.Fatalf("fallback hid bilingual lyrics: loaded=%v lines=%+v", loaded, lines)
+	}
+}

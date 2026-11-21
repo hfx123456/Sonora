@@ -130,6 +130,25 @@ func TestNowPlayingFrameBudget(t *testing.T) {
 	}
 }
 
+// The stage's final line stops asking for new frames once its words have settled.
+func TestStageStopsBuildingAfterFinalLine(t *testing.T) {
+	a := newTestApp()
+	track := spotify.Track{ID: "stage", Duration: 60000}
+	a.pl.Cue([]spotify.Track{track})
+	a.pl.SetLyrics([]lyrics.Line{{At: time.Second, End: 3 * time.Second, Text: "晚风轻轻吹过窗前"}})
+	a.pl.Hold(12 * time.Second)
+	builds := 0
+	tt := ui.NewTester(func(c *ui.Context) {
+		builds++
+		a.stage(c, &track, white)
+	}, 880, 580)
+	before := builds
+	tt.Advance(time.Second)
+	if builds != before {
+		t.Fatalf("settled lyrics asked for %d more builds", builds-before)
+	}
+}
+
 // Another song's backdrop fades in over the last one's, which is then let
 // go, so that the backdrop stops asking for frames.
 func TestBackdropFadeEnds(t *testing.T) {
@@ -148,6 +167,42 @@ func TestBackdropFadeEnds(t *testing.T) {
 	tt.Frame()
 	if a.backdropCache.before != nil {
 		t.Error("the last song's backdrop still fades after the fade")
+	}
+}
+
+// Flow used to freeze on software renderers; it now repaints while playing and sleeps when paused or motion is reduced.
+func TestFlowBackdropPaintBudget(t *testing.T) {
+	a := newTestApp()
+	a.settings.Flow = true
+	a.pl.Hold(0)
+	builds := 0
+	tt := ui.NewTester(func(c *ui.Context) {
+		builds++
+		a.backdrop(c, nil, ui.RGB(60, 110, 200))
+	}, 240, 144)
+	bd := &a.backdropCache
+	first, beforeBuilds := bd.at, builds
+	tt.Advance(time.Second)
+	if bd.at.Sub(first) < 900*time.Millisecond || bd.drift <= 0 || builds != beforeBuilds {
+		t.Fatal("playing flow must update through paint timers without rebuilding the view")
+	}
+
+	a.pl.StopConnect()
+	tt.Advance(3 * time.Second)
+	stopped := bd.last
+	tt.Advance(time.Second)
+	if bd.last != stopped {
+		t.Fatal("settled flow kept repainting while paused")
+	}
+
+	a.pl.Hold(0)
+	tt.Frame()
+	tt.Advance(time.Second)
+	tt.SetPreferences(ui.Preferences{ReduceMotion: true})
+	stopped = bd.last
+	tt.Advance(time.Second)
+	if bd.last.Sub(stopped) > backdropFrame || bd.speed != 0 {
+		t.Fatal("flow kept repainting with reduced motion")
 	}
 }
 
@@ -170,5 +225,26 @@ func TestFusionIntroFrameBudget(t *testing.T) {
 	}
 	if delay := fusionFloatingDelay(lines, time.Second, true, true); delay < time.Second {
 		t.Fatalf("reduced motion still runs at emblem speed: %v", delay)
+	}
+}
+
+// Unsynced lyrics on the stage must not schedule negative-duration timers, and
+// open dialogs must suppress the global Space play/pause shortcut.
+func TestStageUnsyncedFrameBudgetAndDialogSpaceSuppression(t *testing.T) {
+	a, tt, _ := playingApp()
+	a.pl.SetLyrics([]lyrics.Line{{Text: "无时间轴第一句", Unsynced: true}, {Text: "无时间轴第二句", Unsynced: true}})
+	a.nowPlaying, a.npPane = true, paneStage
+	if n := framesAt(a, tt, 5*time.Second); n > 3 {
+		t.Fatalf("unsynced stage scheduled %d frames/sec", n)
+	}
+
+	a.nowPlaying = false
+	a.naming = nameDialog{open: true, name: "我的歌单"}
+	tt.Frame()
+	wasPlaying := a.pl.Playing()
+	tt.Key(0, ui.KeySpace)
+	tt.Frame()
+	if a.pl.Playing() != wasPlaying {
+		t.Fatal("Space inside open playlist name dialog toggled playback")
 	}
 }

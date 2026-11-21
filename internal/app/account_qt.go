@@ -188,14 +188,16 @@ func (a *app) renewQtIdentity() (spotify.Identity, error) {
 	if err != nil {
 		return spotify.Identity{}, err
 	}
-	if accountEpoch() != epoch {
+	if accountEpoch() != epoch || !a.hasAccountSession() {
 		return spotify.Identity{}, spotify.ErrSignedOut
 	}
 	qtweb.SetKnownLogin(!identity.Anonymous)
-	if !identity.Anonymous {
+	if identity.Anonymous {
+		a.setAccountSession(false)
+	} else {
 		kept, _ = qtAccountCookies(ctx)
 		mygo.RunOnMain(func() {
-			if accountEpoch() == epoch {
+			if accountEpoch() == epoch && a.hasAccountSession() {
 				a.signin.cookies = kept
 			}
 		})
@@ -211,62 +213,68 @@ func (a *app) openQtLogin() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.qtCancel, s.shown = cancel, true
 	go func() {
-		captureMu.Lock()
-		defer captureMu.Unlock()
 		defer cancel()
 		defer a.post(func() {
 			if gen == s.gen {
 				s.qtID, s.qtCancel, s.shown = 0, nil, false
 			}
 		})
-		if err := ensureQtCookies(); err != nil || ctx.Err() != nil {
-			a.post(func() {
-				if gen == s.gen && ctx.Err() == nil {
-					a.toast = "登录数据迁移未完成"
+		kept, accepted := func() (string, bool) {
+			captureMu.Lock()
+			defer captureMu.Unlock()
+			if err := ensureQtCookies(); err != nil || ctx.Err() != nil {
+				a.post(func() {
+					if gen == s.gen && ctx.Err() == nil {
+						a.toast = "登录数据迁移未完成"
+					}
+				})
+				return "", false
+			}
+			client, release, err := qtweb.Acquire()
+			if err != nil {
+				a.post(func() {
+					if gen == s.gen {
+						a.toast = "无法启动登录组件"
+					}
+				})
+				return "", false
+			}
+			defer release()
+			id := qtAuthSequence.Add(1)
+			mygo.RunOnMain(func() {
+				if gen != s.gen || a.quitting {
+					cancel()
+					return
+				}
+				s.qtID = id
+			})
+			defer closeQtAuth(client, id)
+			if _, err := client.Call(ctx, "auth.open", map[string]any{"id": id, "url": spotify.LoginURL, "preload": spotify.CaptureJS, "show": true}); err != nil {
+				return "", false
+			}
+			identity, err := captureQt(ctx, client, id, true)
+			if err != nil || accountEpoch() != epoch {
+				return "", false
+			}
+			kept, _ := qtAccountCookies(ctx)
+			if ctx.Err() != nil || accountEpoch() != epoch {
+				return "", false
+			}
+			ok := false
+			mygo.RunOnMain(func() {
+				if gen == s.gen && !a.quitting && accountEpoch() == epoch && ctx.Err() == nil {
+					a.setAccountSession(true)
+					spotify.SetIdentity(identity)
+					ok = true
 				}
 			})
-			return
-		}
-		client, release, err := qtweb.Acquire()
-		if err != nil {
-			a.post(func() {
-				if gen == s.gen {
-					a.toast = "无法启动登录组件"
-				}
-			})
-			return
-		}
-		defer release()
-		id := qtAuthSequence.Add(1)
-		mygo.RunOnMain(func() {
-			if gen != s.gen || a.quitting {
-				cancel()
-				return
-			}
-			s.qtID = id
-		})
-		defer closeQtAuth(client, id)
-		if _, err := client.Call(ctx, "auth.open", map[string]any{"id": id, "url": spotify.LoginURL, "preload": spotify.CaptureJS, "show": true}); err != nil {
-			return
-		}
-		identity, err := captureQt(ctx, client, id, true)
-		if err != nil || accountEpoch() != epoch {
-			return
-		}
-		kept, _ := qtAccountCookies(ctx)
-		if ctx.Err() != nil || accountEpoch() != epoch {
-			return
-		}
-		accepted := false
-		mygo.RunOnMain(func() {
-			if gen == s.gen && !a.quitting && accountEpoch() == epoch && ctx.Err() == nil {
-				spotify.SetIdentity(identity)
-				accepted = true
-			}
-		})
+			return kept, ok
+		}()
 		if !accepted {
 			return
 		}
+		// captureMu is released before spotify.Account so any 401 renewal
+		// cannot deadlock on captureMu.
 		prof, err := spotify.Account()
 		a.post(func() {
 			if gen != s.gen || a.quitting || accountEpoch() != epoch {

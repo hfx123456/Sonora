@@ -13,7 +13,12 @@ var custom atomic.Pointer[url.URL]
 
 // SetProxy has the requests from now on go through u; nil goes back to the
 // system's proxy.
-func SetProxy(u *url.URL) { custom.Store(u) }
+func SetProxy(u *url.URL) {
+	custom.Store(u)
+	if Client != nil {
+		Client.CloseIdleConnections()
+	}
+}
 
 // Proxy is the proxy Client's requests take: the listener's, else the
 // system's. The app's requests that go through another client take it too:

@@ -67,15 +67,20 @@ func prepareFusionLines(lines []lyrics.Line) []lyrics.Line {
 		if line.Unsynced || lyrics.IsCredit(line.Text) {
 			continue
 		}
-		if line.End <= line.At {
-			line.End = line.At + 6*time.Second
-			if index+1 < len(lines) && lines[index+1].At > line.At {
-				line.End = lines[index+1].At
-			}
-		}
 		if len(line.Words) == 0 {
+			if line.End <= line.At || (index+1 < len(lines) && line.End == lines[index+1].At && line.End-line.At > 6*time.Second) {
+				line.End = line.At + 6*time.Second
+				if index+1 < len(lines) && lines[index+1].At > line.At {
+					line.End = min(line.End, lines[index+1].At)
+				}
+			}
 			line.Words = lyrics.SpreadWords(line.Text, line.At, line.End)
 			line.Timed = false
+		} else if line.End <= line.At {
+			line.End = line.At + 6*time.Second
+			if index+1 < len(lines) && lines[index+1].At > line.At {
+				line.End = min(line.End, lines[index+1].At)
+			}
 		}
 	}
 	return lines
@@ -139,9 +144,10 @@ func fusionTranslationLine(original lyrics.Line, text string) lyrics.Line {
 }
 
 type fusionCaption struct {
-	line        lyrics.Line
-	translation string
-	position    time.Duration
+	line     lyrics.Line
+	detail   string
+	preview  bool
+	position time.Duration
 }
 
 type fusionCaptionMotion struct {
@@ -151,13 +157,12 @@ type fusionCaptionMotion struct {
 	ready             bool
 }
 
-func (motion *fusionCaptionMotion) update(scope string, line lyrics.Line, translation string, position time.Duration, now time.Time) {
-	next := fusionCaption{line, translation, position}
+func (motion *fusionCaptionMotion) update(scope string, next fusionCaption, now time.Time) {
 	if !motion.ready || motion.scope != scope {
 		*motion = fusionCaptionMotion{scope: scope, current: next, ready: true}
 		return
 	}
-	if line.At != motion.current.line.At || line.Text != motion.current.line.Text || translation != motion.current.translation {
+	if next.line.At != motion.current.line.At || next.line.Text != motion.current.line.Text || next.detail != motion.current.detail || next.preview != motion.current.preview {
 		motion.previous = motion.current
 		motion.current = next
 		motion.changed = now
@@ -173,17 +178,16 @@ func (motion *fusionCaptionMotion) phase(now time.Time, still bool) float32 {
 	return clamp01(float32(now.Sub(motion.changed)) / float32(fusionCaptionDuration))
 }
 
-func (a *app) fusionAnimatedCaption(c *ui.Context, line lyrics.Line, translation string, originalSize, translationSize float32, outline bool, fitWidth float32) {
+func (a *app) fusionAnimatedCaption(c *ui.Context, originalSize, detailSize float32, outline bool, fitWidth float32) {
 	motion := &a.fusion.caption
 	still := a.settings.FusionStatic || c.Preferences().ReduceMotion
-	motion.update(fusionTrackKey(a.pl.Current())+a.settings.FusionMode, line, translation, a.fusionPosition(), c.Now())
 	phase := motion.phase(c.Now(), still)
 	fade := 1 - float32(math.Pow(float64(clamp01(1-phase*1.25)), 3))
 	leaveFade := clamp01(1 - phase*1.4)
 	springPos := fusionSpringEval(phase, 0.34)
 	height := originalSize * 1.5
-	if translation != "" {
-		height += translationSize*1.65 + 6*a.fusionScale()
+	if motion.current.detail != "" {
+		height += detailSize*1.65 + 6*a.fusionScale()
 	}
 	ui.Box(c.Key("caption-motion")).Height(height).AlignSelf(ui.Stretch).Clip().Children(func() {
 		draw := func(key string, caption fusionCaption, opacity, offset, scale float32) {
@@ -192,14 +196,16 @@ func (a *app) fusionAnimatedCaption(c *ui.Context, line lyrics.Line, translation
 				if outline {
 					dim = white.Alpha(.55)
 				}
-				if caption.line.Text == fusionWaitingNotes && caption.translation == "" {
+				if caption.line.Text == fusionWaitingNotes && caption.detail == "" {
 					a.fusionWaitingAnimation(c, originalSize, caption.position, still)
 				} else {
 					a.fusionSingleLine(c, caption.line, caption.position, originalSize, white, dim, outline, !still, fitWidth)
 				}
-				if caption.translation != "" {
-					translated := fusionTranslationLine(caption.line, caption.translation)
-					a.fusionSingleLine(c, translated, caption.position, translationSize, white.Alpha(.86), white.Alpha(.38), outline, !still, fitWidth)
+				if caption.preview {
+					a.fusionSingleLine(c, lyrics.Line{Text: caption.detail}, caption.position, detailSize, white.Alpha(.65), dim, outline, false, fitWidth)
+				} else if caption.detail != "" {
+					translated := fusionTranslationLine(caption.line, caption.detail)
+					a.fusionSingleLine(c, translated, caption.position, detailSize, white.Alpha(.86), white.Alpha(.38), outline, !still, fitWidth)
 				}
 			})
 		}

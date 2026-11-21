@@ -47,7 +47,7 @@ func (a *app) homePage(c *ui.Context) {
 	top, bottom := a.insets(c)
 	page := ui.Scroll(c.Key("home")).TrackScroll(&a.pageScroll).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0)
 	if !a.glassEnabled() {
-		a.homeWash(c, page, top)
+		a.pageWash(c, page, top, a.homeTint)
 	}
 	page.Children(func() {
 		a.startMark(c)
@@ -58,6 +58,8 @@ func (a *app) homePage(c *ui.Context) {
 			return
 		}
 		sections := a.withPlayedFrom(a.homeSections)
+		var shortcutTint ui.Color
+		var shortcutHovered bool
 		if a.homeFacet != "" {
 			sections = a.facets[a.homeFacet]
 			if sections == nil {
@@ -75,30 +77,45 @@ func (a *app) homePage(c *ui.Context) {
 				return
 			}
 		} else {
-			a.shortcutGrid(c)
+			shortcutTint, shortcutHovered = a.shortcutGrid(c)
 		}
+		var hoveredTint, fallbackTint ui.Color
 		for i := range sections {
-			a.shelf(c.Key(sectionKey(&sections[i])), &sections[i])
+			t, hov := a.shelf(c.Key(sectionKey(&sections[i])), &sections[i])
+			if hov && t != (ui.Color{}) {
+				hoveredTint = t
+			}
+			if i == 0 && fallbackTint == (ui.Color{}) {
+				fallbackTint = t
+			}
+		}
+		switch {
+		case shortcutHovered:
+			a.setPageTint(c, pageHome, shortcutTint)
+		case hoveredTint != (ui.Color{}):
+			a.setPageTint(c, pageHome, hoveredTint)
+		case shortcutTint != (ui.Color{}):
+			a.setPageTint(c, pageHome, shortcutTint)
+		case fallbackTint != (ui.Color{}):
+			a.setPageTint(c, pageHome, fallbackTint)
 		}
 	})
 }
 
-// homeWash colors the top of page, as Spotify's, with the cover pointed at
-// in the grid, else the first's: it fades as the page scrolls. It is the
-// page's background, under what scrolls, which an element over it would
-// tint, and take the pointer from.
-func (a *app) homeWash(c *ui.Context, page ui.Element, top float32) {
-	if a.homeTint == (ui.Color{}) {
+// pageWash colors the top of page, as Spotify's home wash, with the hovered
+// or default cover color, fading as the page scrolls.
+func (a *app) pageWash(c *ui.Context, page ui.Element, top float32, rawTint ui.Color) {
+	if rawTint == (ui.Color{}) {
 		return
 	}
-	tint := page.AnimateColor("tint", a.homeTint, ui.Animation{Duration: 600 * time.Millisecond})
+	tint := page.AnimateColor("tint", rawTint, ui.Animation{Duration: 600 * time.Millisecond})
 	strength := float32(0.2)
 	if a.pal.dark {
 		strength = 0.42
 	}
 	strength *= max(0, 1-a.pageScroll.Y/400)
 	_, h := c.Size()
-	page.LinearGradient(ui.LinearGradient{Angle: 180, Oklab: true, Stops: []ui.GradientStop{
+	page.LinearGradient(ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
 		{Color: tint.Alpha(strength), At: 0},
 		{Color: tint.Alpha(0), At: min(1, (top+340)/max(h, 1))},
 	}})
@@ -151,7 +168,11 @@ func (a *app) loadFacet(id string) {
 		if a.facets == nil {
 			a.facets = map[string][]spotify.HomeSection{}
 		}
-		a.facets[id] = h.Sections
+		sections := h.Sections
+		if sections == nil {
+			sections = []spotify.HomeSection{}
+		}
+		a.facets[id] = sections
 	})
 }
 
@@ -190,22 +211,27 @@ func (a *app) gridItems() []spotify.HomeItem {
 	return out
 }
 
-func (a *app) shortcutGrid(c *ui.Context) {
+func (a *app) shortcutGrid(c *ui.Context) (ui.Color, bool) {
 	items := a.gridItems()
 	if len(items) == 0 {
-		return
+		return ui.Color{}, false
 	}
-	var tint ui.Color
+	var hoveredTint, fallbackTint ui.Color
 	ui.Grid(c).Columns(a.shortcutColumns(c)).Gap(8).Margin(0, 0, 8, 0).Children(func() {
 		for i := range items {
-			if t, hovered := a.shortcutTile(c.Key(items[i].ID()), &items[i]); hovered || i == 0 && tint == (ui.Color{}) {
-				tint = cmp.Or(t, tint)
+			t, hovered := a.shortcutTile(c.Key(items[i].ID()), &items[i])
+			if hovered && t != (ui.Color{}) {
+				hoveredTint = t
+			}
+			if i == 0 && fallbackTint == (ui.Color{}) {
+				fallbackTint = t
 			}
 		}
 	})
-	if tint != (ui.Color{}) {
-		a.homeTint = tint
+	if hoveredTint != (ui.Color{}) {
+		return hoveredTint, true
 	}
+	return fallbackTint, false
 }
 
 // shortcutColumns is how many columns the grid has: four where they fit.
@@ -221,21 +247,9 @@ func (a *app) shortcutColumns(c *ui.Context) int {
 // cover's color, once loaded, and whether the pointer is on it.
 func (a *app) shortcutTile(c *ui.Context, it *spotify.HomeItem) (ui.Color, bool) {
 	name := itemName(it)
-	b := ui.ButtonBase(c).Height(56).Radius(14).Clip().Gap(12).Padding(6, 12, 6, 6).AlignItems(ui.Center).FocusRing(false).Label(name)
+	b := ui.ButtonBase(c).Height(56).Clip().Gap(12).Padding(6, 12, 6, 6).AlignItems(ui.Center).FocusRing(false).Label(name)
 	hovered := b.Hovered()
-	var bg ui.Color
-	if a.glassEnabled() {
-		bg = ui.Transparent
-		if hovered {
-			bg = a.pal.text.Alpha(0.06)
-		}
-	} else {
-		bg = a.pal.text.Alpha(0.06)
-		if hovered {
-			bg = a.pal.text.Alpha(0.12)
-		}
-	}
-	b.Background(b.AnimateColor("bg", bg, ui.Animation{Duration: 140 * time.Millisecond}))
+	a.styleBorderlessCard(b, 14, hovered)
 	var tint ui.Color
 	b.Children(func() {
 		ui.Box(c).Size(44, 44).Shrink(0).Radius(8).Children(func() {
@@ -251,7 +265,7 @@ func (a *app) shortcutTile(c *ui.Context, it *spotify.HomeItem) (ui.Color, bool)
 }
 
 // shelf shows a section's cards in an independently scrolling row.
-func (a *app) shelf(c *ui.Context, s *spotify.HomeSection) {
+func (a *app) shelf(c *ui.Context, s *spotify.HomeSection) (ui.Color, bool) {
 	cols := a.columns(c, homeCardMin)
 	width, _ := c.Size()
 	cardWidth := max(float32(homeCardMin), (width-sidebarWidth-2*pagePad+24)/float32(cols))
@@ -283,13 +297,21 @@ func (a *app) shelf(c *ui.Context, s *spotify.HomeSection) {
 			a.goTo(route{page: pageSection, section: sectionKey(s)})
 		}
 	})
+	var tint ui.Color
+	var anyHovered bool
 	ui.ScrollHorizontal(c.Key("shelf:"+key)).TrackScroll(state).Height(cardWidth+80).Margin(0, -12, 0, -12).AlignItems(ui.Start).Children(func() {
 		for i := range items {
 			ui.Column(c.Key(items[i].ID())).Width(cardWidth).Shrink(0).Children(func() {
-				a.homeCard(c.Key("card"), &items[i])
+				if t, hovered := a.homeCard(c.Key("card"), &items[i]); hovered || i == 0 && tint == (ui.Color{}) {
+					tint = cmp.Or(t, tint)
+					if hovered {
+						anyHovered = true
+					}
+				}
 			})
 		}
 	})
+	return tint, anyHovered
 }
 
 // withPlayedFrom returns sections with what Vinyl played from first in
@@ -369,22 +391,30 @@ func (a *app) sectionPage(c *ui.Context) {
 		}
 	}
 	top, bottom := a.insets(c)
-	ui.Scroll(c.Key("section")).TrackScroll(&a.pageScroll).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0).Children(func() {
+	page := ui.Scroll(c.Key("section")).TrackScroll(&a.pageScroll).Grow(1).Padding(top+pageGap, pagePad, bottom+48, pagePad).ScrollbarInsets(top, 0, bottom, 0)
+	if !a.glassEnabled() {
+		a.pageWash(c, page, top, a.pageTint(pageSection))
+	}
+	page.Children(func() {
 		a.startMark(c)
 		defer a.endMark(c)
 		a.heading(c, s.Title, "")
+		var tint ui.Color
 		ui.Grid(c).Columns(a.columns(c, homeCardMin)).GapY(6).Margin(0, -12, 0, -12).Children(func() {
 			for i := range items {
-				a.homeCard(c.Key(items[i].ID()), &items[i])
+				if t, hovered := a.homeCard(c.Key(items[i].ID()), &items[i]); hovered || i == 0 && tint == (ui.Color{}) {
+					tint = cmp.Or(t, tint)
+				}
 			}
 		})
+		a.setPageTint(c, pageSection, tint)
 	})
 }
 
 // homeCard is a card of a section, as Spotify's: a cover, round for an
 // artist, its name and a line or two about it; pointed at, its background
 // lightens and a green play button rises over the cover.
-func (a *app) homeCard(c *ui.Context, it *spotify.HomeItem) {
+func (a *app) homeCard(c *ui.Context, it *spotify.HomeItem) (ui.Color, bool) {
 	p := a.pal
 	name := itemName(it)
 	// Justify(Start) resets ButtonBase's centering, which in a grid pushes
@@ -396,13 +426,14 @@ func (a *app) homeCard(c *ui.Context, it *spotify.HomeItem) {
 		bg = p.text.Alpha(0.06)
 	}
 	card.Background(card.AnimateColor("bg", bg, ui.Animation{Duration: 160 * time.Millisecond}))
+	var tint ui.Color
 	card.Children(func() {
 		radius := float32(6)
 		if it.Artist != nil {
 			radius = 999
 		}
 		ui.Box(c).AspectRatio(1).Radius(radius).Margin(0, 0, 6, 0).Shadow(0, 8, 22, -8, p.cardShade).Children(func() {
-			a.itemArt(c, it, 400, radius)
+			tint = a.itemArt(c, it, 400, radius)
 			a.greenPlay(c, ui.ButtonBase(c.Key("play")).Absolute().Bottom(8).Right(8), it, 46, hovered)
 		})
 		ui.Text(c, name).FontSize(14).FontWeight(600).SingleLine()
@@ -413,6 +444,7 @@ func (a *app) homeCard(c *ui.Context, it *spotify.HomeItem) {
 	if card.Clicked() {
 		a.openItem(it)
 	}
+	return tint, hovered
 }
 
 // itemArt fills its parent with the cover of it, and returns the cover's
@@ -559,9 +591,13 @@ func (a *app) playArtist(uri string) {
 		a.playFrom(spotify.HomeItem{Artist: &pg.ArtistCard}, pg.TopTracks, firstPlayable(pg.TopTracks))
 		return
 	}
+	gen := a.accountGen
 	go func() {
 		pg, err := spotify.ArtistDetail(uri)
 		a.post(func() {
+			if a.accountGen != gen {
+				return
+			}
 			if err != nil {
 				a.toast = "艺人加载失败"
 				return
@@ -576,8 +612,8 @@ func (a *app) playArtist(uri string) {
 func (a *app) homeSkeleton(c *ui.Context, s shimmer) {
 	ui.Grid(c.Key("grid")).Columns(a.shortcutColumns(c)).Gap(8).Margin(0, 0, 8, 0).Children(func() {
 		for i := range shortcutsMax {
-			ui.Row(c.Key(i)).Height(56).Radius(6).Gap(12).AlignItems(ui.Center).Background(a.pal.text.Alpha(0.04)).Children(func() {
-				s.bone(c, 6).Size(56, 56)
+			ui.Row(c.Key(i)).Height(56).Radius(14).Gap(12).Padding(6, 12, 6, 6).AlignItems(ui.Center).Children(func() {
+				s.bone(c, 8).Size(44, 44)
 				s.text(c, 14, 1.3).WidthPercent(boneWidth(i) / 2)
 			})
 		}

@@ -18,12 +18,12 @@ func readSystemProxy() *url.URL {
 		return nil
 	}
 	server, _, _ := k.GetStringValue("ProxyServer")
-	addr := pickProxy(server)
-	if addr == "" {
+	raw := pickProxy(server)
+	if raw == "" {
 		return nil
 	}
-	u, err := url.Parse("http://" + addr)
-	if err != nil {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
 		return nil
 	}
 	return u
@@ -32,8 +32,21 @@ func readSystemProxy() *url.URL {
 // pickProxy reads ProxyServer: "host:port", or "http=a:1;https=b:2;socks=c:3".
 func pickProxy(server string) string {
 	server = strings.TrimSpace(server)
+	if server == "" {
+		return ""
+	}
+	withScheme := func(addr, fallback string) string {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			return ""
+		}
+		if strings.Contains(addr, "://") {
+			return addr
+		}
+		return fallback + "://" + addr
+	}
 	if !strings.Contains(server, "=") {
-		return server
+		return withScheme(server, "http")
 	}
 	entries := map[string]string{}
 	for _, part := range strings.Split(server, ";") {
@@ -42,7 +55,13 @@ func pickProxy(server string) string {
 		}
 	}
 	if v := entries["https"]; v != "" {
-		return v
+		return withScheme(v, "http")
 	}
-	return entries["http"]
+	if v := entries["http"]; v != "" {
+		return withScheme(v, "http")
+	}
+	if v := entries["socks"]; v != "" {
+		return withScheme(v, "socks5")
+	}
+	return ""
 }

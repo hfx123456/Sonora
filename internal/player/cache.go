@@ -233,12 +233,16 @@ func (c *Cache) Size() int64 {
 	return n
 }
 
-// Clear drops every part kept.
+// Clear drops every part kept, keeping accurate used bytes for any file
+// currently locked by playback on Windows.
 func (c *Cache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var left int64
 	for _, p := range c.parts() {
-		os.Remove(p.path)
+		if os.Remove(p.path) != nil {
+			left += p.size
+		}
 	}
-	c.used = 0
+	c.used = left
 }

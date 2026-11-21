@@ -23,6 +23,10 @@ func TestParseLRC(t *testing.T) {
 	if i := Index(lines, 0); i != -1 {
 		t.Errorf("index at 0 = %d", i)
 	}
+	dups := Build("[00:10.00]First line\n[00:10.00]Second line\n[00:15.00]Third line", "[00:10.00]第一行\n[00:10.00]第二行\n[00:15.00]//", "")
+	if len(dups) != 3 || dups[0].Translation != "第一行" || dups[1].Translation != "第二行" || dups[2].Translation != "" {
+		t.Fatalf("duplicate timestamps or placeholder '//' mistranslated: %+v", dups)
+	}
 }
 
 func TestParseYRC(t *testing.T) {

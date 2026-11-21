@@ -69,7 +69,7 @@ func totp(key []byte, ms int64) string {
 // tokenQuery is the query /api/token wants: the code of now, and the code of
 // Spotify's clock, which must both be right.
 func tokenQuery(key []byte, version int, now, serverTime time.Time) string {
-	return "reason=init&productType=web_player" +
+	return "reason=init&productType=web-player" +
 		"&totp=" + totp(key, now.UnixMilli()) +
 		"&totpServer=" + totp(key, serverTime.UnixMilli()) +
 		"&totpVer=" + strconv.Itoa(version)

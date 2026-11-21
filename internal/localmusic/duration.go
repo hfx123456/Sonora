@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func duration(file *os.File, size int64) time.Duration {
+func duration(file *os.File, size int64, ext string) time.Duration {
 	header := make([]byte, 64)
 	if _, err := file.ReadAt(header, 0); err != nil {
 		return 0
@@ -42,6 +42,9 @@ func duration(file *os.File, size int64) time.Duration {
 	}
 	if string(header[4:8]) == "ftyp" {
 		return mp4Duration(file, 0, size, 0)
+	}
+	if ext != "" && ext != ".mp3" {
+		return 0
 	}
 	return mp3Duration(file, size, header)
 }
@@ -96,11 +99,14 @@ func mp3Duration(file *os.File, size int64, header []byte) time.Duration {
 		}
 		start += 10
 	}
+	if start >= size {
+		return 0
+	}
 	file.Seek(start, io.SeekStart)
 	data := make([]byte, 64<<10)
 	count, _ := file.Read(data)
 	data = data[:count]
-	for index := 0; index+4 < len(data); index++ {
+	for index := 0; index+4 <= len(data); index++ {
 		bits := binary.BigEndian.Uint32(data[index : index+4])
 		version, layer, bitrateIndex, sampleIndex := bits>>19&3, bits>>17&3, bits>>12&15, bits>>10&3
 		if bits>>21 != 0x7ff || version == 1 || layer != 1 || bitrateIndex == 0 || bitrateIndex == 15 || sampleIndex == 3 {
@@ -113,6 +119,7 @@ func mp3Duration(file *os.File, size int64, header []byte) time.Duration {
 		if mono {
 			side = 17
 		}
+		scale := int64(144000)
 		if version != 3 {
 			rate /= 2
 			if version == 0 {
@@ -123,13 +130,31 @@ func mp3Duration(file *os.File, size int64, header []byte) time.Duration {
 			if mono {
 				side = 9
 			}
+			scale = 72000
 		}
-		position := index + 4 + side
-		if position+12 <= len(data) && (string(data[position:position+4]) == "Xing" || string(data[position:position+4]) == "Info") && binary.BigEndian.Uint32(data[position+4:position+8])&1 != 0 {
-			frames := int64(binary.BigEndian.Uint32(data[position+8 : position+12]))
-			return time.Duration(frames*samples) * time.Second / time.Duration(rate)
+		crc := 0
+		if bits&(1<<16) == 0 {
+			crc = 2
 		}
-		return time.Duration((size-start-int64(index))*8) * time.Second / time.Duration(bitrate*1000)
+		for _, pos := range []int{index + 4 + crc + side, index + 4 + side} {
+			if pos+12 <= len(data) && (string(data[pos:pos+4]) == "Xing" || string(data[pos:pos+4]) == "Info") && binary.BigEndian.Uint32(data[pos+4:pos+8])&1 != 0 {
+				frames := int64(binary.BigEndian.Uint32(data[pos+8 : pos+12]))
+				return time.Duration(frames*samples) * time.Second / time.Duration(rate)
+			}
+		}
+		padding := int((bits >> 9) & 1)
+		frameLen := int(scale*bitrate/rate) + padding
+		if frameLen >= 4 && index+frameLen+4 <= len(data) {
+			next := binary.BigEndian.Uint32(data[index+frameLen : index+frameLen+4])
+			if next>>21 != 0x7ff || next>>19&3 != version || next>>17&3 != layer || next>>10&3 != sampleIndex {
+				continue
+			}
+		}
+		remaining := size - start - int64(index)
+		if remaining <= 0 {
+			return 0
+		}
+		return time.Duration(remaining*8) * time.Second / time.Duration(bitrate*1000)
 	}
 	return 0
 }

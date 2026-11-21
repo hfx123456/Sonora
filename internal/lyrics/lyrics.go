@@ -78,6 +78,7 @@ func parseYRC(yrc string) []Line {
 	}
 	var out []Line
 	for _, raw := range strings.Split(yrc, "\n") {
+		raw = strings.TrimRight(raw, "\r")
 		m := yrcLine.FindStringSubmatch(raw)
 		if m == nil {
 			continue
@@ -133,8 +134,13 @@ func Build(lrc, translation, yrc string) []Line {
 	}
 	// Translations go to the line nearest their time: word-timed lines
 	// start a little off the timed lines the translation follows.
+	trGap := make([]time.Duration, len(lines))
+	for i := range trGap {
+		trGap[i] = 1500 * time.Millisecond
+	}
 	for _, t := range parseLRC(translation) {
-		if t.Text == "" {
+		text := strings.TrimSpace(t.Text)
+		if text == "" || text == "//" {
 			continue
 		}
 		best, bestGap := -1, 1500*time.Millisecond
@@ -143,12 +149,17 @@ func Build(lrc, translation, yrc string) []Line {
 			if gap < 0 {
 				gap = -gap
 			}
-			if gap < bestGap {
-				best, bestGap = i, gap
+			if gap >= bestGap {
+				continue
 			}
+			if lines[i].Translation != "" && gap >= trGap[i] {
+				continue
+			}
+			best, bestGap = i, gap
 		}
-		if best >= 0 && lines[best].Translation == "" {
-			lines[best].Translation = t.Text
+		if best >= 0 {
+			lines[best].Translation = text
+			trGap[best] = bestGap
 		}
 	}
 	return lines

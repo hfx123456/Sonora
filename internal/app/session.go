@@ -69,6 +69,17 @@ var sessionAfter = func(d time.Duration, fn func()) {
 	time.AfterFunc(d, func() { mygo.RunOnMain(fn) })
 }
 
+// clearSession forgets any saved playback session on sign-out so another
+// account signing in does not inherit the previous user's queue.
+func (a *app) clearSession() {
+	a.savedSession = ""
+	a.restored = false
+	if path, err := sessionPath(); err == nil {
+		os.Remove(path)
+		os.Remove(path + ".part")
+	}
+}
+
 // restoreSession picks up playback where it was left, paused, once the
 // listener's session is back: the songs they may play depend on it.
 func (a *app) restoreSession() {
@@ -95,17 +106,22 @@ func (a *app) restoreSession() {
 	}
 	a.savedSession = string(b)
 	a.pl.Restore(s)
-	if a.settings.ShuffleMode > 0 {
+	if a.settings.PlaybackModesSaved {
 		a.pl.SetShuffleMode(player.ShuffleMode(a.settings.ShuffleMode))
-	} else if s.SmartShuffle {
-		a.settings.ShuffleMode = int(player.ShuffleSmart)
-	} else if s.Shuffle {
-		a.settings.ShuffleMode = int(player.ShuffleOn)
-	}
-	if a.settings.RepeatMode > 0 {
 		a.pl.SetRepeatMode(player.RepeatMode(a.settings.RepeatMode))
-	} else if s.Repeat > 0 {
-		a.settings.RepeatMode = int(s.Repeat)
+	} else {
+		if a.settings.ShuffleMode > 0 {
+			a.pl.SetShuffleMode(player.ShuffleMode(a.settings.ShuffleMode))
+		} else if s.SmartShuffle {
+			a.settings.ShuffleMode = int(player.ShuffleSmart)
+		} else if s.Shuffle {
+			a.settings.ShuffleMode = int(player.ShuffleOn)
+		}
+		if a.settings.RepeatMode > 0 {
+			a.pl.SetRepeatMode(player.RepeatMode(a.settings.RepeatMode))
+		} else if s.Repeat > 0 {
+			a.settings.RepeatMode = int(s.Repeat)
+		}
 	}
 	if s.Radio != "" && a.pl.Current() != nil {
 		a.pl.AttachRadio(s.Radio, a.radioFeed())

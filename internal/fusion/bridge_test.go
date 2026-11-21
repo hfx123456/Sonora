@@ -28,8 +28,8 @@ func TestBridgeMatchingPolicy(t *testing.T) {
 	}
 }
 
-// A plain-text fallback must expire so it cannot permanently hide a later synced provider result.
-func TestUnsyncedCacheExpires(t *testing.T) {
+// Plain and untranslated foreign lyrics expire so they cannot hide a later bilingual result.
+func TestIncompleteCacheExpires(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "plain.json")
 	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
@@ -46,6 +46,10 @@ func TestUnsyncedCacheExpires(t *testing.T) {
 		t.Fatal("stale plain lyrics prevented a new search")
 	}
 	result.Lines[0].Unsynced = false
+	if reusableCache(path, result) {
+		t.Fatal("stale timed lyrics without a translation prevented a new search")
+	}
+	result.Lines[0].Translation = "翻译"
 	if !reusableCache(path, result) {
 		t.Fatal("usable timed lyrics unnecessarily expired")
 	}

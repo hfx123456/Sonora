@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -25,6 +26,14 @@ var chooseLocalSources = func(window *mygo.Window, directory bool) ([]string, er
 	return mygo.Dialog.Open(options)
 }
 
+func sameLocalSource(a, b string) bool {
+	ca, cb := filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(ca, cb)
+	}
+	return ca == cb
+}
+
 func (a *app) addLocalMusic(directory bool) {
 	window := a.win
 	go func() {
@@ -38,7 +47,7 @@ func (a *app) addLocalMusic(directory bool) {
 				return
 			}
 			for _, path := range paths {
-				if !slices.Contains(a.settings.LocalSources, path) {
+				if !slices.ContainsFunc(a.settings.LocalSources, func(existing string) bool { return sameLocalSource(existing, path) }) {
 					a.settings.LocalSources = append(a.settings.LocalSources, path)
 				}
 			}
@@ -69,14 +78,31 @@ func (a *app) scanLocalMusic() {
 				log.Printf("local music: %s", warning)
 			}
 			for _, playlist := range a.playlists {
+				var updated []spotify.Track
 				for index := range playlist.Tracks {
-					track := &playlist.Tracks[index]
-					if track.LocalURI != "" {
-						if matched, ok := spotify.MatchLocal(track.LocalURI); ok {
-							matched.UID, matched.LocalURI = track.UID, track.LocalURI
-							*track = matched
-						}
+					track := playlist.Tracks[index]
+					if track.LocalURI == "" {
+						continue
 					}
+					if matched, ok := spotify.MatchLocal(track.LocalURI); ok {
+						matched.UID, matched.LocalURI = track.UID, track.LocalURI
+						if updated == nil {
+							updated = slices.Clone(playlist.Tracks)
+						}
+						updated[index] = matched
+					} else if track.LocalPath != "" {
+						track.LocalPath = ""
+						track.LocalLyrics = ""
+						track.LocalError = ""
+						track.Unplayable = true
+						if updated == nil {
+							updated = slices.Clone(playlist.Tracks)
+						}
+						updated[index] = track
+					}
+				}
+				if updated != nil {
+					playlist.Tracks = updated
 				}
 			}
 			if a.localAgain {
@@ -107,9 +133,10 @@ func (a *app) restoreLocalSession() {
 }
 
 func (a *app) localMusicPage(c *ui.Context) {
-	tracks := cachedFilterTracks(&a.localFilterCache, "local", a.localTracks, a.localQuery)
-	a.trackRows(c, tracks, true, func(c *ui.Context) {
-		header := ui.Column(c.Key("local-hero")).Children(func() {
+	ordered := a.orderedLocalTracks()
+	tracks := cachedFilterTracks(&a.localFilterCache, "local", ordered, a.localQuery)
+	list := a.trackRows(c, tracks, true, func(c *ui.Context) {
+		header := ui.Column(c.Key("local-hero")).PaddingX(12).Children(func() {
 			a.heading(c, "本地音乐", "电脑上的歌曲")
 			ui.Text(c, "添加音乐文件夹或文件，可直接播放；支持 MP3、FLAC、M4A、WAV、OGG、Opus、AAC 和同名 LRC 歌词。").FontSize(12).TextColor(a.pal.muted).Margin(0, 0, 14, 0)
 			ui.Row(c).Gap(10).Margin(0, 0, 14, 0).Children(func() {
@@ -123,7 +150,7 @@ func (a *app) localMusicPage(c *ui.Context) {
 					a.scanLocalMusic()
 				}
 				if len(tracks) > 0 && ui.Button(c.Key("play-local"), "播放全部").Clicked() {
-					a.playQueue(tracks, 0)
+					a.playQueue(tracks, firstPlayable(tracks))
 				}
 			})
 			for _, source := range slices.Clone(a.settings.LocalSources) {
@@ -152,56 +179,45 @@ func (a *app) localMusicPage(c *ui.Context) {
 				ui.Text(c, "OneDrive 云端歌曲需先下载到本机：在资源管理器中右键音乐文件夹，选择“始终保留在此设备上”，下载完成后重新扫描。").FontSize(12).TextColor(a.pal.muted).Margin(0, 0, 12, 0)
 			}
 		})
-		if height := header.LayoutBounds().H; height > 0 {
+		if height := header.LayoutBounds().H; height > 0 && height != a.localHeaderHeight {
 			a.localHeaderHeight = height
+			c.AnimationFrame()
 		}
-		ui.Box(c.Key("local-search-space")).Height(54)
+		ui.Box(c.Key("local-search-space")).Height(playlistToolbarHeight)
 		if len(tracks) == 0 && strings.TrimSpace(a.localQuery) != "" {
 			ui.Text(c, "本地音乐中没有匹配的歌曲").FontSize(14).TextColor(a.pal.muted).Padding(30, 12)
 		}
 	}, nil)
-	top, _ := a.insets(c)
 	headerHeight := a.localHeaderHeight
 	if headerHeight <= 0 {
 		headerHeight = 220
 	}
-	offset, headerVisible := a.trackHeaderOffset()
-	searchTop := top + pageGap
-	if headerVisible {
-		searchTop += max(0, headerHeight-offset)
-	}
-	bar := ui.Box(c.Key("local-search-toolbar")).Absolute().Top(searchTop).Left(0).Right(0).Height(54).PaddingX(pagePad)
-	if !a.glassEnabled() {
-		bar.Background(a.pal.bg)
-	}
-	bar.Children(func() {
-		a.localSearch(c, tracks)
+	a.pinTrackToolbar(c, list, "local-search-toolbar", headerHeight, func() {
+		ui.Box(c).PaddingX(12).Children(func() { a.localSearch(c, tracks) })
+		a.trackColumns(c, false, true)
 	})
 }
 
 func (a *app) localSearch(c *ui.Context, tracks []spotify.Track) {
 	query := a.localQuery
-	row := ui.Row(c.Key("local-search")).Height(54).AlignItems(ui.Center).Gap(12)
-	if !a.glassEnabled() {
-		row.Padding(0, 0, 18, 0)
+	order := a.localSort
+	searchChanged, sortChanged := a.trackSearchRow(c, "local-search", "local-search-capsule", "local-filter", "clear-local-search",
+		&a.localSearchBox, &query, "筛选本地音乐", "搜索本地音乐", len(tracks), &order, "local-sort", "本地音乐排序")
+	if searchChanged {
+		a.localQuery = query
+		a.trackList.ScrollTo(0, ui.Start)
 	}
-	row.Children(func() {
-		field, s := a.searchField(c.Key("local-search-capsule"), "local-filter", "clear-local-search", &a.localSearchBox, &query, "筛选本地音乐", "搜索本地音乐")
-		field.Width(300).Shrink(1)
-		if s.changed || s.cleared {
-			a.localQuery = query
-			a.trackList.ScrollTo(0, ui.Start)
-		}
-		if query != "" {
-			ui.Text(c, fmt.Sprintf("找到 %d 首", len(tracks))).FontSize(12).TextColor(a.pal.muted)
-		}
-	})
+	if sortChanged {
+		a.localSort = order
+		a.trackList.ScrollTo(0, ui.Start)
+	}
 }
 
 func (a *app) playLocalMatch(match spotify.Track) {
-	for index, track := range a.localTracks {
+	tracks := a.orderedLocalTracks()
+	for index, track := range tracks {
 		if track.ID == match.ID {
-			a.playQueue(a.localTracks, index)
+			a.playQueue(tracks, index)
 			return
 		}
 	}

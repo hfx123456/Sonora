@@ -1,10 +1,12 @@
 package app
 
 import (
+	"errors"
 	"slices"
 	"sync"
 
 	"vinyl/internal/player"
+	"vinyl/internal/spotify"
 )
 
 // latestConnectJob replaces work that has not started yet. One request may
@@ -62,25 +64,27 @@ func (a *app) localConnectControl(action string, value any) bool {
 		if len(request.Tracks) == 0 {
 			return false
 		}
-		a.playHere(func() { a.pl.PlayQueue(request.Tracks, request.Start) })
+		a.playHere(func() { a.pl.PlayQueue(request.Tracks, request.Start) }, false)
 	case "jump":
-		a.playHere(func() { a.pl.Jump(value.(int)) })
+		a.playHere(func() { a.pl.Jump(value.(int)) }, !state.localQueue)
 	case "skip_next":
-		a.playHere(a.pl.Next)
+		a.playHere(a.pl.Next, !state.localQueue)
 	case "skip_prev":
-		a.playHere(a.pl.Prev)
+		a.playHere(a.pl.Prev, !state.localQueue)
 	default:
 		return false
 	}
 	return true
 }
 
-func (a *app) playHere(play func()) {
+func (a *app) playHere(play func(), allowSkipUID bool) {
 	state := a.connect
 	// Reports of the previous song must not be queued during the change.
 	state.ref = nil
 	state.pendingPlay = ""
-	state.localQueue = true
+	if !allowSkipUID {
+		state.localQueue = true
+	}
 	state.playVersion.Add(1)
 	a.here(play)
 	if track := a.pl.Current(); track != nil {
@@ -114,6 +118,11 @@ func (a *app) sendLocalConnectPlay() {
 		"repeating_track":   a.pl.Repeat() == player.RepeatOne,
 	}
 	uid, uri := a.pl.Current().UID, a.pl.Current().URI()
+	// Playlist item UIDs are not Spotify Connect queue UIDs; only use
+	// skip_next when advancing inside a Connect-managed queue.
+	if state.localQueue {
+		uid = ""
+	}
 	if queueLatestConnect(&state.playJob, a.connectJob, func() error {
 		if version != state.playVersion.Load() {
 			return nil
@@ -130,9 +139,15 @@ func (a *app) sendLocalConnectPlay() {
 			return nil
 		}
 		if err != nil {
+			var ce *spotify.ConnectError
+			terminal := errors.As(err, &ce) && ce.Status >= 400 && ce.Status < 500 && ce.Status != 429
 			a.post(func() {
 				if a.connect == state && version == state.playVersion.Load() {
-					state.playSent = 0
+					if terminal {
+						state.pendingPlay = ""
+					} else {
+						state.playSent = 0
+					}
 				}
 			})
 		}

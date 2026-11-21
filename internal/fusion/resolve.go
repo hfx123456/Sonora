@@ -94,18 +94,39 @@ func queryProviders(ctx context.Context, client *http.Client, keyword string) []
 	return append(qq, ne...)
 }
 
+var (
+	proxyClientsMu sync.Mutex
+	proxyClients   = map[string]*http.Client{}
+	directClient   = &http.Client{Timeout: 5 * time.Second}
+)
+
 func httpClientForProxy(proxy string) *http.Client {
 	if proxy == "" {
-		return &http.Client{Timeout: 5 * time.Second}
+		return directClient
+	}
+	proxyClientsMu.Lock()
+	defer proxyClientsMu.Unlock()
+	if client, ok := proxyClients[proxy]; ok {
+		return client
 	}
 	parsed, err := url.Parse(proxy)
 	if err != nil {
-		return &http.Client{Timeout: 5 * time.Second}
+		return directClient
 	}
-	return &http.Client{
+	if len(proxyClients) >= 8 {
+		for k, old := range proxyClients {
+			if tr, ok := old.Transport.(*http.Transport); ok {
+				tr.CloseIdleConnections()
+			}
+			delete(proxyClients, k)
+		}
+	}
+	client := &http.Client{
 		Timeout:   5 * time.Second,
 		Transport: &http.Transport{Proxy: http.ProxyURL(parsed)},
 	}
+	proxyClients[proxy] = client
+	return client
 }
 
 func searchQQMusicCandidates(ctx context.Context, client *http.Client, keyword string) []providerCandidate {
@@ -508,7 +529,7 @@ func rankAlternateTitles(req Request, cands []providerCandidate) []alternateTitl
 			continue
 		}
 
-		if lyrics.CrossScript(req.Title, c.Title) && albumOK && (artistOK || crossArtist) {
+		if req.DurationMs > 0 && c.DurationMs > 0 && lyrics.CrossScript(req.Title, c.Title) && albumOK && (artistOK || crossArtist) {
 			add(c.Title, c.Album, c.ID, c.Source, artistOK, 2, c.SourceRank, diff)
 		}
 	}

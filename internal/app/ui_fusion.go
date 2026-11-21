@@ -120,6 +120,11 @@ func (a *app) fusionMenu(menu *ui.Menu) {
 	if menu.Item("词岛贴顶居中").Chosen() {
 		a.centerFusionIsland()
 	}
+	if a.win != nil && len(fusionDisplays()) > 1 {
+		if menu.Item("词岛移至下一屏幕").Chosen() {
+			a.moveFusionIslandToNextDisplay()
+		}
+	}
 	if menu.Item("显示中文译文").Checked(!a.settings.FusionHideTranslation).Chosen() {
 		a.settings.FusionHideTranslation = !a.settings.FusionHideTranslation
 		a.settings.save()
@@ -210,16 +215,16 @@ func (a *app) fusionPanel(c *ui.Context) {
 				}
 			})
 			if len(a.fusion.lines) == 0 || fusionInstrumentalNotice(a.fusion.lines) {
-				line, detail := a.fusionCurrent()
+				caption := a.fusionCurrent()
 				ui.Column(c).Grow(1).Center().Padding(30).Gap(14).Children(func() {
 					ui.Icon(c, iconFusion).Size(32, 32).TextColor(white.Alpha(0.35))
-					if line.Text == fusionWaitingNotes {
+					if caption.line.Text == fusionWaitingNotes {
 						a.fusionWaitingAnimation(c, 23, a.fusionPosition(), a.settings.FusionStatic || c.Preferences().ReduceMotion)
 					} else {
-						ui.Text(c, line.Text).FontSize(23).FontWeight(500).TextAlign(ui.Center)
+						ui.Text(c, caption.line.Text).FontSize(23).FontWeight(500).TextAlign(ui.Center)
 					}
-					if detail != "" {
-						ui.Text(c, detail).FontSize(13).TextColor(white.Alpha(0.5)).TextAlign(ui.Center)
+					if caption.detail != "" {
+						ui.Text(c, caption.detail).FontSize(13).TextColor(white.Alpha(0.5)).TextAlign(ui.Center)
 					}
 				})
 			} else {
@@ -332,13 +337,13 @@ func (a *app) fusionWindowSize() (int, int) {
 	width, height := float32(1040), float32(156)
 	if a.settings.FusionMode == "capsule" {
 		width, height = float32(a.fusionIslandWidth()), 84
-		_, detail := a.fusionCurrent()
-		secondRow := detail != ""
-		chinese := fusionChinese(a.fusion.lines)
-		for _, line := range a.fusion.lines {
-			if visibleFusionTranslation(line, chinese, a.settings.FusionHideTranslation) != "" {
-				secondRow = true
-				break
+		secondRow := a.fusionCurrent().detail != ""
+		if !secondRow && !a.settings.FusionHideTranslation && !fusionChinese(a.fusion.lines) {
+			for _, line := range a.fusion.lines {
+				if visibleFusionTranslation(line, false, false) != "" {
+					secondRow = true
+					break
+				}
 			}
 		}
 		if !secondRow {
@@ -354,15 +359,27 @@ func (a *app) resizeFusion() {
 	}
 	width, height := a.fusionWindowSize()
 	bounds := a.fusion.win.Bounds()
-	display := mygo.Screen.PrimaryDisplay()
-	width = min(width, display.WorkArea.Width-32)
+	display := fusionDisplayForBounds(bounds, fusionDisplays())
+	avail := display.WorkArea.Width
+	if a.settings.FusionMode == "capsule" {
+		avail = display.Bounds.Width
+	}
+	if avail > 32 {
+		width = min(width, avail-32)
+	} else if avail > 0 {
+		width = min(width, avail)
+	}
 	if bounds.Width == width && bounds.Height == height {
 		return
 	}
 	bounds.X += (bounds.Width - width) / 2
+	if display.Bounds.Width > 0 {
+		bounds.X = max(display.Bounds.X, min(display.Bounds.X+display.Bounds.Width-width, bounds.X))
+	}
 	bounds.Width, bounds.Height = width, height
+	a.fusion.placing = true
 	a.fusion.win.SetBounds(bounds)
-	a.pinFusionIsland()
+	a.fusion.placing = false
 }
 
 func (a *app) setFusionMode(mode string) {
@@ -378,20 +395,30 @@ func (a *app) setFusionMode(mode string) {
 				a.fusion.win.Hide()
 			}
 		} else {
+			displays := fusionDisplays()
 			display := mygo.Screen.PrimaryDisplay()
+			if len(displays) > 0 {
+				display = displays[0]
+				for _, d := range displays {
+					if d.Primary {
+						display = d
+						break
+					}
+				}
+			}
 			width, height := a.fusionWindowSize()
-			width = min(width, display.WorkArea.Width-32)
+			if display.WorkArea.Width > 32 {
+				width = min(width, display.WorkArea.Width-32)
+			} else if display.Bounds.Width > 32 {
+				width = min(width, display.Bounds.Width-32)
+			}
 			x, y := display.WorkArea.X+(display.WorkArea.Width-width)/2, display.WorkArea.Y+display.WorkArea.Height-height-42
 			if mode == "capsule" {
 				x, y = display.Bounds.X+(display.Bounds.Width-width)/2, display.Bounds.Y
 			}
 			if saved, ok := a.settings.FusionPositions[mode]; ok {
-				for _, screen := range mygo.Screen.Displays() {
-					area := screen.WorkArea
-					if saved[0] >= area.X && saved[1] >= area.Y && saved[0]+width <= area.X+area.Width && saved[1]+height <= area.Y+area.Height {
-						x, y = saved[0], saved[1]
-						break
-					}
+				if restored, ok := fusionRestoreBounds(saved, width, height, mode, a.settings.FusionFloatingIsland, displays); ok {
+					x, y, width, height = restored.X, restored.Y, restored.Width, restored.Height
 				}
 			}
 			a.fusion.mode = mode
@@ -405,11 +432,12 @@ func (a *app) setFusionMode(mode string) {
 						a.setFusionMode("")
 					}
 				})
-				a.fusion.win.OnMove(a.pinFusionIsland)
-				mygo.Screen.OnDisplaysChanged(func() { a.resizeFusion(); a.pinFusionIsland() })
+				a.fusion.win.OnMove(a.onFusionMove)
+				mygo.Screen.OnDisplaysChanged(func() { a.resizeFusion() })
 			}
+			a.fusion.placing = true
 			a.fusion.win.SetBounds(mygo.Rectangle{X: x, Y: y, Width: width, Height: height})
-			a.pinFusionIsland()
+			a.fusion.placing = false
 			a.fusion.win.SetOpacity(1)
 			a.fusion.win.SetIgnoreMouseEvents(a.settings.FusionLocked)
 			if !a.fusion.captureOnly {
@@ -441,7 +469,8 @@ func (a *app) fusionOverlay(c *ui.Context) {
 		return
 	}
 	a.fusionTick(c, true)
-	line, translation := a.fusionCurrent()
+	caption := a.fusionCurrent()
+	a.fusion.caption.update(fusionTrackKey(a.pl.Current())+a.settings.FusionMode, caption, c.Now())
 	if capsule {
 		a.resizeFusion()
 	}
@@ -452,17 +481,41 @@ func (a *app) fusionOverlay(c *ui.Context) {
 	}
 	root.Children(func() {
 		if capsule {
-			a.fusionIsland(c, line, translation, scale)
+			a.fusionIsland(c, caption, scale)
 			return
 		}
-		if root.Hovered() {
+		if !a.settings.FusionLocked && root.Hovered() {
 			root.Background(ui.RGBA(16, 16, 18, 0.36)).Radius(12)
 		}
-		ui.Column(c).Fill().Center().Padding(24*scale, 28*scale, 8*scale, 28*scale).Children(func() { a.fusionAnimatedCaption(c, line, translation, 38*scale, 23*scale, true, 0) })
-		if root.Hovered() {
+		ui.Column(c).Fill().Center().Padding(24*scale, 28*scale, 8*scale, 28*scale).Children(func() { a.fusionAnimatedCaption(c, 38*scale, 23*scale, true, 0) })
+		if a.settings.FusionLocked && a.fusion.lockRevealed {
+			winW, winH := c.Size()
+			rect := fusionUnlockRect(mygo.Rectangle{Width: int(winW), Height: int(winH)}, "desktop", 0, 0, scale)
+			a.fusionUnlockButton(c, rect, scale)
+		} else if root.Hovered() {
 			a.fusionOverlayControls(c, false)
 		}
 	})
+}
+
+func (a *app) fusionUnlockButton(c *ui.Context, rect mygo.Rectangle, scale float32) {
+	b := ui.ButtonBase(c.Key("unlock-fusion")).Absolute().
+		Left(float32(rect.X)).Top(float32(rect.Y)).
+		Width(float32(rect.Width)).Height(float32(rect.Height)).
+		Radius(float32(rect.Height)/2).
+		Background(ui.RGBA(22, 24, 30, 0.90)).
+		Border(1, white.Alpha(0.22)).
+		Gap(5 * scale).Center().FocusRing(false).Label("解锁桌面歌词")
+	if b.Hovered() {
+		b.Background(ui.RGBA(40, 44, 54, 0.95))
+	}
+	b.Children(func() {
+		ui.Icon(c, iconFusionLock).Size(12*scale, 12*scale).TextColor(white)
+		ui.Text(c, "解锁").FontSize(12 * scale).FontWeight(600).TextColor(white)
+	})
+	if b.Clicked() {
+		a.toggleFusionLock()
+	}
 }
 
 type fusionLineMeasure struct {
@@ -521,21 +574,20 @@ func (a *app) fusionIslandSizing(line lyrics.Line, translation string, scale, co
 	return targetPillW, minPillW, fitTextW
 }
 
-func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, scale float32) {
+func (a *app) fusionIsland(c *ui.Context, caption fusionCaption, scale float32) {
 	winW, winH := c.Size()
 	inset := 20 * scale
 	maxPillClampW := max(160*scale, winW-inset*2)
 	targetCapW := max(160*scale, maxPillClampW-18*scale)
 	maxPillH := max(40*scale, winH-2*scale)
 	targetPillH := min(maxPillH, 46*scale)
-	if translation != "" {
+	if caption.detail != "" {
 		targetPillH = min(maxPillH, 78*scale)
 	}
 	coverMaxH := max(24*scale, targetPillH-18*scale)
-	targetPillW, minPillW, fitTextW := a.fusionIslandSizing(line, translation, scale, coverMaxH, targetCapW)
+	targetPillW, minPillW, fitTextW := a.fusionIslandSizing(caption.line, caption.detail, scale, coverMaxH, targetCapW)
 
 	still := a.settings.FusionStatic || c.Preferences().ReduceMotion
-	a.fusion.caption.update(fusionTrackKey(a.pl.Current())+a.settings.FusionMode, line, translation, a.fusionPosition(), c.Now())
 	pulse := a.fusion.caption.pulse(c.Now(), still)
 
 	stage := ui.Box(c.Key("island-stage")).Absolute().Fill()
@@ -548,13 +600,13 @@ func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, 
 		pillW = stage.AnimateTo("pill-w", targetPillW, spring) + 10*scale*pulse
 		pillH = stage.AnimateTo("pill-h", targetPillH, spring) + 2.5*scale*pulse
 		pillW = max(max(120*scale, minPillW-24*scale), min(maxPillClampW, pillW))
-		pillH = max(max(36*scale, targetPillH-8*scale), min(maxPillH, pillH))
+		pillH = max(36*scale, min(maxPillH, pillH))
 	}
 	a.fusion.capsuleW, a.fusion.capsuleH = pillW, pillH
 	pillLeft := (winW - pillW) / 2
 
 	stage.Draw(func(painter *ui.Painter, bounds ui.Rect) {
-		if a.settings.FusionFloatingIsland {
+		if a.fusionFloatingShape() {
 			painter.Fill(ui.Rect{X: bounds.X + (bounds.W-pillW)/2, Y: bounds.Y + 2*scale, W: pillW, H: pillH - 2*scale}, ui.RGB(0, 0, 0), (pillH-2*scale)/2)
 		} else {
 			painter.FillPath(shape(bounds.X+bounds.W/2, pillW, pillH, 16*scale, min(38*scale, pillH*0.5)), ui.RGB(0, 0, 0))
@@ -567,19 +619,23 @@ func (a *app) fusionIsland(c *ui.Context, line lyrics.Line, translation string, 
 		pill.Children(func() {
 			a.fusionEmblem(c, 26*scale)
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2 * scale).Justify(ui.Center).Children(func() {
-				a.fusionAnimatedCaption(c, line, translation, fusionIslandOrigSize*scale, fusionIslandTransSize*scale, false, fitTextW)
+				a.fusionAnimatedCaption(c, fusionIslandOrigSize*scale, fusionIslandTransSize*scale, false, fitTextW)
 			})
 			if track := a.pl.Current(); track != nil {
 				size := min(32*scale, pillH-16*scale)
 				a.fusionCover(c, track.Album.PicURL, size, 7*scale)
 			}
-			if pill.Hovered() {
+			if pill.Hovered() && !a.settings.FusionLocked {
 				if iconButton(c.Key("close-float"), iconX, 11, white.Alpha(0.65), "关闭桌面歌词").
 					Absolute().Right(5*scale).Top(2).Size(20, 20).Clicked() {
 					a.setFusionMode("")
 				}
 			}
 		})
+		if a.settings.FusionLocked && a.fusion.lockRevealed {
+			rect := fusionUnlockRect(mygo.Rectangle{Width: int(winW), Height: int(winH)}, "capsule", pillW, pillH, scale)
+			a.fusionUnlockButton(c, rect, scale)
+		}
 	})
 }
 
@@ -662,7 +718,7 @@ func (a *app) fusionSingleLine(c *ui.Context, line lyrics.Line, position time.Du
 					painter.TextLayout(layout, origin+offset[0], y+offset[1], ui.RGBA(0, 0, 0, .8))
 				}
 			}
-			if len(words) == 0 {
+			if !animate || len(words) == 0 {
 				painter.TextLayout(layout, origin, y, lit)
 				return
 			}
