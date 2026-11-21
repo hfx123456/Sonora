@@ -1,10 +1,14 @@
 package localmusic
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/dhowden/tag"
+	xdraw "golang.org/x/image/draw"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/encoding/unicode"
 
@@ -41,10 +46,45 @@ func dedupPathKey(path string) string {
 	return path
 }
 
+func shrinkLocalCover(data []byte) []byte {
+	const maxDim = 640
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || max(cfg.Width, cfg.Height) <= maxDim {
+		return data
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return data
+	}
+	r := img.Bounds()
+	long := max(r.Dx(), r.Dy())
+	if long <= maxDim {
+		return data
+	}
+	out := image.NewRGBA(image.Rect(0, 0, max(1, r.Dx()*maxDim/long), max(1, r.Dy()*maxDim/long)))
+	xdraw.CatmullRom.Scale(out, out.Bounds(), img, r, xdraw.Src, nil)
+	var buf bytes.Buffer
+	opaque := false
+	if o, ok := img.(interface{ Opaque() bool }); ok && o.Opaque() {
+		opaque = true
+	}
+	if opaque {
+		if jpeg.Encode(&buf, out, &jpeg.Options{Quality: 90}) == nil && buf.Len() < len(data) {
+			return buf.Bytes()
+		}
+	} else {
+		if png.Encode(&buf, out) == nil && buf.Len() < len(data) {
+			return buf.Bytes()
+		}
+	}
+	return data
+}
+
 func writeCoverAtomic(coverDir, cover string, data []byte) error {
 	if _, err := os.Stat(cover); err == nil {
 		return nil
 	}
+	data = shrinkLocalCover(data)
 	if err := os.MkdirAll(coverDir, 0o700); err != nil {
 		return err
 	}

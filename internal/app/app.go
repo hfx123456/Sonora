@@ -378,9 +378,12 @@ func Run() error {
 	}
 	os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", strings.Join(wvArgs, " "))
 	// What decoding a page of covers takes goes back to the system after,
-	// rather than staying in the heap (20 MB).
+	// rather than staying in the heap.
 	if os.Getenv("GOMEMLIMIT") == "" {
-		debug.SetMemoryLimit(256 << 20)
+		debug.SetMemoryLimit(160 << 20)
+	}
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(75)
 	}
 	mygo.App.WhenReady(func() {
 		a.settings = loadSettings()
@@ -507,6 +510,7 @@ func Run() error {
 			e.PreventDefault()
 			if !a.settings.QuitOnClose && (runtime.GOOS == "darwin" || a.tray != nil) {
 				a.win.Hide()
+				a.trimIdleMemory()
 			} else {
 				mygo.App.Quit()
 			}
@@ -540,6 +544,16 @@ func Run() error {
 	mygo.App.OnSecondInstance(func([]string, string) { a.showMain() })
 	defer qtweb.Shutdown()
 	return mygo.App.Run()
+}
+
+// trimIdleMemory returns unused Go heap pages to the OS when the window hides
+// to the system tray.
+func (a *app) trimIdleMemory() {
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		runtime.GC()
+		debug.FreeOSMemory()
+	}()
 }
 
 // sidebarVibrancy is the material behind the sidebar: macOS's. Windows'

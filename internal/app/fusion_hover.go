@@ -257,6 +257,33 @@ func fusionUnlockRect(bounds mygo.Rectangle, mode string, capsuleW, capsuleH, sc
 	}
 }
 
+// fusionDesktopUnlockTrigger returns a compact bottom-center trigger zone for
+// locked desktop lyrics so stray pointer movement over the wide transparent
+// window does not keep popping up the unlock pill.
+func fusionDesktopUnlockTrigger(bounds mygo.Rectangle, scale float32) mygo.Rectangle {
+	w := min(bounds.Width, max(140, int(math.Round(float64(180*scale)))))
+	h := min(bounds.Height, max(44, bounds.Height*45/100))
+	return mygo.Rectangle{
+		X:      bounds.X + (bounds.Width-w)/2,
+		Y:      bounds.Y + bounds.Height - h,
+		Width:  w,
+		Height: h,
+	}
+}
+
+// fusionDesktopUnlockKeepZone is the narrow center column spanning from the
+// top-center unlock pill down to the trigger zone so moving up to click the
+// button keeps it visible, while moving away hides it immediately.
+func fusionDesktopUnlockKeepZone(bounds mygo.Rectangle, scale float32) mygo.Rectangle {
+	w := min(bounds.Width, max(140, int(math.Round(float64(180*scale)))))
+	return mygo.Rectangle{
+		X:      bounds.X + (bounds.Width-w)/2,
+		Y:      bounds.Y,
+		Width:  w,
+		Height: bounds.Height,
+	}
+}
+
 func (a *app) updateFusionHover() {
 	if a.fusion.win == nil || a.quitting {
 		return
@@ -264,22 +291,26 @@ func (a *app) updateFusionHover() {
 	bounds := a.fusion.win.Bounds()
 	point := fusionCursor()
 	if a.settings.FusionLocked {
-		hit := bounds
+		scale := a.fusionScale()
+		unlockRect := fusionUnlockRect(bounds, a.settings.FusionMode, a.fusion.capsuleW, a.fusion.capsuleH, scale)
+		hit := fusionDesktopUnlockTrigger(bounds, scale)
+		keep := fusionDesktopUnlockKeepZone(bounds, scale)
 		if a.settings.FusionMode == "capsule" {
 			hit = fusionCapsuleHitBounds(bounds, a.fusion.capsuleW, a.fusion.capsuleH)
+			keep = hit
 		}
-		inHit := fusionPointInRect(point, hit)
+		inTrigger := fusionPointInRect(point, hit) || fusionPointInRect(point, unlockRect)
+		inKeep := a.fusion.lockRevealed && fusionPointInRect(point, keep)
 		down := fusionMouseDown()
-		if down && !a.fusion.lockDown && inHit {
+		if down && !a.fusion.lockDown && inTrigger {
 			a.fusion.lockRevealUntil = time.Now().Add(3 * time.Second)
 		}
 		a.fusion.lockDown = down
-		revealed := inHit || (!a.fusion.lockRevealUntil.IsZero() && time.Now().Before(a.fusion.lockRevealUntil))
+		revealed := inTrigger || inKeep || (!a.fusion.lockRevealUntil.IsZero() && time.Now().Before(a.fusion.lockRevealUntil))
 		if a.fusion.hover.opacity != 1 {
 			a.fusion.hover.opacity = 1
 			a.fusion.win.SetOpacity(1)
 		}
-		unlockRect := fusionUnlockRect(bounds, a.settings.FusionMode, a.fusion.capsuleW, a.fusion.capsuleH, a.fusionScale())
 		passing := !revealed || !fusionPointInRect(point, unlockRect)
 		if passing != a.fusion.hover.passing {
 			a.fusion.hover.passing = passing

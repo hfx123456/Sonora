@@ -260,9 +260,43 @@ func decode(data []byte) (Result, error) {
 	return result, nil
 }
 
+const bridgeSampleChunk = 64 << 10
+
+// sampleBridgeHash hashes size + head/mid/tail 64 KB windows instead of the
+// entire 66 MB embedded binary, avoiding faulting 66 MB into the process
+// working set when the helper has already been extracted on disk.
+func sampleBridgeHash(size int64, readAt func(buf []byte, off int64) (int, error)) ([32]byte, error) {
+	h := sha256.New()
+	fmt.Fprintf(h, "%d:", size)
+	offsets := []int64{0}
+	if size > bridgeSampleChunk*2 {
+		offsets = append(offsets, size/2-bridgeSampleChunk/2)
+	}
+	if size > bridgeSampleChunk {
+		offsets = append(offsets, size-bridgeSampleChunk)
+	}
+	buf := make([]byte, bridgeSampleChunk)
+	for _, off := range offsets {
+		want := int(min(int64(len(buf)), size-off))
+		if want <= 0 {
+			continue
+		}
+		n, err := readAt(buf[:want], off)
+		if err != nil && err != io.EOF {
+			return [32]byte{}, err
+		}
+		h.Write(buf[:n])
+	}
+	var sum [32]byte
+	copy(sum[:], h.Sum(nil))
+	return sum, nil
+}
+
 var (
 	bridgeDigest = sync.OnceValues(func() ([32]byte, string) {
-		sum := sha256.Sum256(bridge)
+		sum, _ := sampleBridgeHash(int64(len(bridge)), func(buf []byte, off int64) (int, error) {
+			return copy(buf, bridge[off:]), nil
+		})
 		return sum, hex.EncodeToString(sum[:8])
 	})
 	extractMu     sync.Mutex
@@ -279,13 +313,8 @@ func fileMatchesDigest(path string, want [32]byte, size int64) bool {
 	if err != nil || info.Size() != size {
 		return false
 	}
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return false
-	}
-	var got [32]byte
-	copy(got[:], h.Sum(nil))
-	return got == want
+	got, err := sampleBridgeHash(info.Size(), f.ReadAt)
+	return err == nil && got == want
 }
 
 func extract(dir string) (string, error) {

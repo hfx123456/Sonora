@@ -334,9 +334,14 @@ func TestFusionLockedRevealAndUnlock(t *testing.T) {
 			t.Fatalf("%s mode remained locked after clicking unlock", mode)
 		}
 	}
-	desk := fusionUnlockRect(mygo.Rectangle{X: 100, Y: 200, Width: 800, Height: 140}, "desktop", 0, 0, 1)
+	deskBounds := mygo.Rectangle{X: 100, Y: 200, Width: 800, Height: 140}
+	desk := fusionUnlockRect(deskBounds, "desktop", 0, 0, 1)
 	if desk.X <= 100 || desk.X+desk.Width >= 900 || desk.Y != 204 {
 		t.Fatalf("unexpected desktop unlock rect: %+v", desk)
+	}
+	trig := fusionDesktopUnlockTrigger(deskBounds, 1)
+	if !fusionPointInRect(mygo.Point{X: 500, Y: 320}, trig) || fusionPointInRect(mygo.Point{X: 150, Y: 320}, trig) || fusionPointInRect(mygo.Point{X: 500, Y: 220}, trig) {
+		t.Fatalf("unexpected desktop unlock trigger zone: %+v", trig)
 	}
 	capRect := fusionUnlockRect(mygo.Rectangle{X: 100, Y: 0, Width: 700, Height: 80}, "capsule", 300, 48, 1)
 	if capRect.X < 300 || capRect.X+capRect.Width > 600 || capRect.Y < 2 || capRect.Y+capRect.Height > 48 {
