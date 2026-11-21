@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,9 +19,6 @@ import (
 
 	"vinyl/internal/lyrics"
 )
-
-//go:embed bridge.bin
-var bridge []byte
 
 type Request struct {
 	Title       string   `json:"title"`
@@ -81,8 +77,8 @@ func Fetch(ctx context.Context, dir string, request Request, refresh bool) (Resu
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	if runtime.GOOS != "windows" {
-		return Result{}, errors.New("此内置歌词组件仅支持 Windows")
+	if len(bridge) == 0 {
+		return Result{}, errors.New("当前平台未内置双语歌词检索组件")
 	}
 	executable, err := extract(dir)
 	if err != nil {
@@ -295,7 +291,7 @@ func fileMatchesDigest(path string, want [32]byte, size int64) bool {
 func extract(dir string) (string, error) {
 	sum, short := bridgeDigest()
 	dir = filepath.Join(dir, "lyricify", short)
-	path := filepath.Join(dir, "MySpotify.Lyrics.exe")
+	path := filepath.Join(dir, bridgeFilename)
 	size := int64(len(bridge))
 
 	extractMu.Lock()
@@ -329,6 +325,11 @@ func extract(dir string) (string, error) {
 	}
 	if err := os.Rename(file.Name(), path); err != nil {
 		if !fileMatchesDigest(path, sum, size) {
+			return "", err
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(path, 0o700); err != nil {
 			return "", err
 		}
 	}

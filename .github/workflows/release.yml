@@ -1,0 +1,109 @@
+name: Release Windows & macOS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run Go tests
+        env:
+          CGO_ENABLED: '0'
+        run: go test ./internal/...
+
+      - name: Build Windows installer & binary
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go tool mygo build -platform windows/amd64
+          $ver = (Get-Content mygo.json | ConvertFrom-Json).version
+          mkdir dist-win | Out-Null
+          Copy-Item "build\windows-amd64\sonora-setup-$ver-amd64.exe" dist-win\
+          Copy-Item "build\windows-amd64\install.ps1" dist-win\
+          New-Item -ItemType Directory -Force -Path dist-win\pkg | Out-Null
+          Copy-Item "build\windows-amd64\Sonora.exe" dist-win\pkg\
+          Copy-Item "build\windows-amd64\LICENSE" dist-win\pkg\
+          Copy-Item -Recurse "build\windows-amd64\licenses" dist-win\pkg\
+          Compress-Archive -Path dist-win\pkg\* -DestinationPath "dist-win\Sonora-$ver-windows-amd64.zip" -CompressionLevel Optimal
+          Remove-Item -Recurse -Force dist-win\pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: dist-win/*
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build macOS Lyricify Lyrics Helper (arm64 + x64)
+        run: |
+          chmod +x tools/fusion-bridge/Build.sh
+          ./tools/fusion-bridge/Build.sh "$GITHUB_WORKSPACE/third_party/Lyricify-Lyrics-Helper"
+
+      - name: Run Go tests
+        env:
+          CGO_ENABLED: '0'
+        run: go test ./internal/...
+
+      - name: Build macOS Universal (.app & .dmg)
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go tool mygo build -platform darwin/universal
+          mkdir -p dist-mac
+          cp build/darwin-universal/*.dmg dist-mac/ 2>/dev/null || cp build/*.dmg dist-mac/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dist
+          path: dist-mac/*.dmg
+
+  release:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS and upload to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" * --clobber
+          else
+            gh release create "$TAG" * --title "Sonora $TAG" --generate-notes
+          fi
