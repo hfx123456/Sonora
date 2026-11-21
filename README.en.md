@@ -3,7 +3,7 @@
 English | **[简体中文](README.md)**
 
 <p align="center">
-  <img src="AppIcon.icon/Assets/sonora.png" width="112" alt="Sonora icon">
+  <img src="AppIcon.icon/Assets/record.png" width="112" alt="Sonora icon">
 </p>
 
 <p align="center">

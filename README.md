@@ -3,7 +3,7 @@
 **[English](README.en.md)** | 简体中文
 
 <p align="center">
-  <img src="AppIcon.icon/Assets/sonora.png" width="112" alt="Sonora 图标">
+  <img src="AppIcon.icon/Assets/record.png" width="112" alt="Sonora 图标">
 </p>
 
 <p align="center">
@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/hfx123456/Sonora/releases/latest"><img src="https://img.shields.io/github/v/release/hfx123456/Sonora?label=最新版本&color=e5484d" alt="Latest Release"></a>
+  <a href="https://github.com/hfx123456/Sonora/releases/latest"><img src="https://img.shields.io/github/v/release/hfx123456/Sonora?label=Release&color=e5484d" alt="Latest Release"></a>
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue" alt="Platform">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-green" alt="License">
 </p>
