@@ -3,6 +3,7 @@ package player
 import (
 	"errors"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 	"vinyl/internal/lyrics"
@@ -210,16 +211,16 @@ func TestAdoptLyricsGuardsLateCueResult(t *testing.T) {
 func TestFallbackLyricsAllowLateTranslation(t *testing.T) {
 	old := lyricsOf
 	t.Cleanup(func() { lyricsOf = old })
+	var once sync.Once
 	started, release := make(chan struct{}), make(chan struct{})
 	lyricsOf = func(spotify.Track) []lyrics.Line {
-		close(started)
+		once.Do(func() { close(started) })
 		<-release
 		return []lyrics.Line{{Text: "青い空", Translation: "蓝天", At: time.Second}}
 	}
 	ch := make(chan func(), 16)
 	p := New(func(fn func()) { ch <- fn })
 	p.Cue([]spotify.Track{{ID: "song"}})
-	p.cue(0, false, 0)
 	<-started
 	p.UseFallbackLyrics("spotify:track:song", []lyrics.Line{{Text: "青い空", At: time.Second}})
 	fallback, loaded := p.Lyrics()
