@@ -2,16 +2,17 @@
 
 <img src="docs/icon.png" width="88" alt="Sonora">
 
-# Sonora v1.0 · Custom Windows Fork
+# Sonora v1.0 · Custom Windows & macOS Fork
 
 **Flow & Liquid Glass · Word-timed bilingual stage · Draggable multi-monitor island · Local music · Sticky playlist search**
 
-An independent fork of MySpotify with its own identity, custom icon, and isolated profile directories—focused on fluid desktop lyrics, multi-monitor dynamic island, local playback, and effortless search in large playlists.
+An independent fork of MySpotify for **Windows 10/11 x64** and **macOS (Apple Silicon & Intel)** with its own identity, custom icon, and isolated profile directories—focused on fluid desktop lyrics, multi-monitor dynamic island, local playback, and effortless search in large playlists.
 
 [简体中文](README.md) · **English**
 
 [![Latest release](https://img.shields.io/badge/version-v1.0.0-ef3b45?style=flat-square)](https://github.com/hfx123456/Sonora/releases/latest)
 ![Windows x64](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-3a6ea5?style=flat-square)
+![macOS Universal](https://img.shields.io/badge/macOS-Universal%20(arm64%20%2F%20x64)-111111?style=flat-square)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-c2410c?style=flat-square)](LICENSE)
 
 **[Download Sonora](https://github.com/hfx123456/Sonora/releases/latest)** · [Lyrics guide (Chinese)](FUSION.md) · [Changelog](CHANGELOG.md) · [Upstream](https://github.com/margbug01/MySpotify)
@@ -20,7 +21,7 @@ An independent fork of MySpotify with its own identity, custom icon, and isolate
 
 </div>
 
-Maintained by **hfx123456**, based on [margbug01/MySpotify](https://github.com/margbug01/MySpotify). Below are the key additions and refinements in **Sonora v1.0**; Spotify browsing, streaming, music videos, and podcasts come from upstream. Publishes **Windows 10/11 x64** builds.
+Maintained by **hfx123456**, based on [margbug01/MySpotify](https://github.com/margbug01/MySpotify). Below are the key additions and refinements in **Sonora v1.0**; Spotify browsing, streaming, music videos, and podcasts come from upstream. Publishes **Windows 10/11 x64** and **macOS Universal (Apple Silicon & Intel)** builds.
 
 ---
 
@@ -80,7 +81,10 @@ The **Fusion 双语歌词** menu at the right of the player bar provides three o
 
 ## Install, Isolation & Build
 
-1. Download the release archive from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**, extract all files alongside `Sonora.exe`, and run `Sonora.exe` (requires Microsoft Edge WebView2 Runtime on Windows 10/11).
+1. Download from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**:
+   - **Windows**: Run `sonora-setup-1.0.0-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.0-windows-amd64.zip`.
+   - **macOS**: Download `sonora-1.0.0-universal.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
+   Both platforms bundle the Lyricify helper and .NET runtime—no extra setup needed.
 2. **Isolated from upstream MySpotify**: Uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), migrating existing settings on first launch without altering the legacy folder.
 
 ```powershell

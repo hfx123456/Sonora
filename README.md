@@ -2,16 +2,17 @@
 
 <img src="docs/icon.png" width="88" alt="Sonora">
 
-# Sonora v1.0 · Windows 独立定制版
+# Sonora v1.0 · Windows & macOS 独立定制版
 
 **流光液态玻璃 · 逐字双语律动 · 可拖跨屏灵动岛 · 本地音乐 · 歌单吸顶搜索**
 
-源于 MySpotify，已独立命名、更换全新图标并隔离配置与实例，把流光播放页、双语逐字歌词、跨屏灵动岛、本地听歌与大歌单找歌打磨到开箱即用。
+源于 MySpotify，已独立命名、更换全新图标并隔离配置与实例，支持 **Windows 10/11 x64** 与 **macOS（Apple Silicon / Intel 通用）**，把流光播放页、双语逐字歌词、跨屏灵动岛、本地听歌与大歌单找歌打磨到开箱即用。
 
 **简体中文** · [English](README.en.md)
 
 [![最新版本](https://img.shields.io/badge/version-v1.0.0-ef3b45?style=flat-square)](https://github.com/hfx123456/Sonora/releases/latest)
 ![Windows x64](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-3a6ea5?style=flat-square)
+![macOS Universal](https://img.shields.io/badge/macOS-Universal%20(arm64%20%2F%20x64)-111111?style=flat-square)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-c2410c?style=flat-square)](LICENSE)
 
 **[下载 Sonora](https://github.com/hfx123456/Sonora/releases/latest)** · [功能详情](FUSION.md) · [更新日志](CHANGELOG.md) · [上游项目](https://github.com/margbug01/MySpotify)
@@ -20,7 +21,7 @@
 
 </div>
 
-本仓库由 **hfx123456** 维护，基于 [margbug01/MySpotify](https://github.com/margbug01/MySpotify) 的源码加入深度定制。下面重点介绍 **Sonora v1.0** 的核心特性；Spotify 浏览、在线播放、MV、播客等基础能力来自上游。本分支当前发布 **Windows 10/11 x64** 构建。
+本仓库由 **hfx123456** 维护，基于 [margbug01/MySpotify](https://github.com/margbug01/MySpotify) 的源码加入深度定制。下面重点介绍 **Sonora v1.0** 的核心特性；Spotify 浏览、在线播放、MV、播客等基础能力来自上游。本分支发布 **Windows 10/11 x64** 与 **macOS Universal（Apple Silicon / Intel）** 构建。
 
 ---
 
@@ -115,9 +116,10 @@
 
 ## 下载与开始使用
 
-1. 打开 **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**，下载 `Sonora-v1.0.0-windows-amd64.zip` 或对应构建。
-2. 完整解压，保留 `Sonora.exe` 同目录的 `LICENSE`、`licenses/` 等文件后运行 `Sonora.exe`。
-3. 在线登录与播放需要 **Microsoft Edge WebView2 Runtime**（Windows 10/11 通常已自带，缺失可从[微软官方下载页](https://developer.microsoft.com/microsoft-edge/webview2/)安装）。
+1. 打开 **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**：
+   - **Windows**：推荐下载一键安装包 `sonora-setup-1.0.0-amd64.exe`（自动创建快捷方式并按需安装 WebView2）；或下载便携版 `Sonora-1.0.0-windows-amd64.zip` 解压运行。
+   - **macOS**：下载通用镜像 `sonora-1.0.0-universal.dmg`（支持 Apple Silicon 与 Intel），拖入「应用程序」即可使用；因未进行 Apple 公证，首次打开请右键「打开」或在「系统设置 → 隐私与安全性」中允许运行。
+2. 两个平台均已内嵌 Lyricify 歌词助手与 .NET 运行时，**无需额外配置任何环境**。
 
 ## 数据隔离与更新
 
