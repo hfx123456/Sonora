@@ -221,6 +221,7 @@ func TestFallbackLyricsAllowLateTranslation(t *testing.T) {
 	ch := make(chan func(), 16)
 	p := New(func(fn func()) { ch <- fn })
 	p.Cue([]spotify.Track{{ID: "song"}})
+	p.cue(0, false, 0)
 	<-started
 	p.UseFallbackLyrics("spotify:track:song", []lyrics.Line{{Text: "青い空", At: time.Second}})
 	fallback, loaded := p.Lyrics()
