@@ -131,9 +131,15 @@
 - **独立双开不冲突**：使用独立单实例锁、应用标识（`dev.hfx123456.sonora`）与数据目录（`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`），可与原版 MySpotify 并行运行；首次启动自动迁移旧配置且保留原目录不动。
 - **独立更新源**：支持在「设置 → 关于」一键检查并更新至最新 Release。
 
-## 上游致谢与声明
+## 致谢与声明
 
-Spotify 首页浏览、搜索、歌单、专辑、艺人、喜欢与收藏、在线播放、MV、播客、系统媒体键、全局快捷键、托盘及基础框架来自上游 [margbug01/MySpotify](https://github.com/margbug01/MySpotify)，完整保留 **AGPL-3.0** 开源协议。
+- **[margbug01/MySpotify](https://github.com/margbug01/MySpotify)**（**AGPL-3.0**）：Spotify 首页浏览、搜索、歌单、专辑、艺人、喜欢与收藏、在线播放、MV、播客、系统媒体键、全局快捷键、托盘及基础客户端架构来自上游 MySpotify，完整保留 **AGPL-3.0** 开源协议。
+- **[egoist/mygo](https://github.com/egoist/mygo)**（**MIT**）：原生跨平台桌面界面、动画弹簧、液态玻璃材质与 GPU 着色器管线均基于 MyGo 构建。
+- **[WXRIW / Lyricify](https://github.com/WXRIW/Lyricify-App)**：
+  - **[Lyricify Lyrics Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper)**（**Apache-2.0**）：提供网易云音乐、QQ 音乐（QRC 解密）与 LRCLIB 多源双语歌词检索与解析。
+  - **[Lyricify Backgrounds](https://github.com/WXRIW/Lyricify-Backgrounds)**（**Apache-2.0**）：动态背景着色器效果参考自 iOS Classic 背景实现。
+  - **Dynamic Lyrics Island（动态歌词岛）概念**（**CC BY-SA 4.0**）：顶部词岛与桌面歌词视觉交互参考自 Lyricify 官方设计。
+- 更多依赖与完整第三方许可原文见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 与 `licenses/` 目录。
 
 Sonora 为非官方个人开源项目，与 Spotify 无关；在线功能依赖网页播放器内部接口，请仅使用自己的账号。
 

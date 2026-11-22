@@ -105,4 +105,12 @@ go test ./internal/...
 go build -trimpath -ldflags='-H windowsgui -s -w' -o Sonora.exe .
 ```
 
-Retained under **AGPL-3.0** based on [margbug01/MySpotify](https://github.com/margbug01/MySpotify). See [DEVELOPMENT.md](DEVELOPMENT.md), [FUSION.md](FUSION.md), and [CHANGELOG.md](CHANGELOG.md).
+## Acknowledgments & License
+
+- **[margbug01/MySpotify](https://github.com/margbug01/MySpotify)** (**AGPL-3.0**): Upstream base providing Spotify browsing, playback, MV, podcasts, media keys, tray, and core architecture; retained under **AGPL-3.0**.
+- **[egoist/mygo](https://github.com/egoist/mygo)** (**MIT**): Native cross-platform UI toolkit, spring animations, Liquid Glass material, and GPU shader pipeline.
+- **[WXRIW / Lyricify](https://github.com/WXRIW/Lyricify-App)**:
+  - **[Lyricify Lyrics Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper)** (**Apache-2.0**): Multi-source bilingual lyrics search & QRC decryption (NetEase, QQ Music, LRCLIB).
+  - **[Lyricify Backgrounds](https://github.com/WXRIW/Lyricify-Backgrounds)** (**Apache-2.0**): Dynamic backdrop shader adaptation inspired by iOS Classic backgrounds.
+  - **Dynamic Lyrics Island concept** (**CC BY-SA 4.0**): Top lyrics island and desktop lyrics appearance credited to Lyricify.
+- Full third-party notices and license texts are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and `licenses/`. See also [DEVELOPMENT.md](DEVELOPMENT.md), [FUSION.md](FUSION.md), and [CHANGELOG.md](CHANGELOG.md).
