@@ -133,7 +133,16 @@ func (a *app) onFusionMove() {
 	}
 	a.fusion.movedAt = time.Now()
 	a.keepFusionPosition()
-	a.settings.save()
+	if a.fusionSaveTimer != nil {
+		a.fusionSaveTimer.Stop()
+	}
+	a.fusionSaveTimer = time.AfterFunc(400*time.Millisecond, func() {
+		mygo.RunOnMain(func() {
+			if !a.quitting {
+				a.settings.save()
+			}
+		})
+	})
 	a.fusion.win.Invalidate()
 }
 

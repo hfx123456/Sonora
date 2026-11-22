@@ -253,6 +253,7 @@ type app struct {
 	proxyTyping     bool            // the proxy's field had the focus last frame
 	recording       string          // the action whose global shortcut the settings wait for
 	recFocused      bool            // and its button has had the focus since
+	recSeen         bool            // whether the recording button was built this frame
 	hotkeyErr       map[string]bool // the actions whose shortcut the system would not take
 	cacheUsed       int64           // the bytes the cache of tracks takes, -1 until measured
 	cacheMeasureGen int             // guards stale async cache size measurements
@@ -261,8 +262,10 @@ type app struct {
 	restored       bool   // playback picked up where it was left
 	accountGen     int    // signed in or out how many times: a sign-in asked before is no one's
 	accountSession uint32 // 1 while an account session may exist; prevents guest requests from spawning hidden WebViews
-	savedSession   string // the session as last kept
-	sessionDue     bool   // a save of the session is due
+	savedSession    string      // the session as last kept
+	sessionDue      bool        // a save of the session is due
+	sessionGen      int         // incremented on clearSession to drop pending saves
+	fusionSaveTimer *time.Timer // debounces settings.save during floating window drag
 	homeFile       string // where what the home page shows is kept, "" to keep none
 }
 
@@ -523,6 +526,7 @@ func Run() error {
 		}
 		a.keepFusionPosition()
 		a.closeSignin()
+		a.closeCloudLoginWindow()
 		a.stopConnectWait(1500 * time.Millisecond)
 		if a.mineTimer != nil {
 			a.mineTimer.Stop()

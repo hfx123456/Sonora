@@ -467,7 +467,7 @@ func (w *Web) serveMedia(rw http.ResponseWriter, r *http.Request, rest string) {
 		}
 		defer file.Close()
 		info, err := file.Stat()
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil || !isPlayableLocalFile(info) {
 			http.NotFound(rw, r)
 			return
 		}

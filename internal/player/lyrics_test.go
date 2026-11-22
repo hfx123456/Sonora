@@ -201,7 +201,12 @@ func TestAdoptLyricsGuardsLateCueResult(t *testing.T) {
 		t.Fatalf("late lookup overwrote adopted lyrics: loaded=%v lines=%+v", loaded, lines)
 	}
 	p.cue(1, false, 0)
-	next(t, ch)
+	for range 8 {
+		next(t, ch)
+		if _, loaded := p.Lyrics(); loaded {
+			break
+		}
+	}
 	if lines, loaded := p.Lyrics(); !loaded || len(lines) != 1 || lines[0].Text != "spotify-two" {
 		t.Fatalf("next track kept previous override: loaded=%v lines=%+v", loaded, lines)
 	}

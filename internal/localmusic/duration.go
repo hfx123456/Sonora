@@ -27,12 +27,12 @@ func duration(file readAtSeeker, size int64, ext string) time.Duration {
 	if string(header[:4]) == "RIFF" && string(header[8:12]) == "WAVE" {
 		var rate uint32
 		for offset := int64(12); offset+8 <= size; {
-			chunk := make([]byte, 16)
-			if _, err := file.ReadAt(chunk, offset); err != nil {
+			var chunk [8]byte
+			if _, err := file.ReadAt(chunk[:], offset); err != nil {
 				break
 			}
 			length := int64(binary.LittleEndian.Uint32(chunk[4:8]))
-			if string(chunk[:4]) == "fmt " && length >= 16 {
+			if string(chunk[:4]) == "fmt " && length >= 16 && offset+8+16 <= size {
 				var data [16]byte
 				if _, err := file.ReadAt(data[:], offset+8); err != nil {
 					break
@@ -59,13 +59,20 @@ func mp4Duration(file readAtSeeker, start, end int64, depth int) time.Duration {
 		return 0
 	}
 	for offset := start; offset+8 <= end; {
-		var header [32]byte
+		var header [8]byte
 		if _, err := file.ReadAt(header[:], offset); err != nil {
 			return 0
 		}
 		size, prefix := int64(binary.BigEndian.Uint32(header[:4])), int64(8)
 		if size == 1 {
-			size, prefix = int64(binary.BigEndian.Uint64(header[8:16])), 16
+			if offset+16 > end {
+				return 0
+			}
+			var extSize [8]byte
+			if _, err := file.ReadAt(extSize[:], offset+8); err != nil {
+				return 0
+			}
+			size, prefix = int64(binary.BigEndian.Uint64(extSize[:])), 16
 		}
 		if size == 0 {
 			size = end - offset

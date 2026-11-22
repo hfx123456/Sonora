@@ -38,7 +38,26 @@ var lrcTime = regexp.MustCompile(`\[(\d+):(\d+)(?:[.:](\d+))?\]`)
 func parseLRC(lrc string) []Line {
 	var out []Line
 	for _, raw := range strings.Split(lrc, "\n") {
-		times := lrcTime.FindAllStringSubmatchIndex(raw, -1)
+		var times [][]int
+		for pos := 0; pos < len(raw); {
+			for pos < len(raw) && (raw[pos] == ' ' || raw[pos] == '\t') {
+				pos++
+			}
+			loc := lrcTime.FindStringSubmatchIndex(raw[pos:])
+			if loc == nil || loc[0] != 0 {
+				break
+			}
+			shifted := make([]int, len(loc))
+			for i, v := range loc {
+				if v >= 0 {
+					shifted[i] = v + pos
+				} else {
+					shifted[i] = -1
+				}
+			}
+			times = append(times, shifted)
+			pos += loc[1]
+		}
 		if len(times) == 0 {
 			continue
 		}
@@ -49,6 +68,9 @@ func parseLRC(lrc string) []Line {
 			var frac time.Duration
 			if m[6] >= 0 {
 				f := raw[m[6]:m[7]]
+				if len(f) > 9 {
+					f = f[:9]
+				}
 				n, _ := strconv.Atoi(f)
 				frac = time.Duration(n) * time.Second
 				for range len(f) {
@@ -65,7 +87,7 @@ func parseLRC(lrc string) []Line {
 
 var (
 	yrcLine = regexp.MustCompile(`^\[(\d+),(\d+)\]`)
-	yrcWord = regexp.MustCompile(`\((\d+),(\d+),\d+\)([^(]*)`)
+	yrcWord = regexp.MustCompile(`\((\d+),(\d+),\d+\)`)
 )
 
 // parseYRC reads NetEase's word-timed lyrics: a line is
@@ -85,9 +107,16 @@ func parseYRC(yrc string) []Line {
 		}
 		l := Line{At: ms(m[1]), Timed: true}
 		l.End = l.At + ms(m[2])
-		for _, w := range yrcWord.FindAllStringSubmatch(raw[len(m[0]):], -1) {
-			start := ms(w[1])
-			word := Word{Text: w[3], Start: start, End: start + ms(w[2])}
+		rest := raw[len(m[0]):]
+		matches := yrcWord.FindAllStringSubmatchIndex(rest, -1)
+		for i, w := range matches {
+			start := ms(rest[w[2]:w[3]])
+			dur := ms(rest[w[4]:w[5]])
+			textEnd := len(rest)
+			if i+1 < len(matches) {
+				textEnd = matches[i+1][0]
+			}
+			word := Word{Text: rest[w[1]:textEnd], Start: start, End: start + dur}
 			if strings.TrimSpace(word.Text) == "" {
 				// A space between words: it belongs to the word before.
 				if n := len(l.Words); n > 0 {

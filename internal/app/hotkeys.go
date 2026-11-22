@@ -63,6 +63,7 @@ func (a *app) hotkeyButton(c *ui.Context, id, label string) {
 		b := ui.Button(c.Key("hotkey-"+id), text).Label(label + "的快捷键").MinWidth(128)
 		b.HandleInput(func(ev ui.InputEvent) bool { return a.hotkeyKey(id, ev) })
 		if rec {
+			a.recSeen = true
 			// Focused as the press left it; elsewhere, it gives up.
 			if b.Focused() {
 				a.recFocused = true
@@ -125,7 +126,7 @@ func (a *app) setHotkey(id, acc string) {
 func (a *app) startRecording(id string) {
 	// Registered, the shortcuts would take their keys before the window.
 	unregisterHotkeys()
-	a.recording, a.recFocused = id, false
+	a.recording, a.recFocused, a.recSeen = id, false, true
 }
 
 func (a *app) stopRecording() {

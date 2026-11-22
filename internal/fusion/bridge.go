@@ -68,7 +68,10 @@ func Fetch(ctx context.Context, dir string, request Request, refresh bool) (Resu
 	sum := sha256.Sum256(keyData)
 	path := filepath.Join(dir, "lyrics-v2", hex.EncodeToString(sum[:])+".json")
 	if !refresh {
-		if cached, err := os.ReadFile(path); err == nil {
+		fetchCacheMu.Lock()
+		cached, err := os.ReadFile(path)
+		fetchCacheMu.Unlock()
+		if err == nil {
 			if result, err := decode(cached); err == nil && reusableCache(path, result) {
 				return result, nil
 			}
@@ -127,10 +130,28 @@ func Fetch(ctx context.Context, dir string, request Request, refresh bool) (Resu
 		}
 		return Result{}, bestErr
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
-		os.WriteFile(path, bestRaw, 0o600)
-	}
+	writeFusionCache(path, bestRaw)
 	return bestResult, nil
+}
+
+var fetchCacheMu sync.Mutex
+
+func writeFusionCache(path string, data []byte) {
+	fetchCacheMu.Lock()
+	defer fetchCacheMu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "fusion-*.part")
+	if err != nil {
+		return
+	}
+	defer os.Remove(tmp.Name())
+	_, err = tmp.Write(data)
+	closeErr := tmp.Close()
+	if err == nil && closeErr == nil {
+		_ = os.Rename(tmp.Name(), path)
+	}
 }
 
 func withResponseSource(raw []byte, source string) []byte {

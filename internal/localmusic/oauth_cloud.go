@@ -106,11 +106,18 @@ func registerOAuthSources(sources []CloudSource) {
 		if kind != CloudTypeOneDrive && kind != CloudTypeGoogleDrive && kind != CloudTypeBaidu {
 			continue
 		}
-		if existing, ok := oauthRegistry.byID[s.ID]; ok && existing.refreshToken == s.RefreshToken && existing.source.ClientID == s.ClientID {
-			existing.source = s
-			nextByID[s.ID] = existing
-			nextByType[kind] = existing
-			continue
+		if existing, ok := oauthRegistry.byID[s.ID]; ok {
+			existing.mu.Lock()
+			same := existing.refreshToken == s.RefreshToken && existing.source.ClientID == s.ClientID
+			if same {
+				existing.source = s
+			}
+			existing.mu.Unlock()
+			if same {
+				nextByID[s.ID] = existing
+				nextByType[kind] = existing
+				continue
+			}
 		}
 		entry := &oauthTokenEntry{
 			source:       s,
@@ -525,6 +532,9 @@ type odItem struct {
 	Deleted      *struct {
 		State string `json:"state"`
 	} `json:"deleted"`
+	ParentReference *struct {
+		ID string `json:"id"`
+	} `json:"parentReference"`
 	Folder *struct {
 		ChildCount int `json:"childCount"`
 	} `json:"folder"`
@@ -538,9 +548,9 @@ type odItem struct {
 }
 
 func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader string, seenFiles map[string]bool) ([]davFile, bool) {
-	deltaURL := oneDriveAPIBase + "/me/drive/root/delta?$select=id,name,size,eTag,lastModifiedDateTime,folder,audio,deleted&$top=500"
+	deltaURL := oneDriveAPIBase + "/me/drive/root/delta?$select=id,name,size,eTag,lastModifiedDateTime,folder,audio,deleted,parentReference&$top=500"
 	if folder != "" {
-		deltaURL = oneDriveAPIBase + "/me/drive/root:/" + escapeOneDrivePath(folder) + ":/delta?$select=id,name,size,eTag,lastModifiedDateTime,folder,audio,deleted&$top=500"
+		deltaURL = oneDriveAPIBase + "/me/drive/root:/" + escapeOneDrivePath(folder) + ":/delta?$select=id,name,size,eTag,lastModifiedDateTime,folder,audio,deleted,parentReference&$top=500"
 	}
 
 	var all []odItem
@@ -572,6 +582,7 @@ func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader 
 		nextURL = body.NextLink
 	}
 
+	lrcByParentStem := map[string]string{}
 	lrcByStem := map[string]string{}
 	for _, it := range all {
 		if it.Deleted != nil || it.Folder != nil || it.Name == "" {
@@ -580,7 +591,12 @@ func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader 
 		lower := strings.ToLower(it.Name)
 		if strings.HasSuffix(lower, ".lrc") {
 			stem := strings.TrimSuffix(lower, ".lrc")
-			lrcByStem[stem] = oneDriveAPIBase + "/me/drive/items/" + url.PathEscape(it.ID) + "/content"
+			lrcURL := oneDriveAPIBase + "/me/drive/items/" + url.PathEscape(it.ID) + "/content"
+			if it.ParentReference != nil && it.ParentReference.ID != "" {
+				lrcByParentStem[it.ParentReference.ID+"\x00"+stem] = lrcURL
+			} else {
+				lrcByStem[stem] = lrcURL
+			}
 		}
 	}
 
@@ -596,6 +612,12 @@ func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader 
 		seenFiles[contentURL] = true
 		ext := strings.ToLower(path.Ext(it.Name))
 		stem := strings.TrimSuffix(strings.ToLower(it.Name), ext)
+		var lrcURL string
+		if it.ParentReference != nil && it.ParentReference.ID != "" {
+			lrcURL = lrcByParentStem[it.ParentReference.ID+"\x00"+stem]
+		} else {
+			lrcURL = lrcByStem[stem]
+		}
 		df := davFile{
 			URL:          contentURL,
 			Name:         it.Name,
@@ -603,7 +625,7 @@ func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader 
 			Size:         it.Size,
 			ETag:         it.ETag,
 			LastModified: it.LastModified,
-			LyricsURL:    lrcByStem[stem],
+			LyricsURL:    lrcURL,
 			AuthHeader:   authHeader,
 			Source:       src,
 		}

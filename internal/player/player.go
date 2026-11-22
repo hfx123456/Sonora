@@ -133,8 +133,9 @@ type Player struct {
 	// ahead are the lyrics of the track after this one, fetched as this
 	// one plays: LRCLIB, busy, can take seconds.
 	ahead struct {
-		id    string
-		lines []lyrics.Line
+		id     string
+		lines  []lyrics.Line
+		loaded bool
 	}
 	// upNext is the track after this one resolved as this one plays
 	// (mediaAhead): its media, and when, as its CDN URLs are signed for a
@@ -1318,7 +1319,7 @@ func (p *Player) Clear() {
 	p.pending = 0
 	p.queue = nil
 	p.order = nil
-	p.at = 0
+	p.at = -1
 	p.track = nil
 	p.media = nil
 	p.lyrics = nil
@@ -1696,9 +1697,12 @@ func (p *Player) cue(at int, play bool, from time.Duration) (int, spotify.Track)
 		}
 	}()
 
-	if p.ahead.id == t.ID && len(p.ahead.lines) > 0 {
+	if p.ahead.id == t.ID && p.ahead.loaded {
 		p.lyrics, p.lyricsLoaded = p.ahead.lines, true
 		p.lyricsAhead()
+		return gen, t
+	}
+	if p.ahead.id == t.ID {
 		return gen, t
 	}
 	go func() {
@@ -1728,12 +1732,18 @@ func (p *Player) lyricsAhead() {
 	if next.Episode || p.ahead.id == next.ID {
 		return
 	}
-	p.ahead.id, p.ahead.lines = next.ID, nil
+	p.ahead.id, p.ahead.lines, p.ahead.loaded = next.ID, nil, false
 	go func() {
 		lines := lyricsOf(next)
 		p.post(func() {
 			if p.ahead.id == next.ID {
 				p.ahead.lines = lines
+				p.ahead.loaded = true
+				if p.track != nil && p.track.ID == next.ID && !p.lyricsLoaded && !p.lyricsOverride {
+					p.lyrics = lines
+					p.lyricsLoaded = true
+					p.lyricsAhead()
+				}
 			}
 		})
 	}()

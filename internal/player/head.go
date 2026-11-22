@@ -246,5 +246,5 @@ func parseRange(rg string) (int64, int64, bool) {
 	a, b, ok := strings.Cut(spec, "-")
 	from, err1 := strconv.ParseInt(a, 10, 64)
 	to, err2 := strconv.ParseInt(b, 10, 64)
-	return from, to, ok && err1 == nil && err2 == nil && from <= to
+	return from, to, ok && err1 == nil && err2 == nil && from >= 0 && from <= to
 }

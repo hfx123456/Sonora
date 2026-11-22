@@ -194,7 +194,7 @@ func lookupByNames(t spotify.Track, decorate func([]spotify.Track) ([]spotify.Tr
 func rename(t spotify.Track, decorate func([]spotify.Track) ([]spotify.Track, error)) spotify.Track {
 	bare := t
 	bare.Artists = nil
-	if named, err := decorate([]spotify.Track{bare}); err == nil && !named[0].Unnamed() {
+	if named, err := decorate([]spotify.Track{bare}); err == nil && len(named) > 0 && !named[0].Unnamed() {
 		return named[0]
 	}
 	return t

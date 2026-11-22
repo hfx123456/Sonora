@@ -39,6 +39,12 @@ func (a *app) view(c *ui.Context) {
 	t.Font = appFont
 	c.SetTheme(&t)
 
+	a.recSeen = false
+	defer func() {
+		if a.recording != "" && !a.recSeen {
+			a.stopRecording()
+		}
+	}()
 	a.shortcuts(c)
 	a.finishSongClick(c)
 	a.ensureFusion(false)

@@ -589,12 +589,14 @@ func enrichCloudTrackFromFile(track spotify.Track, localFile, coverDir, cachePat
 		track.LocalLyrics = parsed.LocalLyrics
 	}
 	if cachePath != "" && track.CloudURL != "" {
+		cloudIndexMu.Lock()
 		idx := loadCloudIndex(cachePath)
 		if entry, ok := idx.Entries[track.CloudURL]; ok {
 			entry.Track = track
 			idx.Entries[track.CloudURL] = entry
 			saveCloudIndex(cachePath, idx)
 		}
+		cloudIndexMu.Unlock()
 	}
 	return track
 }
@@ -1318,12 +1320,14 @@ func UploadToCloud(ctx context.Context, localPath string, dst CloudSource) (stri
 	return targetURL, nil
 }
 
+var cloudIndexMu sync.Mutex
+
 func joinCloudFileURL(baseURL, filename string) (string, error) {
 	u, err := url.Parse(ensureTrailingSlash(baseURL))
 	if err != nil {
 		return "", err
 	}
-	ref := &url.URL{Path: url.PathEscape(filename)}
+	ref := &url.URL{Path: filename}
 	return u.ResolveReference(ref).String(), nil
 }
 

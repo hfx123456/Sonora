@@ -54,7 +54,11 @@ func (a *app) keepSession() {
 		return
 	}
 	a.sessionDue = true
+	gen := a.sessionGen
 	sessionAfter(sessionEvery, func() {
+		if gen != a.sessionGen {
+			return
+		}
 		a.sessionDue = false
 		a.saveSession()
 		if a.pl.Playing() {
@@ -72,6 +76,8 @@ var sessionAfter = func(d time.Duration, fn func()) {
 // clearSession forgets any saved playback session on sign-out so another
 // account signing in does not inherit the previous user's queue.
 func (a *app) clearSession() {
+	a.sessionGen++
+	a.sessionDue = false
 	a.savedSession = ""
 	a.restored = false
 	if path, err := sessionPath(); err == nil {

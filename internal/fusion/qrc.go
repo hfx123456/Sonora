@@ -171,9 +171,7 @@ func decodeQQField(field string) string {
 		return ""
 	}
 	if strings.Contains(text, "<?xml") || strings.Contains(text, "<Lyric_1") {
-		if content := extractLyricContentAttr(text); content != "" {
-			return content
-		}
+		return extractLyricContentAttr(text)
 	}
 	return text
 }

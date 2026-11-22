@@ -413,12 +413,17 @@ func uploadBaiduFile(ctx context.Context, localPath, remotePath, token string) (
 	if err != nil {
 		return 0, err
 	}
+	defer createRes.Body.Close()
+	if createRes.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("百度网盘合并文件失败（HTTP %d）", createRes.StatusCode)
+	}
 	var createResp struct {
 		Errno int   `json:"errno"`
 		FsID  int64 `json:"fs_id"`
 	}
-	_ = json.NewDecoder(io.LimitReader(createRes.Body, 256<<10)).Decode(&createResp)
-	createRes.Body.Close()
+	if err := json.NewDecoder(io.LimitReader(createRes.Body, 256<<10)).Decode(&createResp); err != nil {
+		return 0, fmt.Errorf("百度网盘合并文件响应解析失败: %w", err)
+	}
 	if createResp.Errno != 0 {
 		return 0, fmt.Errorf("百度网盘合并文件失败（errno=%d）", createResp.Errno)
 	}
