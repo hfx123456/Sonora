@@ -3,8 +3,13 @@ package player
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo"
+
+	"vinyl/internal/spotify"
 )
 
 // systemEvent reports, as the page does, what the system did to out.
@@ -101,4 +106,146 @@ func TestSystemSkips(t *testing.T) {
 	if p.at != 0 {
 		t.Fatalf("previous: at %d", p.at)
 	}
+}
+
+// Control Center's progress bar, which WebKit passes the page once the page
+// handles seekto (#30), moves Vinyl there, as its own seek bar does.
+func TestSystemSeeks(t *testing.T) {
+	ch, p, _ := licensed(t, func(http.ResponseWriter, *http.Request) {})
+	defer p.CloseWeb()
+	systemEvent(p, p.out.(*webOut), "system-seek", 42.5, 0)
+	next(t, ch)
+	if p.Position() != 42500*time.Millisecond {
+		t.Fatalf("after the system's seek: at %v", p.Position())
+	}
+}
+
+// WebKit shows the system the page playing as a media session of its own,
+// which the app's stood beside, titled Vinyl and naming no song (#27): the
+// page names the track while it plays it and the app shows nothing, till
+// the page is let go and the app shows it again.
+func TestPageShowsWhatPlays(t *testing.T) {
+	defer func(was bool) { pageNowPlaying = was }(pageNowPlaying)
+	pageNowPlaying = true
+	mygo.NowPlaying.Clear()
+	oldVisibility := nativeNowPlayingVisible
+	defer func() { nativeNowPlayingVisible = oldVisibility }()
+	var visible bool
+	nativeNowPlayingVisible = func(v bool) { visible = v }
+	ch, p, _ := licensed(t, func(http.ResponseWriter, *http.Request) {})
+	defer func() { p.CloseWeb(); mygo.NowPlaying.Clear() }()
+	p.PlayQueue([]spotify.Track{{ID: "1", Name: "曲终人散", Artists: []spotify.Artist{{Name: "张宇"}}}}, 0)
+	next(t, ch)
+	named := false
+	for len(p.Web.cmds) > 0 {
+		cmd := <-p.Web.cmds
+		named = named || strings.HasPrefix(cmd, "vinyl.meta(") && strings.Contains(cmd, `"title":"曲终人散"`) && strings.Contains(cmd, `"artist":"张宇"`)
+	}
+	if _, shown := mygo.NowPlaying.Info(); shown || visible || !named {
+		t.Fatalf("while the page plays: app shows it %v, native visible %v, page names it %v", shown, visible, named)
+	}
+	// Paused five minutes, the page is let go (releaseIdle).
+	p.playing = false
+	p.sync()
+	p.releaseIdle(p.idleGen)
+	if info, shown := mygo.NowPlaying.Info(); !shown || !visible || info.Title != "曲终人散" {
+		t.Fatalf("once the page is let go: app shows %q (%v)", info.Title, shown)
+	}
+}
+
+// Restoring or loading local playback briefly created a native client
+// before WebKit existed; its empty stopped card then survived the handoff.
+func TestLocalLoadingDoesNotPublishNativeSession(t *testing.T) {
+	defer func(was bool) { pageNowPlaying = was }(pageNowPlaying)
+	pageNowPlaying = true
+	mygo.NowPlaying.Clear()
+	oldVisibility := nativeNowPlayingVisible
+	defer func() { nativeNowPlayingVisible = oldVisibility }()
+	calls := 0
+	nativeNowPlayingVisible = func(bool) { calls++ }
+	p := New(func(func()) {})
+	p.Cue([]spotify.Track{{ID: "song", Name: "Song"}})
+	p.cue(0, false, 0) // startup restores the queue paused
+	p.playing, p.loading = true, true
+	p.sync()
+	p.announce(p.track, []byte("cover")) // the cover may beat the audio
+	if _, shown := mygo.NowPlaying.Info(); shown || calls != 0 || p.nativeShown {
+		t.Fatalf("local loading published a native client: shown %v, visibility calls %d", shown, calls)
+	}
+}
+
+// Audio/MV reopening keeps the track generation: queued events from the
+// replaced output must not pause, seek or advance the newly opened one.
+func TestReplacedOutputEventsAreIgnored(t *testing.T) {
+	for _, kind := range []string{"system-pause", "system-seek", "system-next", "ended"} {
+		t.Run(kind, func(t *testing.T) {
+			ch, p, _ := licensed(t, func(http.ResponseWriter, *http.Request) {})
+			defer p.CloseWeb()
+			old := p.out.(*webOut)
+			seq := old.asked
+			if kind == "ended" {
+				seq = 1
+			}
+			systemEvent(p, old, kind, 12, seq)
+			replacement := &webOut{w: p.Web, gen: old.gen + 1, dur: time.Minute, pos: 5 * time.Second}
+			p.out = replacement
+			generation := p.gen
+			next(t, ch)
+			if !p.playing || p.out != replacement || p.gen != generation || p.Current().ID != "1" || replacement.Position() != 5*time.Second {
+				t.Fatal("a replaced output changed the current playback")
+			}
+		})
+	}
+}
+
+// Switching audio and video pages used to keep pageShown=true and leave
+// the new page showing an older song's metadata, or none at all.
+func TestSwitchingPageNamesTheCurrentTrack(t *testing.T) {
+	defer func(was bool) { pageNowPlaying = was }(pageNowPlaying)
+	pageNowPlaying = true
+	_, p, _ := licensed(t, func(http.ResponseWriter, *http.Request) {})
+	defer p.CloseWeb()
+	p.sync()
+	oldPage := p.pageNamed
+	nextPage := &Web{cmds: make(chan string, 16)}
+	p.out = &webOut{w: nextPage}
+	p.sync()
+	if p.pageNamed == oldPage || p.pageNamed != nextPage {
+		t.Fatal("the destination page did not change")
+	}
+	select {
+	case cmd := <-nextPage.cmds:
+		if !strings.HasPrefix(cmd, "vinyl.meta(") || !strings.Contains(cmd, `"title":`) {
+			t.Fatalf("new page was not named: %s", cmd)
+		}
+	default:
+		t.Fatal("new page received no track metadata")
+	}
+}
+
+// Hiding the native client for WebKit must not disable its Connect remote
+// controls or the native fallback when the playback page is released.
+func TestNativeSessionReturnsForConnect(t *testing.T) {
+	defer func(was bool) { pageNowPlaying = was }(pageNowPlaying)
+	pageNowPlaying = true
+	oldVisibility := nativeNowPlayingVisible
+	defer func() { nativeNowPlayingVisible = oldVisibility; mygo.NowPlaying.Clear() }()
+	var visible bool
+	nativeNowPlayingVisible = func(v bool) { visible = v }
+	p := New(func(func()) {})
+	track := spotify.Track{ID: "song", Name: "Remote song", Duration: 60000}
+	p.MirrorConnect(track, 12*time.Second, true)
+	if info, shown := mygo.NowPlaying.Info(); !shown || !visible || info.Title != track.Name || info.State != mygo.PlaybackPlaying {
+		t.Fatalf("remote playback did not publish a controllable native session: %+v, shown %v, visible %v", info, shown, visible)
+	}
+	p.out = &webOut{w: &Web{cmds: make(chan string, 16)}}
+	p.sync()
+	if _, shown := mygo.NowPlaying.Info(); shown || visible {
+		t.Fatal("the native session stayed visible beside local WebKit playback")
+	}
+	p.MirrorConnect(track, 20*time.Second, false)
+	if info, shown := mygo.NowPlaying.Info(); !shown || !visible || info.Title != track.Name || info.State != mygo.PlaybackPaused {
+		t.Fatalf("remote playback did not regain its native session: %+v, shown %v, visible %v", info, shown, visible)
+	}
+	p.StopConnect()
 }

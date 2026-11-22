@@ -122,8 +122,8 @@
 ## 下载与开始使用
 
 1. 前往 **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)** 下载最新版本：
-   - **Windows**：推荐下载一键安装包 `sonora-setup-1.0.1-amd64.exe`（自动创建快捷方式并按需安装 WebView2）；或下载便携版 `Sonora-1.0.1-windows-amd64.zip` 解压即用。
-   - **macOS**：下载通用镜像 `sonora-1.0.1-universal.dmg`（同时支持 Apple Silicon 与 Intel），拖入「应用程序」即可；因未进行 Apple 公证，首次打开请右键「打开」或在「系统设置 → 隐私与安全性」中允许运行。
+   - **Windows**：推荐下载一键安装包 `sonora-setup-1.0.2-amd64.exe`（自动创建快捷方式并按需安装 WebView2）；或下载便携版 `Sonora-1.0.2-windows-amd64.zip` 解压即用。
+   - **macOS**：下载通用镜像 `sonora-1.0.2-universal.dmg`（同时支持 Apple Silicon 与 Intel），拖入「应用程序」即可；因未进行 Apple 公证，首次打开请右键「打开」或在「系统设置 → 隐私与安全性」中允许运行。
 2. Windows 与 macOS 安装包均已内嵌 Lyricify 歌词助手与 .NET 运行时，**无需额外安装任何依赖**。
 
 ## 数据隔离与自动更新

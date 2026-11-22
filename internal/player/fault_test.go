@@ -1,6 +1,7 @@
 package player
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -235,25 +236,82 @@ func TestOfflineLoadWaits(t *testing.T) {
 }
 
 // A network error after a proxy node switch (when the network is already up
-// again) reloads the current track at its position once rather than skipping
-// to the next song from zero.
+// again) retries the current track at its position up to flakyTries times
+// before skipping to the next song.
 func TestNetworkErrorReloadsAtPositionWhenOnline(t *testing.T) {
-	ch, p, _ := licensed(t, func(w http.ResponseWriter, r *http.Request) {
+	ch, p, waits := licensed(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("licence"))
 	})
 	page(p, http.MethodPost, "/event", `{"gen":1,"type":"playing","t":42}`)
 	page(p, http.MethodPost, "/event", `{"gen":1,"type":"error","msg":"networkError fragLoadError http=502"}`)
 	next(t, ch) // ended -> unlessOffline
-	next(t, ch) // online() is true -> reloads track 1 at 42s
+	next(t, ch) // online() is true -> waits to retry track 1 at 42s
+	if p.Current().ID != "1" || !p.Playing() || p.Err() != "网络不稳定，正在重试" || len(*waits) != 1 {
+		t.Fatalf("after networkError: track %s, playing %v, err %q, waits %d", p.Current().ID, p.Playing(), p.Err(), len(*waits))
+	}
+	(*waits)[0]()
+	next(t, ch) // loadSkipping
 	next(t, ch) // resolveMedia -> open
 	if p.Current().ID != "1" || !p.Playing() || p.out == nil || p.Position() < 42*time.Second {
-		t.Fatalf("after networkError: track %s, playing %v, out %v, pos %v", p.Current().ID, p.Playing(), p.out != nil, p.Position())
+		t.Fatalf("after retry: track %s, playing %v, out %v, pos %v", p.Current().ID, p.Playing(), p.out != nil, p.Position())
 	}
-	// A second networkError on the same track falls through to skip.
-	page(p, http.MethodPost, "/event", `{"gen":2,"type":"error","msg":"networkError fragLoadError http=502"}`)
+}
+
+// A track that can't load as its identity could not be renewed in time,
+// Spotify answering, is tried again, and passed over only after a few
+// tries: a link dropping connections had three tracks skipped that way,
+// each renewal timing out, and playback stopped.
+func TestRenewalTimeoutTriesAgain(t *testing.T) {
+	ch, p, waits := licensed(t, func(w http.ResponseWriter, r *http.Request) {})
+	resolve = func(string) (*spotify.Media, error) { return nil, context.DeadlineExceeded }
+	p.Next()
+	next(t, ch) // fails to load
+	next(t, ch) // the network is up
+	for i := range flakyTries {
+		if p.Current().ID != "2" || !p.Playing() || p.Err() != "网络不稳定，正在重试" || len(*waits) != i+1 {
+			t.Fatalf("try %d: track %s, playing %v, err %q, %d waits", i, p.Current().ID, p.Playing(), p.Err(), len(*waits))
+		}
+		(*waits)[i]()
+		next(t, ch) // loads again
+		next(t, ch) // fails
+		next(t, ch) // the network is up
+	}
+	if p.Current().ID != "3" {
+		t.Fatalf("after %d tries: track %s; want it passed over", flakyTries, p.Current().ID)
+	}
+}
+
+// A track the network cut off as it played, Spotify answering again by the
+// time the page gave up, plays on where it was rather than the queue
+// skipping to the next.
+func TestNetworkCutPlaysOnWhereItWas(t *testing.T) {
+	ch, p, waits := licensed(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("licence"))
+	})
+	page(p, http.MethodPost, "/event", `{"gen":1,"type":"playing","t":42}`)
+	page(p, http.MethodPost, "/event", `{"gen":1,"type":"error","msg":"networkError fragLoadError http=502"}`)
 	next(t, ch)
+	next(t, ch) // the network is up
+	if p.Current().ID != "1" || !p.Playing() || len(*waits) != 1 {
+		t.Fatalf("track %s, playing %v, %d waits; want track 1 waiting", p.Current().ID, p.Playing(), len(*waits))
+	}
+	(*waits)[0]()
 	next(t, ch)
-	if !p.Loading() || p.Current().ID != "2" {
-		t.Fatalf("second networkError: loading %v, track %s; want track 2 loading", p.Loading(), p.Current().ID)
+	if !p.Loading() || p.Current().ID != "1" || p.Position() < 42*time.Second {
+		t.Fatalf("again: loading %v, track %s, at %v", p.Loading(), p.Current().ID, p.Position())
+	}
+}
+
+// A licence whose identity the network kept from being renewed tries the
+// track again, rather than stopping at it as at a licence refused.
+func TestLicenceRenewalTimeoutTriesAgain(t *testing.T) {
+	ch, p, waits := licensed(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	spotify.Renew = func() (spotify.Identity, error) { return spotify.Identity{}, context.DeadlineExceeded }
+	fails(t, ch, p, "1")
+	next(t, ch) // the network is up
+	if !p.Playing() || p.Current().ID != "1" || p.Err() != "网络不稳定，正在重试" || len(*waits) != 1 {
+		t.Fatalf("playing %v, track %s, err %q, %d waits", p.Playing(), p.Current().ID, p.Err(), len(*waits))
 	}
 }

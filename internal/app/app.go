@@ -264,9 +264,26 @@ type app struct {
 	accountSession uint32 // 1 while an account session may exist; prevents guest requests from spawning hidden WebViews
 	savedSession    string      // the session as last kept
 	sessionDue      bool        // a save of the session is due
+	sessionTrack    string      // the track the session was last kept of
 	sessionGen      int         // incremented on clearSession to drop pending saves
 	fusionSaveTimer *time.Timer // debounces settings.save during floating window drag
 	homeFile       string // where what the home page shows is kept, "" to keep none
+}
+
+// playbackChanged follows what the player did to what plays.
+func (a *app) playbackChanged() {
+	a.notePlayed()
+	// The app may be killed before any timer comes due: the track playing
+	// is kept as it changes, so that a start made after finds it; the
+	// position is kept every little while instead.
+	if cur := a.pl.Current(); cur != nil && cur.ID != a.sessionTrack {
+		a.sessionTrack = cur.ID
+		a.saveSession()
+	}
+	a.keepSession()
+	a.reportConnect()
+	a.ensureFusion(false)
+	a.syncFusionVisibility()
 }
 
 func (a *app) hasAccountSession() bool {
@@ -366,6 +383,7 @@ func Run() error {
 		log.SetOutput(io.MultiWriter(&logFile{path: filepath.Join(dir, "sonora.log")}, os.Stderr))
 		spotify.OpsFile = filepath.Join(dir, "queries.json")
 		spotify.LoadOps()
+		spotify.ClientTokenFile = filepath.Join(dir, "client-token")
 	}
 	log.Printf("start, pid %d", os.Getpid())
 	// MyGo's updater asks GitHub with http.DefaultClient: through the
@@ -373,8 +391,16 @@ func Run() error {
 	if t, ok := http.DefaultTransport.(*http.Transport); ok {
 		t.Proxy = spotify.Proxy
 	}
+	// The app shows Windows what plays itself (mygo.NowPlaying): the page
+	// showed it too, as a second media session of msedgewebview2.exe titled
+	// Vinyl, which could take the media keys.
 	wvArgs := strings.Fields(os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"))
-	for _, flag := range []string{"--autoplay-policy=no-user-gesture-required", "--in-process-gpu", "--disable-gpu"} {
+	for _, flag := range []string{
+		"--autoplay-policy=no-user-gesture-required",
+		"--in-process-gpu",
+		"--disable-gpu",
+		"--disable-features=HardwareMediaKeyHandling,MediaSessionService",
+	} {
 		if !slices.Contains(wvArgs, flag) {
 			wvArgs = append(wvArgs, flag)
 		}
@@ -415,13 +441,7 @@ func Run() error {
 			}
 			return web, err
 		}
-		a.pl.Changed = func() {
-			a.notePlayed()
-			a.keepSession()
-			a.reportConnect()
-			a.ensureFusion(false)
-			a.syncFusionVisibility()
-		}
+		a.pl.Changed = a.playbackChanged
 		a.applyHotkeys()
 		a.played, a.playedFrom = loadPlayed()
 		a.volume = a.settings.Volume

@@ -59,7 +59,7 @@ func TestLocalDurationAndFailure(t *testing.T) {
 		t.Fatal("decoder duration was ignored")
 	}
 	called := false
-	player.unlessOffline(func() { called = true })
+	player.unlessOffline(false, func() { called = true })
 	if !called || player.loading {
 		t.Fatal("local failure waited for the network")
 	}

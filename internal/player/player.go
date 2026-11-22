@@ -3,12 +3,15 @@ package player
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"log"
 	"math"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -37,7 +40,7 @@ type Output interface {
 // systemOutput is an Output the system pauses, plays and skips by itself,
 // as the web player's (see webOut.OnSystem).
 type systemOutput interface {
-	OnSystem(func(string)) (off func())
+	OnSystem(func(cmd string, at time.Duration)) (off func())
 }
 
 // Bands is how many bands of pitch Levels splits a spectrum into.
@@ -125,7 +128,8 @@ type Player struct {
 	waiting        bool
 	throttles      int // the times in a row, to wait longer each
 	offline        int // the times in a row the network was down, likewise
-	networkRetries int // reloads at position after a network error with network up
+	flaky          int // the times this track failed on the network, Spotify answering
+	networkRetries int // reloads at position after a temporary certificate error
 
 	lyrics         []lyrics.Line
 	lyricsLoaded   bool
@@ -147,6 +151,11 @@ type Player struct {
 		timer *time.Timer
 	}
 	cover []byte // the cover the system shows of the track, once loaded
+	// Only an actual remote output or an explicitly released idle page
+	// needs the native session on macOS. Loading local audio never does.
+	nativeShown bool
+	idleNative  bool
+	pageNamed   *Web // the page last given the current track's metadata
 
 	// pending holds a seek asked for while the track loads.
 	pending time.Duration
@@ -185,7 +194,24 @@ func (p *Player) sync() {
 		defer p.Changed()
 	}
 	if p.track == nil {
-		mygo.NowPlaying.Clear()
+		p.hideNativeNowPlaying()
+		p.pageNamed = nil
+		return
+	}
+	page := p.pageOut()
+	if page != nil {
+		if page.w != p.pageNamed || p.nativeShown {
+			p.announce(p.track, p.cover)
+		}
+		return // WebKit follows the page itself.
+	}
+	if !p.needsNativeNowPlaying() {
+		p.hideNativeNowPlaying()
+		p.pageNamed = nil
+		return
+	}
+	if !p.nativeShown {
+		p.announce(p.track, p.cover)
 		return
 	}
 	state := mygo.PlaybackPaused
@@ -195,12 +221,38 @@ func (p *Player) sync() {
 	mygo.NowPlaying.SetPlayback(state, p.Position())
 }
 
+// pageNowPlaying is whether the system shows a page playing as a media
+// session of its own: WebKit's does, on macOS, which no setting turns off;
+// WebView2's is turned off (see app.go).
+var pageNowPlaying = runtime.GOOS == "darwin"
+
+func (p *Player) needsNativeNowPlaying() bool {
+	return !pageNowPlaying || p.IsRemote() || p.idleNative
+}
+
+func (p *Player) hideNativeNowPlaying() {
+	if p.nativeShown {
+		mygo.NowPlaying.Clear()
+		nativeNowPlayingVisible(false)
+		p.nativeShown = false
+	}
+}
+
+// pageOut is the page playing the track, if the system shows it.
+func (p *Player) pageOut() *webOut {
+	if o, ok := p.out.(*webOut); ok && pageNowPlaying && o.w != nil {
+		return o
+	}
+	return nil
+}
+
 // system follows what the system did to what plays rather than Vinyl.
 // WebKit pauses and plays the page itself for the media keys, Control
 // Center and apps such as Mami, which pauses what plays while one talks:
 // Vinyl went on showing it playing, kept it from being let go when idle,
-// and told Spotify Connect it played. It passes the page the skips too.
-func (p *Player) system(cmd string) {
+// and told Spotify Connect it played. It passes the page the skips and
+// seeks too.
+func (p *Player) system(cmd string, at time.Duration) {
 	switch cmd {
 	case "pause", "play":
 		playing := cmd == "play"
@@ -218,11 +270,27 @@ func (p *Player) system(cmd string) {
 		p.Next()
 	case "previous":
 		p.Prev()
+	case "seek":
+		p.Seek(at)
 	}
 }
 
-// announce shows the system the track, and its cover once loaded.
+// announce shows the system the track, and its cover once loaded. Where
+// the system shows the page playing it (pageOut), the page shows it, and
+// the app nothing beside it: the app showed it too, as a second session
+// beside the page's, titled Vinyl and naming no song (#27).
 func (p *Player) announce(t *spotify.Track, artwork []byte) {
+	if o := p.pageOut(); o != nil {
+		o.w.nowPlaying(t, artwork)
+		p.hideNativeNowPlaying()
+		p.pageNamed = o.w
+		return
+	}
+	p.pageNamed = nil
+	if !p.needsNativeNowPlaying() {
+		p.hideNativeNowPlaying()
+		return
+	}
 	state := mygo.PlaybackPaused
 	if p.playing {
 		state = mygo.PlaybackPlaying
@@ -237,7 +305,13 @@ func (p *Player) announce(t *spotify.Track, artwork []byte) {
 		State:    state,
 		Commands: mygo.MediaPlay | mygo.MediaPause | mygo.MediaNext | mygo.MediaPrevious | mygo.MediaSeek,
 	})
+	p.nativeShown = true
+	nativeNowPlayingVisible(true)
 }
+
+// nativeNowPlayingVisible also changes the native client's eligibility on
+// macOS: clearing its metadata alone left a stopped card beside WebKit's.
+var nativeNowPlayingVisible = setNativeNowPlayingVisible
 
 func (p *Player) ended() {
 	if f, ok := p.out.(interface {
@@ -284,7 +358,7 @@ func (p *Player) ended() {
 	if p.control("advance", nil) {
 		return
 	}
-	p.throttles = 0
+	p.throttles, p.flaky = 0, 0
 	if p.repeat == RepeatOne {
 		if p.out != nil {
 			p.out.Seek(0)
@@ -335,32 +409,24 @@ func (p *Player) failed(msg string, licence int, wait time.Duration) {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		// Turned down: the rest of the queue would be too, one after
 		// another. Or offline, the identity could not be renewed.
-		p.unlessOffline(func() {
+		p.unlessOffline(false, func() {
 			p.err = "这首歌暂时无法播放"
 			p.playing = false
 			p.sync()
 		})
 	default:
-		// The page tried again, and could not: if it was a network error and
-		// the network is up now (such as after a proxy node switch), reload the
-		// current track once at its position before skipping on.
+		// The page tried again, and could not: on to the next.
 		if played, ok := p.out.(interface{ Played() bool }); ok && played.Played() {
-			p.networkRetries = 0
+			p.flaky = 0
 		}
 		skipped := p.skipped
-		isNetwork := strings.HasPrefix(msg, "networkError ") || strings.HasPrefix(msg, "media 2 ") || msg == "media 2"
-		p.unlessOffline(func() {
+		p.unlessOffline(pageNetFault(msg, licence), func() {
 			if len(p.order) == 0 {
 				p.playing = false
 				p.sync()
 				return
 			}
 			curAt := min(max(p.at, 0), len(p.order)-1)
-			if isNetwork && p.networkRetries < 1 {
-				p.networkRetries++
-				p.loadSkipping(curAt, skipped, p.playing, p.pending)
-				return
-			}
 			p.err = "这首歌暂时无法播放"
 			p.skip(curAt, skipped)
 		})
@@ -370,8 +436,12 @@ func (p *Player) failed(msg string, licence int, wait time.Duration) {
 // unlessOffline does then with the track that could not load or play, but
 // not with the network down, which no track would play without: the queue
 // skipped through all of them and stopped. The track waits for the network
-// then, and loads again from where it was.
-func (p *Player) unlessOffline(then func()) {
+// then, and loads again from where it was. flaky says the network failed it,
+// as a timeout or a connection cut: then it is tried again where it was a
+// few times even with Spotify answering, as a link or a proxy that drops
+// connections now and then answers between its drops; on it went, three
+// tracks failed as the identity could not be renewed, and it stopped.
+func (p *Player) unlessOffline(flaky bool, then func()) {
 	if p.track != nil && p.track.Local() {
 		p.stop()
 		then()
@@ -388,6 +458,12 @@ func (p *Player) unlessOffline(then func()) {
 				return
 			}
 			p.loading = false
+			if ok && flaky && p.flaky < flakyTries {
+				p.flaky++
+				log.Printf("player: network failed the track, again (%d)", p.flaky)
+				p.again(2*time.Second<<(p.flaky-1), "网络不稳定，正在重试")
+				return
+			}
 			if ok {
 				then()
 				return
@@ -403,6 +479,25 @@ func (p *Player) unlessOffline(then func()) {
 
 // online reports whether Spotify can be reached; tests swap it.
 var online = spotify.Reachable
+
+// flakyTries is how many times a track the network failed is tried again,
+// Spotify answering, before it is passed over: after 2, 4 and 8 seconds.
+const flakyTries = 3
+
+// netFault reports whether err is the network's, as a timeout or a
+// connection cut, rather than an answer of Spotify's.
+func netFault(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// pageNetFault reports whether the page could not play the track for the
+// network: hls.js's network errors, the media element's, or a licence or
+// certificate request no answer came back for (licence 0, or 5xx).
+func pageNetFault(msg string, licence int) bool {
+	return strings.HasPrefix(msg, "networkError ") || strings.HasPrefix(msg, "media 2 ") || msg == "media 2" ||
+		strings.HasPrefix(msg, "keySystemError ") && (licence == 0 || licence >= 500)
+}
 
 // throttled waits as Spotify asked, wait, or longer each time if it did not
 // say, then loads the track again from where it was.
@@ -601,10 +696,15 @@ func (p *Player) appendTracks(tracks []spotify.Track) {
 }
 
 // PlayNext puts tr after the track playing, to play next: moved there if
-// queued already. With nothing queued, it plays tr.
+// queued already. With nothing queued, it plays tr. Played through Spotify
+// Connect, Spotify is asked to queue it: what it holds is what plays next,
+// and put here only, tr was gone at its next word.
 func (p *Player) PlayNext(tr spotify.Track) {
 	if p.at < 0 || len(p.order) == 0 {
 		p.PlayQueue([]spotify.Track{tr}, 0)
+		return
+	}
+	if (p.track == nil || p.track.ID != tr.ID) && p.control("queue", tr) {
 		return
 	}
 	if i := slices.IndexFunc(p.queue, func(t spotify.Track) bool { return t.ID == tr.ID }); i >= 0 {
@@ -625,10 +725,16 @@ func (p *Player) PlayNext(tr spotify.Track) {
 }
 
 // AddToQueue puts tr at the end of the queue, and reports whether it did:
-// not if queued already. With nothing queued, it plays tr.
+// not if queued already. With nothing queued, it plays tr. Played through
+// Spotify Connect, Spotify is asked to queue it, as PlayNext: the queue
+// here is then what is left of the playlist playing, and a song further
+// down it was turned away as queued.
 func (p *Player) AddToQueue(tr spotify.Track) bool {
 	if p.at < 0 || len(p.order) == 0 {
 		p.PlayQueue([]spotify.Track{tr}, 0)
+		return true
+	}
+	if p.control("queue", tr) {
 		return true
 	}
 	if slices.ContainsFunc(p.queue, func(t spotify.Track) bool { return t.ID == tr.ID }) {
@@ -1282,10 +1388,12 @@ func (p *Player) releaseIdle(gen int) {
 	}
 	p.pending = p.Position()
 	p.CloseWeb()
+	p.idleNative = true
 	p.sync()
 }
 
 func (p *Player) CloseWeb() {
+	p.idleNative = false
 	if p.idle != nil {
 		p.idle.Stop()
 		p.idle = nil
@@ -1456,7 +1564,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 					return
 				}
 				if !errors.Is(err, spotify.ErrNoAudioHere) {
-					p.unlessOffline(func() {
+					p.unlessOffline(netFault(err), func() {
 						if len(p.order) == 0 {
 							p.playing = false
 							p.sync()
@@ -1508,6 +1616,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 // video v, if there is one to play and somewhere to play it, or else its
 // audio m.
 func (p *Player) open(gen int, m *spotify.Media, v *spotify.Video) {
+	p.idleNative = false
 	if v != nil && p.Video == nil && p.NewVideo != nil {
 		var err error
 		if p.Video, err = p.NewVideo(); err != nil {
@@ -1548,10 +1657,10 @@ func (p *Player) open(gen int, m *spotify.Media, v *spotify.Video) {
 		})
 	})
 	if sysOut, ok := out.(systemOutput); ok {
-		p.offSystem = sysOut.OnSystem(func(cmd string) {
+		p.offSystem = sysOut.OnSystem(func(cmd string, at time.Duration) {
 			p.post(func() {
 				if gen == p.gen && p.out == out {
-					p.system(cmd)
+					p.system(cmd, at)
 				}
 			})
 		})
@@ -1665,11 +1774,13 @@ func (p *Player) videoFailed(msg string) {
 // loadSkipping goes on to load. Its generation and track are returned.
 func (p *Player) cue(at int, play bool, from time.Duration) (int, spotify.Track) {
 	p.stop()
+	p.idleNative = false
 	p.gen++
 	gen := p.gen
 	p.at = at
 	t := p.queue[p.order[at]]
 	if p.track == nil || p.track.ID != t.ID {
+		p.flaky = 0
 		p.networkRetries = 0
 	}
 	p.track = &t

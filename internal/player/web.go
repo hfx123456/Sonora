@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -218,7 +219,7 @@ func (w *Web) eval(js string) {
 		if w.ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			return
 		}
-		log.Printf("player: %s: %v", js, err)
+		log.Printf("player: %.200s: %v", js, err) // a cover in it runs to 100 KB
 		w.backendFailed("backendError audio page command failed: " + err.Error())
 	}
 }
@@ -232,8 +233,19 @@ func (w *Web) send(js string) {
 	select {
 	case w.cmds <- js:
 	default:
-		log.Printf("player: dropped %s", js)
+		log.Printf("player: dropped %.200s", js)
 	}
+}
+
+// nowPlaying has the page show the system t, with its cover if loaded.
+func (w *Web) nowPlaying(t *spotify.Track, cover []byte) {
+	artwork := ""
+	if len(cover) > 0 {
+		artwork = "data:" + http.DetectContentType(cover) + ";base64," + base64.StdEncoding.EncodeToString(cover)
+	}
+	// JSON escapes what would end the script, as U+2028.
+	b, _ := json.Marshal(map[string]string{"title": t.Name, "artist": t.ArtistNames(), "album": t.Album.Name, "artwork": artwork})
+	w.send("vinyl.meta(" + string(b) + ")")
 }
 
 func (w *Web) setVolume(v float64) {
@@ -548,8 +560,14 @@ func (w *Web) forward(rw http.ResponseWriter, r *http.Request, method, target st
 		}
 		if err != nil {
 			log.Printf("player: %s: %v", r.URL.Path, err)
-			o.answered(http.StatusUnauthorized, 0)
-			http.Error(rw, err.Error(), http.StatusUnauthorized)
+			// An identity the network kept from being renewed was not
+			// turned down: the track is tried again, not stopped at.
+			status := http.StatusUnauthorized
+			if netFault(err) {
+				status = http.StatusBadGateway
+			}
+			o.answered(status, 0)
+			http.Error(rw, err.Error(), status)
 			return
 		}
 		req, _ := http.NewRequestWithContext(r.Context(), method, target, bytes.NewReader(body))
@@ -646,7 +664,7 @@ type webOut struct {
 	lastEventSeq int
 	onEnd        func()
 	// onSystem hears what the system did to the page rather than Vinyl.
-	onSystem func(string)
+	onSystem func(cmd string, at time.Duration)
 	endSeq   int
 	err      string
 	licence  int           // how the licence service last answered
@@ -822,8 +840,8 @@ func (o *webOut) OnEnd(fn func()) (off func()) {
 // OnSystem has fn hear what the system did to the page rather than Vinyl:
 // "pause" or "play", which WebKit carries out on the page itself for the
 // media keys, Control Center and apps such as Mami, which pauses what plays
-// while one talks; or "next" or "previous", the skips it passes the page.
-func (o *webOut) OnSystem(fn func(string)) (off func()) {
+// while one talks; or "next", "previous" or "seek", which it passes the page.
+func (o *webOut) OnSystem(fn func(cmd string, at time.Duration)) (off func()) {
 	o.mu.Lock()
 	o.onSystem = fn
 	o.mu.Unlock()
@@ -896,11 +914,11 @@ func (o *webOut) event(kind string, t time.Duration, msg string, seq int) {
 		system = strings.TrimPrefix(kind, "system-")
 		o.playing = system == "play"
 		o.running = o.running && o.playing
-	case "system-next", "system-previous":
+	case "system-next", "system-previous", "system-seek":
 		fn := o.onSystem
 		o.mu.Unlock()
 		if fn != nil {
-			fn(strings.TrimPrefix(kind, "system-"))
+			fn(strings.TrimPrefix(kind, "system-"), t)
 		}
 		return
 	case "ended":
@@ -949,6 +967,6 @@ func (o *webOut) event(kind string, t time.Duration, msg string, seq int) {
 		end()
 	}
 	if system != "" && fn != nil {
-		fn(system)
+		fn(system, t)
 	}
 }
