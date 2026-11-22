@@ -15,6 +15,11 @@
   <a href="https://github.com/hfx123456/Sonora/releases/latest"><img src="https://img.shields.io/github/v/release/hfx123456/Sonora?label=Release&color=e5484d" alt="Latest Release"></a>
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue" alt="Platform">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-green" alt="License">
+  <a href="https://awesomemygo.dev/apps/sonora"><img src="https://awesomemygo.dev/badge.svg" alt="Listed on Awesome MyGo"></a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/sonora-showcase.png" width="100%" alt="Sonora 主展示图：流光背景、双语逐字歌词、跨屏灵动岛与 6 大个人音乐云盘">
 </p>
 
 ---
