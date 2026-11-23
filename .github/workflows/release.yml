@@ -81,6 +81,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -92,10 +94,26 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
+          VER="${TAG#v}"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          awk -v ver="## $VER" '
+            $0 == ver { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
           cd artifacts
           sha256sum * > SHA256SUMS
-          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-            gh release upload "$TAG" * -R "$REPO" --clobber
+          if [ -s "$NOTES_FILE" ]; then
+            if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+              gh release upload "$TAG" * -R "$REPO" --clobber
+              gh release edit "$TAG" -R "$REPO" --notes-file "$NOTES_FILE"
+            else
+              gh release create "$TAG" * -R "$REPO" --title "Sonora $TAG" --notes-file "$NOTES_FILE"
+            fi
           else
-            gh release create "$TAG" * -R "$REPO" --title "Sonora $TAG" --generate-notes
+            if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+              gh release upload "$TAG" * -R "$REPO" --clobber
+            else
+              gh release create "$TAG" * -R "$REPO" --title "Sonora $TAG" --generate-notes
+            fi
           fi
