@@ -138,6 +138,11 @@ func recommended(uri string) ([]Track, error) {
 	return tracks(items, nil), nil
 }
 
+// TrackCredits returns who made track id, each once, with all they did.
+func TrackCredits(id string) ([]Credit, error) {
+	return trackCredits("spotify:track:" + id)
+}
+
 // trackCredits returns who made the track uri, each once, with all they
 // did, in Spotify's order.
 func trackCredits(uri string) ([]Credit, error) {

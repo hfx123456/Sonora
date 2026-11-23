@@ -57,15 +57,6 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Build macOS Lyricify Lyrics Helper (arm64 + x64)
-        run: |
-          chmod +x tools/fusion-bridge/Build.sh
-          ./tools/fusion-bridge/Build.sh "$GITHUB_WORKSPACE/third_party/Lyricify-Lyrics-Helper"
-
       - name: Run Go tests
         env:
           CGO_ENABLED: '0'

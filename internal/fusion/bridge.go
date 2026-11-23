@@ -1,18 +1,14 @@
 package fusion
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -53,7 +49,7 @@ type response struct {
 	} `json:"lines"`
 }
 
-var runBridge = runBridgeProcess
+var runBridge = runNativeBridge
 
 func Fetch(ctx context.Context, dir string, request Request, refresh bool) (Result, error) {
 	if dir == "" {
@@ -80,17 +76,10 @@ func Fetch(ctx context.Context, dir string, request Request, refresh bool) (Resu
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	if len(bridge) == 0 {
-		return Result{}, errors.New("当前平台未内置双语歌词检索组件")
-	}
-	executable, err := extract(dir)
-	if err != nil {
-		return Result{}, err
-	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	bestRaw, bestResult, bestErr := runBridge(ctx, executable, request)
+	bestRaw, bestResult, bestErr := runBridge(ctx, "", request)
 	if !request.ParseOnly && strings.TrimSpace(request.Title) != "" && ctx.Err() == nil && needsAlternateTitle(bestResult, bestErr) {
 		for _, cand := range resolveAlternateTitles(ctx, request) {
 			if ctx.Err() != nil {
@@ -101,7 +90,7 @@ func Fetch(ctx context.Context, dir string, request Request, refresh bool) (Resu
 			var candErr error
 			if cand.ID != "" {
 				if raw, tr, ok := fetchDirectLyrics(ctx, request.Proxy, cand); ok {
-					candRaw, candResult, candErr = runBridge(ctx, executable, Request{Raw: raw, Translation: tr, ParseOnly: true})
+					candRaw, candResult, candErr = runBridge(ctx, "", Request{Raw: raw, Translation: tr, ParseOnly: true})
 					if candErr == nil && len(candResult.Lines) > 0 && cand.Source != "" {
 						candResult.Source = cand.Source
 						candRaw = withResponseSource(candRaw, cand.Source)
@@ -114,7 +103,7 @@ func Fetch(ctx context.Context, dir string, request Request, refresh bool) (Resu
 				if cand.ClearAlbum {
 					alt.Album = ""
 				}
-				candRaw, candResult, candErr = runBridge(ctx, executable, alt)
+				candRaw, candResult, candErr = runBridge(ctx, "", alt)
 			}
 			if candErr == nil && len(candResult.Lines) > 0 && (len(bestResult.Lines) == 0 || betterResult(candResult, bestResult)) {
 				bestRaw, bestResult, bestErr = candRaw, candResult, nil
@@ -164,37 +153,6 @@ func withResponseSource(raw []byte, source string) []byte {
 		return updated
 	}
 	return raw
-}
-
-func runBridgeProcess(ctx context.Context, executable string, request Request) ([]byte, Result, error) {
-	if strings.HasPrefix(strings.ToLower(request.Proxy), "socks5h://") {
-		request.Proxy = "socks5://" + request.Proxy[len("socks5h://"):]
-	}
-	data, err := json.Marshal(request)
-	if err != nil {
-		return nil, Result{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, executable)
-	hideCommand(command)
-	command.Stdin = bytes.NewReader(data)
-	command.Env = append(os.Environ(), "DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_NOLOGO=1", "DOTNET_DISABLE_GUI_ERRORS=1")
-	var output cappedOutput
-	command.Stdout = &output
-	command.Stderr = &cappedOutput{}
-	if err := command.Run(); err != nil {
-		if ctx.Err() != nil {
-			return nil, Result{}, fmt.Errorf("歌词请求取消或超时：%w", ctx.Err())
-		}
-		return nil, Result{}, fmt.Errorf("歌词组件无法启动，请检查缓存目录写入权限或重新解压便携包：%w", err)
-	}
-	raw := append([]byte(nil), output.Bytes()...)
-	result, err := decode(raw)
-	if err != nil {
-		return nil, Result{}, err
-	}
-	return raw, result, nil
 }
 
 func needsAlternateTitle(result Result, err error) bool {
@@ -279,119 +237,4 @@ func decode(data []byte) (Result, error) {
 		result.Lines = append(result.Lines, item)
 	}
 	return result, nil
-}
-
-const bridgeSampleChunk = 64 << 10
-
-// sampleBridgeHash hashes size + head/mid/tail 64 KB windows instead of the
-// entire 66 MB embedded binary, avoiding faulting 66 MB into the process
-// working set when the helper has already been extracted on disk.
-func sampleBridgeHash(size int64, readAt func(buf []byte, off int64) (int, error)) ([32]byte, error) {
-	h := sha256.New()
-	fmt.Fprintf(h, "%d:", size)
-	offsets := []int64{0}
-	if size > bridgeSampleChunk*2 {
-		offsets = append(offsets, size/2-bridgeSampleChunk/2)
-	}
-	if size > bridgeSampleChunk {
-		offsets = append(offsets, size-bridgeSampleChunk)
-	}
-	buf := make([]byte, bridgeSampleChunk)
-	for _, off := range offsets {
-		want := int(min(int64(len(buf)), size-off))
-		if want <= 0 {
-			continue
-		}
-		n, err := readAt(buf[:want], off)
-		if err != nil && err != io.EOF {
-			return [32]byte{}, err
-		}
-		h.Write(buf[:n])
-	}
-	var sum [32]byte
-	copy(sum[:], h.Sum(nil))
-	return sum, nil
-}
-
-var (
-	bridgeDigest = sync.OnceValues(func() ([32]byte, string) {
-		sum, _ := sampleBridgeHash(int64(len(bridge)), func(buf []byte, off int64) (int, error) {
-			return copy(buf, bridge[off:]), nil
-		})
-		return sum, hex.EncodeToString(sum[:8])
-	})
-	extractMu     sync.Mutex
-	extractedPath = map[string]string{}
-)
-
-func fileMatchesDigest(path string, want [32]byte, size int64) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil || info.Size() != size {
-		return false
-	}
-	got, err := sampleBridgeHash(info.Size(), f.ReadAt)
-	return err == nil && got == want
-}
-
-func extract(dir string) (string, error) {
-	sum, short := bridgeDigest()
-	dir = filepath.Join(dir, "lyricify", short)
-	path := filepath.Join(dir, bridgeFilename)
-	size := int64(len(bridge))
-
-	extractMu.Lock()
-	defer extractMu.Unlock()
-
-	if extractedPath[dir] == path {
-		if info, err := os.Stat(path); err == nil && info.Size() == size {
-			return path, nil
-		}
-		delete(extractedPath, dir)
-	}
-	if fileMatchesDigest(path, sum, size) {
-		extractedPath[dir] = path
-		return path, nil
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	file, err := os.CreateTemp(dir, "lyrics-*.tmp")
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(file.Name())
-	_, err = file.Write(bridge)
-	closeErr := file.Close()
-	if err != nil {
-		return "", err
-	}
-	if closeErr != nil {
-		return "", closeErr
-	}
-	if err := os.Rename(file.Name(), path); err != nil {
-		if !fileMatchesDigest(path, sum, size) {
-			return "", err
-		}
-	}
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(path, 0o700); err != nil {
-			return "", err
-		}
-	}
-	extractedPath[dir] = path
-	return path, nil
-}
-
-type cappedOutput struct{ bytes.Buffer }
-
-func (output *cappedOutput) Write(data []byte) (int, error) {
-	if output.Len()+len(data) > 4<<20 {
-		return 0, errors.New("歌词数据超过大小限制")
-	}
-	return output.Buffer.Write(data)
 }

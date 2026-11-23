@@ -20,17 +20,13 @@ MySpotify 本身以 **AGPL-3.0** 发布，完整条文见根目录的 `LICENSE`�
 | golang.org/x/text | v0.43.0 | BSD-3-Clause | `licenses/golang.org_x_text-LICENSE`、`-PATENTS` |
 | hls.js | `internal/player/web/hls.min.js` | Apache-2.0 | `licenses/hls.js-LICENSE` |
 | OpenCC 繁简字表 | `internal/lyrics/TSCharacters.txt` | Apache-2.0 | `licenses/OpenCC-LICENSE` |
-| Lyricify Lyrics Helper | `3fc579b029c24a1f54ebb2fd002ee3624c85c7e7` | Apache-2.0 | `licenses/Lyricify-Lyrics-Helper-LICENSE` |
+| Lyricify Lyrics Helper（QRC DES 解密算法参考） | `3fc579b029c24a1f54ebb2fd002ee3624c85c7e7` | Apache-2.0 | `licenses/Lyricify-Lyrics-Helper-LICENSE` |
 | Lyricify Backgrounds | `cbef8a667c02a01707c78c7e76dc67d65cf161ed` | Apache-2.0 | `licenses/Lyricify-Backgrounds-LICENSE.txt`、`-NOTICE.txt` |
 | Dynamic Lyrics Island 概念 | — | CC BY-SA 4.0 | `licenses/Lyricify-Backgrounds-NOTICE.txt` |
-| Newtonsoft.Json | 13.0.3 | MIT | `licenses/Newtonsoft.Json-LICENSE.md` |
-| SharpZipLib | 1.4.2 | MIT | `licenses/SharpZipLib-LICENSE.txt` |
-| CHTCHSConv（含微软 ChineseConverter.dll） | 1.0.0 | 微软组件，NuGet 包未附许可证文本 | `licenses/CHTCHSConv-NOTICE.txt`、`licenses/CHTCHSConv.nuspec` |
-| .NET Runtime（Windows x64，自包含歌词组件） | 8.0.31 | MIT（含第三方声明） | `licenses/dotnet-runtime-LICENSE.txt`、`licenses/dotnet-runtime-THIRD-PARTY-NOTICES.txt` |
 
 ## 外观与歌词组件的署名
 
-- **Lyricify Lyrics Helper**（WXRIW / Lyricify 贡献者）：歌词检索与解析使用其未经修改的源码，固定提交 `3fc579b029c24a1f54ebb2fd002ee3624c85c7e7`，以 Apache-2.0 使用；本程序只新增了桥接与界面。
+- **Lyricify Lyrics Helper**（WXRIW / Lyricify 贡献者）：纯 Go 歌词引擎中的 QQ 音乐 QRC DES 解密表与匹配思路参考自其 `3fc579b029c24a1f54ebb2fd002ee3624c85c7e7` 实现，以 Apache-2.0 署名；已不再嵌入 `.NET` 运行时或 C# 子进程。
 - **Lyricify Backgrounds**（WXRIW / Lyricify 贡献者）：动态背景改编自 `cbef8a667c02a01707c78c7e76dc67d65cf161ed` 的 iOS Classic 效果，以 Apache-2.0 使用。
 - **动态歌词岛概念**：词岛与桌面歌词外观参考 Lyricify 官方截图，概念署名 Lyricify，相关视觉改编以 CC BY-SA 4.0 共享。这不改变程序其他源码的许可证。
 

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -65,9 +64,6 @@ func TestRankAlternateTitlesParenBaseAndAlias(t *testing.T) {
 }
 
 func TestFetchResolvesAlternateTitleAndCachesUnderOriginalRequest(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows helper")
-	}
 	oldBridge, oldResolve := runBridge, resolveAlternateTitles
 	t.Cleanup(func() {
 		runBridge, resolveAlternateTitles = oldBridge, oldResolve
@@ -137,9 +133,6 @@ func TestFetchResolvesAlternateTitleAndCachesUnderOriginalRequest(t *testing.T) 
 }
 
 func TestFetchUpgradesUntranslatedForeignResult(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows helper")
-	}
 	oldBridge, oldResolve := runBridge, resolveAlternateTitles
 	t.Cleanup(func() {
 		runBridge, resolveAlternateTitles = oldBridge, oldResolve

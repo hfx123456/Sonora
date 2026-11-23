@@ -94,9 +94,9 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 ## Install, Isolation & Build
 
 1. Download from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**:
-   - **Windows**: Run `sonora-setup-1.0.2-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.2-windows-amd64.zip`.
-   - **macOS**: Download `sonora-1.0.2-universal.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
-   Both platforms bundle the Lyricify helper and .NET runtime—no extra setup needed.
+   - **Windows**: Run `sonora-setup-1.0.3-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.3-windows-amd64.zip`.
+   - **macOS**: Download `sonora-1.0.3-universal.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
+   Pure Go native binary (~20 MB) with built-in multi-source lyrics—no `.NET` runtime or extra setup needed.
 2. **Isolated from upstream MySpotify**: Uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), migrating existing settings on first launch without altering the legacy folder.
 
 ```powershell

@@ -135,6 +135,8 @@ type app struct {
 	tracks    map[string]*spotify.TrackPage
 	loadingTr map[string]bool
 	trErr     map[string]string
+	barCredits        map[string][]spotify.Credit
+	barCreditsLoading map[string]bool
 
 	cats            []spotify.Category               // the tiles of the browse page
 	catPages        map[string]*spotify.CategoryPage // by URI

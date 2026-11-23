@@ -2,6 +2,7 @@ package app
 
 import (
 	"math"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/plugins/glass"
@@ -420,7 +421,7 @@ func (a *app) playerBar(c *ui.Context) {
 	pl := a.pl
 	tr := pl.Current()
 	a.tickTimes(c)
-	const controls = 5*32 + 4*4
+	const controls = 4*32 + 3*4
 	var bar ui.Element
 	if a.glassEnabled() {
 		material := a.liquidGlass(false, ui.Color{})
@@ -453,8 +454,10 @@ func (a *app) playerBar(c *ui.Context) {
 			}
 			info := ui.ButtonBase(c.Key("info")).Gap(12).AlignItems(ui.Center).FocusRing(false).Shrink(1).MinWidth(0).Label("打开正在播放")
 			hovered := info.Hovered()
+			var coverBox ui.Element
 			info.Children(func() {
-				ui.Box(c).Size(48, 48).Shrink(0).Children(func() {
+				coverBox = ui.Box(c.Key("bar-cover")).Size(48, 48).Shrink(0)
+				coverBox.Children(func() {
 					a.cover(c, tr.Album.PicURL, 120, 48, 8).Shadow(0, 2, 8, 0, p.cardShade)
 					if hovered {
 						ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(8).Center().
@@ -476,8 +479,9 @@ func (a *app) playerBar(c *ui.Context) {
 				})
 			})
 			if info.Clicked() {
-				a.nowPlaying = true
+				a.nowPlaying, a.npPane = true, a.lyricsPaneChosen()
 			}
+			a.barCoverHoverCard(c, coverBox, tr)
 			a.likeButton(c.Key("like"), tr, 16, p.muted).Margin(0, 0, 0, 4).Shrink(0)
 		})
 
@@ -491,17 +495,10 @@ func (a *app) playerBar(c *ui.Context) {
 			})
 		})
 
-		// Lyrics and volume.
+		// Queue, devices, volume and floating lyrics.
 		ui.Row(c).Grow(1).Basis(0).MinWidth(controls).Justify(ui.End).AlignItems(ui.Center).Gap(4).Children(func() {
 			if tr != nil && pl.HasVideo() {
 				a.barMVButton(c)
-			}
-			lyr := p.muted
-			if a.nowPlaying {
-				lyr = p.accent
-			}
-			if iconButton(c.Key("lyrics"), iconLyrics, 16, lyr, lyricsName(tr)).Clicked() && tr != nil {
-				a.nowPlaying, a.npPane = true, a.lyricsPaneChosen()
 			}
 			if iconButton(c.Key("queue"), iconQueue, 16, p.muted, "播放队列").Clicked() && tr != nil {
 				a.nowPlaying, a.npPane = true, paneQueue
@@ -509,6 +506,261 @@ func (a *app) playerBar(c *ui.Context) {
 			a.connectButton(c)
 			a.volumeButton(c, p.text.Alpha(0.75))
 			a.fusionButton(c)
+		})
+	})
+}
+
+// trackCreditsFetch loads a track's credits; tests replace it.
+var trackCreditsFetch = spotify.TrackCredits
+
+func (a *app) ensureBarCredits(tr *spotify.Track) {
+	if tr == nil || tr.ID == "" || tr.Local() || tr.Cloud() || tr.Episode {
+		return
+	}
+	if a.barCredits == nil {
+		a.barCredits = map[string][]spotify.Credit{}
+		a.barCreditsLoading = map[string]bool{}
+	}
+	if _, ok := a.barCredits[tr.ID]; ok || a.barCreditsLoading[tr.ID] {
+		return
+	}
+	// Reuse already-loaded TrackPage credits if present.
+	if pg := a.tracks[tr.ID]; pg != nil && len(pg.Credits) > 0 {
+		a.barCredits[tr.ID] = pg.Credits
+		return
+	}
+	id := tr.ID
+	a.barCreditsLoading[id] = true
+	go func() {
+		credits, err := trackCreditsFetch(id)
+		a.post(func() {
+			delete(a.barCreditsLoading, id)
+			if err == nil {
+				a.barCredits[id] = credits
+			} else {
+				a.barCredits[id] = nil
+			}
+		})
+	}()
+}
+
+type creditRow struct {
+	role  string
+	names string
+}
+
+var creditRoleMap = map[string]string{
+	"main artist":        "演唱",
+	"主要艺人":               "演唱",
+	"featured artist":    "特邀",
+	"composer":           "作曲",
+	"作曲者":                "作曲",
+	"lyricist":           "作词",
+	"作词者":                "作词",
+	"writer":             "词曲",
+	"songwriter":         "词曲",
+	"arranger":           "编曲",
+	"编曲者":                "编曲",
+	"producer":           "制作人",
+	"executive producer": "监制",
+	"mixing engineer":    "混音",
+	"mastering engineer": "母带",
+	"recording engineer": "录音",
+	"vocals":             "人声",
+}
+
+func formatCreditRole(role string) string {
+	r := strings.TrimSpace(role)
+	if mapped, ok := creditRoleMap[strings.ToLower(r)]; ok {
+		return mapped
+	}
+	return r
+}
+
+func groupCredits(credits []spotify.Credit) []creditRow {
+	type bucket struct {
+		role  string
+		names []string
+		seen  map[string]bool
+	}
+	var order []string
+	byRole := map[string]*bucket{}
+	for _, cr := range credits {
+		name := strings.TrimSpace(cr.Name)
+		if name == "" {
+			continue
+		}
+		for _, rawRole := range cr.Roles {
+			role := formatCreditRole(rawRole)
+			if role == "" {
+				continue
+			}
+			b, ok := byRole[role]
+			if !ok {
+				b = &bucket{role: role, seen: map[string]bool{}}
+				byRole[role] = b
+				order = append(order, role)
+			}
+			if !b.seen[name] {
+				b.seen[name] = true
+				b.names = append(b.names, name)
+			}
+		}
+	}
+	// Put songwriting & production roles first in a natural Chinese music order.
+	priority := map[string]int{
+		"作词": 1, "作曲": 2, "词曲": 3, "编曲": 4, "制作人": 5, "监制": 6, "演唱": 7,
+	}
+	var rows []creditRow
+	added := map[string]bool{}
+	for _, pRole := range []string{"作词", "作曲", "词曲", "编曲", "制作人", "监制", "演唱"} {
+		if b, ok := byRole[pRole]; ok {
+			rows = append(rows, creditRow{role: b.role, names: strings.Join(b.names, "、")})
+			added[pRole] = true
+		}
+	}
+	for _, role := range order {
+		if added[role] || priority[role] > 0 {
+			continue
+		}
+		b := byRole[role]
+		rows = append(rows, creditRow{role: b.role, names: strings.Join(b.names, "、")})
+		if len(rows) >= 6 {
+			break
+		}
+	}
+	return rows
+}
+
+// lyricsCreditRows extracts "作词：xxx" / "作曲：xxx" etc. from the opening lines
+// of the current lyrics as a fallback for local/cloud tracks or songs without
+// Spotify credit metadata.
+func (a *app) lyricsCreditRows() []creditRow {
+	lines, _ := a.pl.Lyrics()
+	if len(lines) == 0 {
+		return nil
+	}
+	limit := min(len(lines), 10)
+	prefixes := []struct {
+		keys  []string
+		label string
+	}{
+		{[]string{"作词", "词"}, "作词"},
+		{[]string{"作曲", "曲"}, "作曲"},
+		{[]string{"词曲"}, "词曲"},
+		{[]string{"编曲"}, "编曲"},
+		{[]string{"制作人", "制作"}, "制作人"},
+	}
+	var rows []creditRow
+	seen := map[string]bool{}
+	for _, ln := range lines[:limit] {
+		text := strings.TrimSpace(ln.Text)
+		if text == "" {
+			continue
+		}
+		idx := strings.IndexAny(text, ":：")
+		if idx <= 0 || idx > 12 {
+			continue
+		}
+		key := strings.TrimSpace(text[:idx])
+		val := strings.TrimSpace(text[idx+len(":"):])
+		if strings.HasPrefix(text[idx:], "：") {
+			val = strings.TrimSpace(text[idx+len("："):])
+		}
+		if val == "" {
+			continue
+		}
+		for _, p := range prefixes {
+			matched := false
+			for _, k := range p.keys {
+				if key == k {
+					matched = true
+					break
+				}
+			}
+			if matched && !seen[p.label] {
+				seen[p.label] = true
+				rows = append(rows, creditRow{role: p.label, names: val})
+				break
+			}
+		}
+	}
+	return rows
+}
+
+// barCoverHoverCard floats a compact credits & track info card above the
+// player bar's album artwork while the pointer hovers over it.
+func (a *app) barCoverHoverCard(c *ui.Context, coverBox ui.Element, tr *spotify.Track) {
+	if tr == nil {
+		return
+	}
+	hovered := coverBox.Hovered() && !a.nowPlaying
+	if hovered {
+		a.ensureBarCredits(tr)
+	}
+	target := float32(0)
+	if hovered {
+		target = 1
+	}
+	show := coverBox.AnimateTo("info-card", target, ui.Snappy)
+	if show <= 0.01 {
+		return
+	}
+	p := a.pal
+	pop := popoverColors(p.dark)
+	rows := groupCredits(a.barCredits[tr.ID])
+	if len(rows) == 0 {
+		rows = a.lyricsCreditRows()
+	}
+	loading := a.barCreditsLoading[tr.ID]
+	ui.Overlay(c, func() {
+		card := ui.Column(c.Key("bar-cover-info")).
+			AttachTo(coverBox, ui.AnchorTopLeft, ui.AnchorBottomLeft).
+			Margin(0, 0, 10, 0).
+			Padding(11, 14, 12, 14).
+			Gap(7).
+			Width(292).
+			Opacity(show).
+			PassThrough()
+		a.styleGlassPanel(card, 14, pop.fill, pop.edge, 22, 6, ui.RGBA(0, 0, 0, 0.18))
+		card.Children(func() {
+			ui.Text(c, "制作人员").FontSize(11.5).FontWeight(600).TextColor(p.accent)
+			ui.Box(c).Height(0.5).Background(pop.edge)
+			if len(rows) > 0 {
+				for i, row := range rows {
+					ui.Row(c.Key(i)).Gap(10).AlignItems(ui.Start).Children(func() {
+						ui.Text(c, row.role).FontSize(12).TextColor(p.faint).Width(60).Shrink(0).SingleLine()
+						ui.Text(c, row.names).FontSize(12).FontWeight(500).TextColor(p.text).Grow(1).Shrink(1).MinWidth(0)
+					})
+				}
+			} else if loading {
+				ui.Text(c, "正在获取制作人员…").FontSize(12).TextColor(p.muted)
+			} else {
+				if artists := tr.ArtistNames(); artists != "" {
+					ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+						ui.Text(c, "演唱").FontSize(12).TextColor(p.faint).Width(60).Shrink(0).SingleLine()
+						ui.Text(c, artists).FontSize(12).FontWeight(500).TextColor(p.text).Grow(1).Shrink(1).MinWidth(0)
+					})
+				}
+				if tr.Album.Name != "" {
+					ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+						ui.Text(c, "专辑").FontSize(12).TextColor(p.faint).Width(60).Shrink(0).SingleLine()
+						ui.Text(c, tr.Album.Name).FontSize(12).TextColor(p.muted).Grow(1).Shrink(1).MinWidth(0)
+					})
+				}
+				ui.Text(c, "暂无更多词曲信息").FontSize(11.5).TextColor(p.faint)
+			}
+			if tr.Album.Name != "" && len(rows) > 0 {
+				ui.Box(c).Height(0.5).Margin(2, 0, 0, 0).Background(pop.edge)
+				ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+					label := "专辑"
+					if tr.Episode {
+						label = "节目"
+					}
+					ui.Text(c, label).FontSize(11.5).TextColor(p.faint).Width(60).Shrink(0).SingleLine()
+					ui.Text(c, tr.Album.Name).FontSize(11.5).TextColor(p.muted).Grow(1).Shrink(1).MinWidth(0).SingleLine()
+				})
+			}
 		})
 	})
 }
