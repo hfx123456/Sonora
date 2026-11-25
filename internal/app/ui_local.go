@@ -393,6 +393,7 @@ func (a *app) replaceCloudTrack(enriched spotify.Track) {
 		if a.localTracks[i].ID == enriched.ID {
 			a.localTracks[i] = enriched
 			a.localOrderCache = playlistOrderCache{}
+			a.localScopeCache = localScopeCache{}
 			a.localFilterCache = trackFilterCache{}
 			spotify.SetLocalTracks(a.localTracks)
 			return
@@ -420,14 +421,19 @@ func (a *app) toggleCacheAllCloud() {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cloudSyncing = true
 	a.cloudSyncDone = 0
+	a.cloudSyncSucceeded = 0
+	a.cloudSyncFailed = 0
+	a.cloudSyncLastFailed = 0
 	a.cloudSyncTotal = 0
 	a.cloudSyncCancel = cancel
 	a.toast = "开始在后台缓存云盘歌曲并补全封面…"
 	go func() {
 		defer cancel()
-		localmusic.CacheAllCloudTracks(ctx, tracks, coverDir, cachePath, func(done, total int, enriched *spotify.Track) {
+		stats := localmusic.CacheAllCloudTracks(ctx, tracks, coverDir, cachePath, func(done, succeeded, failed, total int, enriched *spotify.Track) {
 			a.post(func() {
 				a.cloudSyncDone = done
+				a.cloudSyncSucceeded = succeeded
+				a.cloudSyncFailed = failed
 				a.cloudSyncTotal = total
 				if enriched != nil {
 					a.replaceCloudTrack(*enriched)
@@ -439,7 +445,15 @@ func (a *app) toggleCacheAllCloud() {
 			a.cloudSyncing = false
 			a.cloudSyncCancel = nil
 			if wasActive && ctx.Err() == nil {
-				a.toast = "云盘歌曲已全部缓存到本地，之后将直接读取本地文件"
+				a.cloudSyncLastFailed = stats.Failed
+				switch {
+				case stats.Failed > 0:
+					a.toast = fmt.Sprintf("已缓存 %d 首，%d 首失败", stats.Succeeded, stats.Failed)
+				case stats.Total == 0:
+					a.toast = "云盘歌曲已全部缓存到本地，之后将直接读取本地文件"
+				default:
+					a.toast = fmt.Sprintf("已缓存 %d 首云盘歌曲到本地，之后将直接读取本地文件", stats.Succeeded)
+				}
 			}
 		})
 	}()
@@ -575,6 +589,16 @@ func (a *app) applyScannedTracks(tracks []spotify.Track, warnings []string, done
 		tracks = filtered
 	}
 	a.localTracks, a.localWarnings = tracks, warnings
+	a.localOrderCache = playlistOrderCache{}
+	a.localScopeCache = localScopeCache{}
+	a.localFilterCache = trackFilterCache{}
+	a.cloudOffline = false
+	for _, w := range warnings {
+		if strings.Contains(w, "离线曲库") {
+			a.cloudOffline = true
+			break
+		}
+	}
 	spotify.SetLocalTracks(tracks)
 	for _, warning := range warnings {
 		log.Printf("local music: %s", warning)
@@ -671,6 +695,19 @@ func (a *app) scanLocalMusic() {
 		}
 
 		cloudTracks, cloudWarns := scanCloudSources(ctx, cloudSources, coverDir, cachePath)
+		if len(cloudTracks) == 0 && len(cloudWarns) > 0 && len(cachedCloud) > 0 {
+			cloudTracks = cachedCloud
+			hasOfflineNotice := false
+			for _, w := range cloudWarns {
+				if strings.Contains(w, "离线曲库") {
+					hasOfflineNotice = true
+					break
+				}
+			}
+			if !hasOfflineNotice {
+				cloudWarns = append(cloudWarns, "云盘刷新失败，当前显示离线曲库")
+			}
+		}
 		tracks := make([]spotify.Track, 0, len(localTracks)+len(cloudTracks))
 		tracks = append(tracks, localTracks...)
 		tracks = append(tracks, cloudTracks...)
@@ -713,9 +750,20 @@ func (a *app) restoreLocalSession() {
 	}
 }
 
+type localScopeCache struct {
+	source []spotify.Track
+	scope  int
+	tracks []spotify.Track
+}
+
 func (a *app) filterLocalScope(ordered []spotify.Track) []spotify.Track {
 	if a.localScope == 0 {
 		return ordered
+	}
+	c := &a.localScopeCache
+	sameSource := len(c.source) == len(ordered) && (len(ordered) == 0 || &c.source[0] == &ordered[0])
+	if sameSource && c.scope == a.localScope && c.tracks != nil {
+		return c.tracks
 	}
 	out := make([]spotify.Track, 0, len(ordered))
 	for _, tr := range ordered {
@@ -725,6 +773,7 @@ func (a *app) filterLocalScope(ordered []spotify.Track) []spotify.Track {
 			out = append(out, tr)
 		}
 	}
+	c.source, c.scope, c.tracks = ordered, a.localScope, out
 	return out
 }
 
@@ -825,10 +874,16 @@ func (a *app) localMusicPage(c *ui.Context) {
 					cacheLabel := "全部缓存到本地"
 					if a.cloudSyncing {
 						if a.cloudSyncTotal > 0 {
-							cacheLabel = fmt.Sprintf("停止缓存 (%d/%d)", a.cloudSyncDone, a.cloudSyncTotal)
+							if a.cloudSyncFailed > 0 {
+								cacheLabel = fmt.Sprintf("停止缓存 (%d/%d · 失败 %d)", a.cloudSyncDone, a.cloudSyncTotal, a.cloudSyncFailed)
+							} else {
+								cacheLabel = fmt.Sprintf("停止缓存 (%d/%d)", a.cloudSyncDone, a.cloudSyncTotal)
+							}
 						} else {
 							cacheLabel = "停止缓存…"
 						}
+					} else if a.cloudSyncLastFailed > 0 {
+						cacheLabel = fmt.Sprintf("重试失败项 (%d)", a.cloudSyncLastFailed)
 					}
 					if ui.Button(c.Key("cache-all-cloud"), cacheLabel).Clicked() {
 						a.toggleCacheAllCloud()
@@ -923,6 +978,9 @@ func (a *app) localMusicPage(c *ui.Context) {
 			}
 			if a.cloudUploading {
 				status += " · 正在上传到云盘…"
+			}
+			if a.cloudOffline {
+				status += " · 当前显示离线曲库"
 			}
 			if len(a.localWarnings) > 0 {
 				status += fmt.Sprintf(" · %d 个文件或目录无法读取，详情见日志", len(a.localWarnings))

@@ -132,6 +132,8 @@ type settings struct {
 	Glass bool `json:"glass"`
 	// GlassStrength controls the intensity of Liquid Glass, from 0 (clear) to 1 (frosted).
 	GlassStrength float64 `json:"glassStrength"`
+	// StartupAnimation plays the cold-start floating music notes animation on launch.
+	StartupAnimation bool `json:"startupAnimation"`
 	// MyPlaylistGrid shows the listener's own and saved playlists in the
 	// sidebar as a two-column grid of covers rather than a list.
 	MyPlaylistGrid bool `json:"myPlaylistGrid"`
@@ -196,6 +198,7 @@ func defaultSettings() settings {
 		Appearance:          "system",
 		Glass:               true,
 		GlassStrength:       0.7,
+		StartupAnimation:    true,
 		PlaylistTrackCovers: true,
 		Volume:              0.8,
 		CacheMB:             1024,
@@ -223,7 +226,38 @@ func loadSettings() settings {
 		s.path = path
 	}
 	s.GlassStrength = min(max(s.GlassStrength, 0), 1)
+	if s.migratePlainCloudSecrets() {
+		_ = s.save()
+	}
 	return s
+}
+
+// migratePlainCloudSecrets re-seals any legacy plaintext cloud credentials
+// once OS keystore encryption is available.
+func (s *settings) migratePlainCloudSecrets() bool {
+	migrated := false
+	for i := range s.CloudSources {
+		cs := &s.CloudSources[i]
+		if cs.PlainPass != "" {
+			if sealed, plain := sealCloudPassword(cs.PlainPass); sealed != "" && plain == "" {
+				cs.SealedPass, cs.PlainPass = sealed, ""
+				migrated = true
+			}
+		}
+		if cs.PlainSecret != "" {
+			if sealed, plain := sealCloudPassword(cs.PlainSecret); sealed != "" && plain == "" {
+				cs.SealedSecret, cs.PlainSecret = sealed, ""
+				migrated = true
+			}
+		}
+		if cs.PlainRefresh != "" {
+			if sealed, plain := sealCloudPassword(cs.PlainRefresh); sealed != "" && plain == "" {
+				cs.SealedRefresh, cs.PlainRefresh = sealed, ""
+				migrated = true
+			}
+		}
+	}
+	return migrated
 }
 
 // save keeps the settings where they were loaded from; defaults that were

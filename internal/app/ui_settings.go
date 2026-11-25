@@ -161,6 +161,11 @@ func (a *app) settingsPage(c *ui.Context) {
 					}
 				})
 			})
+			row("开机动画", "冷启动时播放音符飘落入场动画；开启系统「减少动态效果」时自动跳过", func() {
+				if ui.Switch(c.Key("startup-animation"), &s.StartupAnimation).Label("开机动画").Changed() {
+					a.changed()
+				}
+			})
 		})
 
 		group("歌词", func() {

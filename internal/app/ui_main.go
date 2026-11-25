@@ -729,10 +729,18 @@ func (a *app) loadPlaylist(id string, thenPlay bool) {
 	a.requestPlaylist(id, thenPlay, false)
 }
 
+func (a *app) playPlaylist(pl *spotify.Playlist) {
+	if pl == nil {
+		return
+	}
+	tracks := a.orderedPlaylistTracks(pl)
+	a.playFrom(spotify.HomeItem{List: pl}, tracks, firstPlayable(tracks))
+}
+
 func (a *app) requestPlaylist(id string, thenPlay, refresh bool) {
 	if pl := a.playlists[id]; pl != nil && !refresh {
 		if thenPlay {
-			a.playFrom(spotify.HomeItem{List: pl}, pl.Tracks, firstPlayable(pl.Tracks))
+			a.playPlaylist(pl)
 		}
 		return
 	}
@@ -826,7 +834,7 @@ func (a *app) receivePlaylist(id string, pl *spotify.Playlist, err error, thenPl
 		a.likedFrom(ids, asked)
 	}
 	if thenPlay {
-		a.playFrom(spotify.HomeItem{List: pl}, pl.Tracks, firstPlayable(pl.Tracks))
+		a.playPlaylist(pl)
 	}
 }
 

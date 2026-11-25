@@ -601,6 +601,8 @@ func enrichCloudTrackFromFile(track spotify.Track, localFile, coverDir, cachePat
 	return track
 }
 
+var maxCloudCacheBytes int64 = 256 << 20
+
 func downloadToCloudCache(ctx context.Context, trackID, streamURL string, headers map[string]string) (string, error) {
 	dst := cloudAudioPath(trackID)
 	if dst == "" || streamURL == "" {
@@ -629,6 +631,9 @@ func downloadToCloudCache(ctx context.Context, trackID, streamURL string, header
 	if res.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("HTTP %s", res.Status)
 	}
+	if res.ContentLength > maxCloudCacheBytes {
+		return "", fmt.Errorf("file exceeds %d MiB cache limit", maxCloudCacheBytes>>20)
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return "", err
 	}
@@ -637,15 +642,27 @@ func downloadToCloudCache(ctx context.Context, trackID, streamURL string, header
 		return "", err
 	}
 	tmpName := tmp.Name()
-	// Cap single cached track at 256 MB.
-	n, copyErr := io.Copy(tmp, io.LimitReader(res.Body, 256<<20))
+	// Read one byte past the cap so streams exceeding maxCloudCacheBytes are
+	// rejected cleanly instead of saving a truncated file as complete.
+	n, copyErr := io.Copy(tmp, io.LimitReader(res.Body, maxCloudCacheBytes+1))
 	closeErr := tmp.Close()
 	if copyErr != nil || closeErr != nil || n == 0 {
 		os.Remove(tmpName)
 		if copyErr != nil {
 			return "", copyErr
 		}
+		if closeErr != nil {
+			return "", closeErr
+		}
 		return "", errors.New("empty download")
+	}
+	if n > maxCloudCacheBytes {
+		os.Remove(tmpName)
+		return "", fmt.Errorf("file exceeds %d MiB cache limit", maxCloudCacheBytes>>20)
+	}
+	if res.ContentLength > 0 && n != res.ContentLength {
+		os.Remove(tmpName)
+		return "", fmt.Errorf("incomplete download: got %d of %d bytes", n, res.ContentLength)
 	}
 	if err := os.Rename(tmpName, dst); err != nil {
 		os.Remove(tmpName)
@@ -690,10 +707,17 @@ func CacheCloudAudioAsync(track spotify.Track, streamURL string, headers map[str
 	}()
 }
 
+// CloudCacheStats summarizes one batch cloud caching run.
+type CloudCacheStats struct {
+	Total     int
+	Succeeded int
+	Failed    int
+}
+
 // CacheAllCloudTracks downloads all uncached cloud tracks to local disk in
 // parallel (3 workers), extracting full embedded cover art & tags from each
 // downloaded file so future playback and metadata are 100% local and instant.
-func CacheAllCloudTracks(ctx context.Context, tracks []spotify.Track, coverDir, cachePath string, onProgress func(done, total int, enriched *spotify.Track)) {
+func CacheAllCloudTracks(ctx context.Context, tracks []spotify.Track, coverDir, cachePath string, onProgress func(done, succeeded, failed, total int, enriched *spotify.Track)) CloudCacheStats {
 	var pending []spotify.Track
 	for _, tr := range tracks {
 		if tr.Cloud() && tr.CloudURL != "" && (CachedCloudAudio(tr.ID) == "" || tr.Album.PicURL == "") {
@@ -703,9 +727,9 @@ func CacheAllCloudTracks(ctx context.Context, tracks []spotify.Track, coverDir, 
 	total := len(pending)
 	if total == 0 {
 		if onProgress != nil {
-			onProgress(0, 0, nil)
+			onProgress(0, 0, 0, 0, nil)
 		}
-		return
+		return CloudCacheStats{}
 	}
 	jobs := make(chan spotify.Track, total)
 	for _, tr := range pending {
@@ -715,6 +739,8 @@ func CacheAllCloudTracks(ctx context.Context, tracks []spotify.Track, coverDir, 
 
 	var mu sync.Mutex
 	doneCount := 0
+	succeededCount := 0
+	failedCount := 0
 	workers := min(3, total)
 	var wg sync.WaitGroup
 	for range workers {
@@ -733,25 +759,40 @@ func CacheAllCloudTracks(ctx context.Context, tracks []spotify.Track, coverDir, 
 					}
 				}
 				var enriched *spotify.Track
-				if dst != "" {
+				ok := dst != ""
+				if ok {
 					t2 := enrichCloudTrackFromFile(tr, dst, coverDir, cachePath)
 					enriched = &t2
 				}
 				mu.Lock()
 				doneCount++
-				cur := doneCount
+				if ok {
+					succeededCount++
+				} else {
+					failedCount++
+				}
+				curDone, curOK, curFail := doneCount, succeededCount, failedCount
 				mu.Unlock()
 				if onProgress != nil {
-					onProgress(cur, total, enriched)
+					onProgress(curDone, curOK, curFail, total, enriched)
 				}
 			}
 		}()
 	}
 	wg.Wait()
+	return CloudCacheStats{
+		Total:     total,
+		Succeeded: succeededCount,
+		Failed:    failedCount,
+	}
 }
 
 // ScanCloud recursively scans WebDAV, OneDrive, Google Drive, Baidu, Quark,
-// and 115 cloud sources, reusing cached metadata for unchanged files.
+// and 115 cloud sources, reusing cached metadata for unchanged files. When a
+// source fails to refresh (for example while offline), its previously indexed
+// tracks are preserved instead of wiping the offline library. When a source
+// succeeds cleanly (including an empty directory), deleted tracks are pruned
+// from cloud-index.json so they do not reappear on next launch.
 func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath string) ([]spotify.Track, []string) {
 	if len(sources) == 0 {
 		return nil, nil
@@ -762,54 +803,41 @@ func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath s
 	var files []davFile
 	var warnings []string
 	seenURLs := map[string]bool{}
+	succeededSources := map[string]bool{}
+	failedSources := map[string]CloudSource{}
 
 	for _, src := range sources {
+		var found []davFile
+		var warns []string
 		switch src.EffectiveType() {
 		case CloudTypeOneDrive:
-			found, warns := walkOneDrive(ctx, src, seenURLs)
-			files = append(files, found...)
-			warnings = append(warnings, warns...)
+			found, warns = walkOneDrive(ctx, src, seenURLs)
 		case CloudTypeGoogleDrive:
-			found, warns := walkGoogleDrive(ctx, src, seenURLs)
-			files = append(files, found...)
-			warnings = append(warnings, warns...)
+			found, warns = walkGoogleDrive(ctx, src, seenURLs)
 		case CloudTypeBaidu:
-			found, warns := walkBaidu(ctx, src, seenURLs)
-			files = append(files, found...)
-			warnings = append(warnings, warns...)
+			found, warns = walkBaidu(ctx, src, seenURLs)
 		case CloudTypeQuark:
-			found, warns := walkQuark(ctx, src, seenURLs)
-			files = append(files, found...)
-			warnings = append(warnings, warns...)
+			found, warns = walkQuark(ctx, src, seenURLs)
 		case CloudType115:
-			found, warns := walk115(ctx, src, seenURLs)
-			files = append(files, found...)
-			warnings = append(warnings, warns...)
+			found, warns = walk115(ctx, src, seenURLs)
 		default:
 			base, err := NormalizeCloudURL(src.URL)
 			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("云盘「%s」：%v", cmp.Or(src.Name, src.URL), err))
-				continue
+				warns = []string{fmt.Sprintf("云盘「%s」：%v", cmp.Or(src.Name, src.URL), err)}
+			} else {
+				found, warns = walkWebDAV(ctx, src, base, seenURLs)
 			}
-			found, warns := walkWebDAV(ctx, src, base, seenURLs)
-			files = append(files, found...)
-			warnings = append(warnings, warns...)
+		}
+		files = append(files, found...)
+		warnings = append(warnings, warns...)
+		if src.ID != "" {
+			if len(warns) == 0 {
+				succeededSources[src.ID] = true
+			} else if len(found) == 0 {
+				failedSources[src.ID] = src
+			}
 		}
 	}
-
-	if len(files) == 0 {
-		return nil, warnings
-	}
-
-	// For large uncached cloud libraries (> 50 files), skip per-file HTTP Range
-	// probing so thousands of songs load in a few seconds instead of minutes.
-	uncachedCount := 0
-	for _, f := range files {
-		if cached, hit := index.Entries[f.URL]; !hit || !sameDAVVersion(cached, f) {
-			uncachedCount++
-		}
-	}
-	fastBatch := uncachedCount > 50
 
 	tracks := make([]spotify.Track, len(files))
 	okFlags := make([]bool, len(files))
@@ -818,69 +846,81 @@ func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath s
 	var warnMu sync.Mutex
 	indexDirty := false
 
-	workers := min(4, len(files))
-	jobs := make(chan int, len(files))
-	for i := range files {
-		jobs <- i
-	}
-	close(jobs)
+	if len(files) > 0 {
+		// For large uncached cloud libraries (> 50 files), skip per-file HTTP Range
+		// probing so thousands of songs load in a few seconds instead of minutes.
+		uncachedCount := 0
+		for _, f := range files {
+			if cached, hit := index.Entries[f.URL]; !hit || !sameDAVVersion(cached, f) {
+				uncachedCount++
+			}
+		}
+		fastBatch := uncachedCount > 50
 
-	var wg sync.WaitGroup
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range jobs {
-				if ctx.Err() != nil {
-					return
-				}
-				f := files[i]
-				indexMu.Lock()
-				cached, hit := index.Entries[f.URL]
-				indexMu.Unlock()
+		workers := min(4, len(files))
+		jobs := make(chan int, len(files))
+		for i := range files {
+			jobs <- i
+		}
+		close(jobs)
 
-				if hit && sameDAVVersion(cached, f) && coverStillExists(cached.Track.Album.PicURL) {
-					t := cached.Track
-					t.CloudSource = cmp.Or(f.Source.Name, f.Source.URL)
-					if f.LyricsURL != "" {
-						t.CloudLyricsURL = f.LyricsURL
+		var wg sync.WaitGroup
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range jobs {
+					if ctx.Err() != nil {
+						return
+					}
+					f := files[i]
+					indexMu.Lock()
+					cached, hit := index.Entries[f.URL]
+					indexMu.Unlock()
+
+					if hit && sameDAVVersion(cached, f) && coverStillExists(cached.Track.Album.PicURL) {
+						t := cached.Track
+						t.CloudSource = cmp.Or(f.Source.Name, f.Source.URL)
+						if f.LyricsURL != "" {
+							t.CloudLyricsURL = f.LyricsURL
+						}
+						tracks[i] = t
+						okFlags[i] = true
+						continue
+					}
+
+					if fastBatch {
+						f.SkipRange = true
+					}
+					t, err := readCloudTrack(ctx, f, coverDir)
+					if err != nil {
+						warnMu.Lock()
+						warnings = append(warnings, fmt.Sprintf("云盘 %s：%v", f.Name, err))
+						warnMu.Unlock()
+						if t.ID != "" {
+							tracks[i] = t
+							okFlags[i] = true
+						}
+						continue
 					}
 					tracks[i] = t
 					okFlags[i] = true
-					continue
-				}
 
-				if fastBatch {
-					f.SkipRange = true
-				}
-				t, err := readCloudTrack(ctx, f, coverDir)
-				if err != nil {
-					warnMu.Lock()
-					warnings = append(warnings, fmt.Sprintf("云盘 %s：%v", f.Name, err))
-					warnMu.Unlock()
-					if t.ID != "" {
-						tracks[i] = t
-						okFlags[i] = true
+					indexMu.Lock()
+					index.Entries[f.URL] = cloudIndexEntry{
+						SourceID:     f.Source.ID,
+						ETag:         f.ETag,
+						LastModified: f.LastModified,
+						Size:         f.Size,
+						Track:        t,
 					}
-					continue
+					indexDirty = true
+					indexMu.Unlock()
 				}
-				tracks[i] = t
-				okFlags[i] = true
-
-				indexMu.Lock()
-				index.Entries[f.URL] = cloudIndexEntry{
-					SourceID:     f.Source.ID,
-					ETag:         f.ETag,
-					LastModified: f.LastModified,
-					Size:         f.Size,
-					Track:        t,
-				}
-				indexDirty = true
-				indexMu.Unlock()
-			}
-		}()
+			}()
+		}
+		wg.Wait()
 	}
-	wg.Wait()
 
 	result := make([]spotify.Track, 0, len(files))
 	for i, ok := range okFlags {
@@ -888,7 +928,33 @@ func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath s
 			result = append(result, tracks[i])
 		}
 	}
-	// Prune cache entries from removed cloud sources so ghost tracks never reappear.
+
+	// Preserve offline cached tracks for sources whose refresh failed so users
+	// keep access to their downloaded cloud music when disconnected.
+	if len(failedSources) > 0 && len(index.Entries) > 0 {
+		restoredBySource := map[string]bool{}
+		for _, e := range index.Entries {
+			if e.Track.ID == "" || e.Track.CloudURL == "" {
+				continue
+			}
+			src, failed := failedSources[e.SourceID]
+			if !failed {
+				continue
+			}
+			t := e.Track
+			t.CloudSource = cmp.Or(src.Name, src.URL)
+			result = append(result, t)
+			restoredBySource[e.SourceID] = true
+		}
+		for _, src := range sources {
+			if restoredBySource[src.ID] {
+				warnings = append(warnings, fmt.Sprintf("云盘「%s」刷新失败，当前显示离线曲库", cmp.Or(src.Name, src.URL)))
+			}
+		}
+	}
+
+	// Prune cache entries from removed cloud sources, and remove entries deleted
+	// from sources that succeeded cleanly (including now-empty directories).
 	activeIDs := make(map[string]bool, len(sources))
 	for _, s := range sources {
 		if s.ID != "" {
@@ -897,6 +963,11 @@ func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath s
 	}
 	for k, e := range index.Entries {
 		if e.SourceID == "" || !activeIDs[e.SourceID] {
+			delete(index.Entries, k)
+			indexDirty = true
+			continue
+		}
+		if succeededSources[e.SourceID] && !seenURLs[k] {
 			delete(index.Entries, k)
 			indexDirty = true
 		}

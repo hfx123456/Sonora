@@ -218,7 +218,9 @@ type app struct {
 	localSort       playlistSort
 	localScope      int // 0: all, 1: local only, 2: cloud only
 	localOrderCache playlistOrderCache
+	localScopeCache localScopeCache
 	localSearchBox  ui.Handle
+	cloudOffline    bool
 
 	cloudFormOpen     bool
 	cloudFormTab      int // 0: WebDAV, 1: OneDrive, 2: Google Drive, 3: Baidu, 4: Quark, 5: 115
@@ -246,10 +248,13 @@ type app struct {
 	cloudBrowseErr     string
 	cloudBrowseGen     int
 	cloudUploading     bool
-	cloudSyncing       bool
-	cloudSyncDone      int
-	cloudSyncTotal     int
-	cloudSyncCancel    func()
+	cloudSyncing        bool
+	cloudSyncDone       int
+	cloudSyncSucceeded  int
+	cloudSyncFailed     int
+	cloudSyncLastFailed int
+	cloudSyncTotal      int
+	cloudSyncCancel     func()
 	proxyText       string          // the proxy as typed in the settings, till it is set
 	proxyErr        string          // why what was typed cannot be set
 	proxyTyping     bool            // the proxy's field had the focus last frame
@@ -453,7 +458,7 @@ func Run() error {
 		a.played, a.playedFrom = loadPlayed()
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
-		useSplash := shotHook == nil && os.Getenv("NM_SCENE") == ""
+		useSplash := a.settings.StartupAnimation && shotHook == nil && os.Getenv("NM_SCENE") == ""
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Hidden:        os.Getenv("NM_SCENE") == "fusion-motion" || useSplash,
 			Title:         appName,

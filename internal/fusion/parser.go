@@ -512,8 +512,12 @@ func parseTTML(raw string) []parsedLine {
 	var curP parsedLine
 	var curPKey string
 	var curPText strings.Builder
+	var curInlineTrans strings.Builder
 
 	var inSpan bool
+	var inlineTransDepth int
+	var inlineTransKeep bool
+	var skipSpanDepth int
 	var curSpanStart, curSpanEnd int64
 	var curSpanHasTime bool
 	var curSpanText strings.Builder
@@ -554,6 +558,10 @@ func parseTTML(raw string) []parsedLine {
 				curP = parsedLine{}
 				curPKey = getAttr(t.Attr, "key")
 				curPText.Reset()
+				curInlineTrans.Reset()
+				inlineTransDepth = 0
+				inlineTransKeep = false
+				skipSpanDepth = 0
 				if b := getAttr(t.Attr, "begin"); b != "" {
 					if ms, ok := parseTTMLTime(b); ok {
 						curP.at, curP.hasStart = ms, true
@@ -566,9 +574,25 @@ func parseTTML(raw string) []parsedLine {
 				}
 			case "span":
 				if inP {
+					if inlineTransDepth > 0 {
+						inlineTransDepth++
+						continue
+					}
+					if skipSpanDepth > 0 {
+						skipSpanDepth++
+						continue
+					}
 					role := strings.ToLower(getAttr(t.Attr, "role"))
 					if role == "x-translation" {
-						// Inline translation span; skip adding to original text.
+						// Inline translation span: capture into translation instead of original text.
+						lang := strings.ToLower(getAttr(t.Attr, "lang"))
+						inlineTransDepth = 1
+						inlineTransKeep = lang == "" || strings.HasPrefix(lang, "zh")
+						inSpan = false
+						continue
+					}
+					if role == "x-roman" {
+						skipSpanDepth = 1
 						inSpan = false
 						continue
 					}
@@ -592,6 +616,12 @@ func parseTTML(raw string) []parsedLine {
 			s := string(t)
 			if inZhTrans && curTransKey != "" {
 				curTransText.WriteString(s)
+			} else if inlineTransDepth > 0 {
+				if inlineTransKeep {
+					curInlineTrans.WriteString(s)
+				}
+			} else if skipSpanDepth > 0 {
+				// Ignore romanization spans so they do not pollute original lyrics.
 			} else if inSpan {
 				curSpanText.WriteString(s)
 			} else if inP {
@@ -611,7 +641,14 @@ func parseTTML(raw string) []parsedLine {
 					curTransKey = ""
 				}
 			case "span":
-				if inSpan {
+				if inlineTransDepth > 0 {
+					inlineTransDepth--
+					if inlineTransDepth == 0 {
+						inlineTransKeep = false
+					}
+				} else if skipSpanDepth > 0 {
+					skipSpanDepth--
+				} else if inSpan {
 					wt := html.UnescapeString(curSpanText.String())
 					curPText.WriteString(wt)
 					if curSpanHasTime && wt != "" {
@@ -630,11 +667,17 @@ func parseTTML(raw string) []parsedLine {
 							curP.translation = tr
 						}
 					}
+					if curP.translation == "" && curInlineTrans.Len() > 0 {
+						curP.translation = strings.TrimSpace(html.UnescapeString(curInlineTrans.String()))
+					}
 					if curP.text != "" {
 						out = append(out, curP)
 					}
 					inP = false
 					curPKey = ""
+					inlineTransDepth = 0
+					inlineTransKeep = false
+					skipSpanDepth = 0
 				}
 			}
 		}

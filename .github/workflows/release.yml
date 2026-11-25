@@ -29,12 +29,16 @@ jobs:
       - name: Build Windows installer & binary
         env:
           CGO_ENABLED: '0'
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
         run: |
           go tool mygo build -platform windows/amd64
           $ver = (Get-Content mygo.json | ConvertFrom-Json).version
           mkdir dist-win | Out-Null
           Copy-Item "build\windows-amd64\sonora-setup-$ver-amd64.exe" dist-win\
           Copy-Item "build\windows-amd64\install.ps1" dist-win\
+          foreach ($pattern in @("update-windows-*.json", "sonora-*-windows-*.tar.gz", "*.delta")) {
+            Get-ChildItem "build\windows-amd64\$pattern" -ErrorAction SilentlyContinue | Copy-Item -Destination dist-win\
+          }
           New-Item -ItemType Directory -Force -Path dist-win\pkg | Out-Null
           Copy-Item "build\windows-amd64\Sonora.exe" dist-win\pkg\
           Copy-Item "build\windows-amd64\LICENSE" dist-win\pkg\
@@ -65,15 +69,23 @@ jobs:
       - name: Build macOS Universal (.app & .dmg)
         env:
           CGO_ENABLED: '0'
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
         run: |
           go tool mygo build -platform darwin/universal
           mkdir -p dist-mac
           cp build/darwin-universal/*.dmg dist-mac/ 2>/dev/null || cp build/*.dmg dist-mac/
+          for f in build/darwin-universal/update-darwin-*.json build/darwin-universal/sonora-*-darwin-*.tar.gz build/darwin-universal/*.delta; do
+            [ -e "$f" ] && cp "$f" dist-mac/
+          done
+          if [ -e dist-mac/update-darwin-universal.json ]; then
+            [ -e dist-mac/update-darwin-arm64.json ] || cp dist-mac/update-darwin-universal.json dist-mac/update-darwin-arm64.json
+            [ -e dist-mac/update-darwin-amd64.json ] || cp dist-mac/update-darwin-universal.json dist-mac/update-darwin-amd64.json
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos-dist
-          path: dist-mac/*.dmg
+          path: dist-mac/*
 
   release:
     needs: [windows, macos]

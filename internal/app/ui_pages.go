@@ -314,7 +314,7 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 			}
 			ui.Row(c).Gap(10).Margin(10, 0, 0, 0).Children(func() {
 				if pillButton(c.Key("play"), iconPlay, "播放", p.accent, p.onAccent).Clicked() {
-					a.playFrom(spotify.HomeItem{List: pl}, tracks, firstPlayable(tracks))
+					a.playPlaylist(pl)
 				}
 				if a.secondaryPillButton(c.Key("shuffle"), iconShuffle, "随机播放").Clicked() {
 					a.enableShuffle()

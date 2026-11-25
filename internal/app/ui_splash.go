@@ -211,6 +211,10 @@ func (a *app) finishSplash() {
 // on a completely transparent canvas while smoothly fading in the main window.
 func (a *app) splashView(c *ui.Context) {
 	c.Root().Background(ui.Transparent)
+	if c.Preferences().ReduceMotion {
+		a.finishSplash()
+		return
+	}
 
 	t, active := a.splash.elapsed(time.Now())
 	if !active {
