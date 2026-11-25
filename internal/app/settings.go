@@ -176,8 +176,10 @@ type settings struct {
 
 	// MiniPlayer shows a compact floating desktop playback controller.
 	MiniPlayer bool `json:"miniPlayer,omitempty"`
-	// MiniStyle picks the mini player layout: "bar" (horizontal) or "card" (square cover).
+	// MiniStyle picks the mini player layout: "bar" (Apple Music compact bar) or "card" (split cover card).
 	MiniStyle string `json:"miniStyle,omitempty"`
+	// MiniTheme picks the mini player color scheme: "auto" (follow app), "light", or "dark".
+	MiniTheme string `json:"miniTheme,omitempty"`
 	// MiniAlwaysOnTop keeps the mini player floating above other windows.
 	MiniAlwaysOnTop bool `json:"miniAlwaysOnTop"`
 	// MiniPosition remembers the last dragged screen position of the mini player.
@@ -215,6 +217,7 @@ func defaultSettings() settings {
 		MVLyrics:            true,
 		MVQueue:             true,
 		MiniStyle:           "bar",
+		MiniTheme:           "auto",
 		MiniAlwaysOnTop:     true,
 		AutoUpdate:          true,
 	}

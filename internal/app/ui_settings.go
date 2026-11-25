@@ -209,22 +209,36 @@ func (a *app) settingsPage(c *ui.Context) {
 		})
 
 		group("迷你播放器", func() {
-			row("显示迷你播放器", "在桌面角落显示小巧的悬浮播控窗，支持自由拖动与右键快捷切换", func() {
+			row("显示迷你播放器", "在桌面角落显示 Apple Music 风格悬浮播控窗，支持自由拖动与右键快捷切换", func() {
 				if ui.Switch(c.Key("mini-player"), &s.MiniPlayer).Label("显示迷你播放器").Changed() {
 					a.changed()
 				}
 			})
-			row("迷你播放器样式", "经典横条紧凑省空间，封面方卡平时展示专辑封面、悬停浮现播控", func() {
+			row("迷你播放器样式", "紧凑长条平时极简、悬停切换播控；封面卡片采用上图下文分体布局，完整展示封面", func() {
 				i := 0
 				if s.effectiveMiniStyle() == miniStyleCard {
 					i = 1
 				}
-				if segmented(c.Key("mini-style"), &i, "经典横条", "封面方卡") {
+				if segmented(c.Key("mini-style"), &i, "紧凑长条", "封面卡片") {
 					if i == 1 {
 						s.MiniStyle = miniStyleCard
 					} else {
 						s.MiniStyle = miniStyleBar
 					}
+					a.changed()
+				}
+			})
+			row("迷你播放器外观", "可独立切换浅色或黑夜模式，也可默认跟随主窗口外观", func() {
+				modes := []string{miniThemeAuto, miniThemeLight, miniThemeDark}
+				i := 0
+				cur := s.effectiveMiniTheme()
+				for k, m := range modes {
+					if m == cur {
+						i = k
+					}
+				}
+				if segmented(c.Key("mini-theme"), &i, "跟随应用", "浅色", "深色") {
+					s.MiniTheme = modes[i]
 					a.changed()
 				}
 			})

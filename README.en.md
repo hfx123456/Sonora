@@ -91,10 +91,10 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 
 ---
 
-## 5. Dual-Style Liquid Glass Mini Player & Borderless Launch Animation
+## 5. Apple Music-Style Mini Player (Light & Dark Modes) & Borderless Launch Animation
 
-- **Compact Bar & Square Artwork Card**: Toggle the floating desktop Mini Player anytime from the bottom-right player bar button or **Settings → Mini Player**, switch between **Classic Bar** and **Cover Card**, toggle **Always on Top**, and drag freely with automatic position persistence.
-- **Liquid Glass + Seekable Comet Smoke Progress**: The horizontal bar refracts the blurred album cover behind a seamless Liquid Glass surface with borderless transport controls; the square card displays clean artwork at rest and reveals a Liquid Glass control pill on hover. Both include a draggable comet progress bar with bass-reactive smoke wisps.
+- **Compact Bar ↔ Split Cover Card**: Toggle the floating desktop Mini Player anytime from the bottom-right player bar button or **Settings → Mini Player**. Switch in one click between the slim **Compact Bar** (`360 × 56`, minimal centered title & comet progress bar at rest, crossfading in-place to full transport controls on hover) and the **Split Cover Card** (`232 × 324`, unobstructed full artwork on top + dedicated control deck below with Like heart, scrubbable progress bar, and transport controls).
+- **Independent Dark Mode + Comet Smoke Progress**: Choose **Follow App / Light / Dark** independently of the main window—via the one-click Moon/Sun button on the mini player, its context menu, or **Settings → Mini Player**. Both layouts feature a draggable comet progress bar with bass-reactive smoke wisps and remember their dragged desktop position.
 - **Borderless Falling-Notes Launch Animation**: Cold launches float vector musical notes and circular sonic ripples directly over the desktop before assembling the borderless Sonora emblem and smoothly fading in the main window (toggleable in **Settings → Appearance → Startup Animation**, and automatically skipped when system Reduce Motion is enabled).
 
 <table>
