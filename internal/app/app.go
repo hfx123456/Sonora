@@ -270,6 +270,7 @@ type app struct {
 	sessionGen      int         // incremented on clearSession to drop pending saves
 	fusionSaveTimer *time.Timer // debounces settings.save during floating window drag
 	homeFile       string // where what the home page shows is kept, "" to keep none
+	splash         splashState
 }
 
 // playbackChanged follows what the player did to what plays.
@@ -448,6 +449,9 @@ func Run() error {
 		a.played, a.playedFrom = loadPlayed()
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
+		if shotHook == nil && os.Getenv("NM_SCENE") == "" {
+			a.splash.start(time.Now())
+		}
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Hidden:        os.Getenv("NM_SCENE") == "fusion-motion",
 			Title:         appName,
