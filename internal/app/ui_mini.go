@@ -30,6 +30,141 @@ type miniState struct {
 	style     string
 	placing   bool
 	saveTimer *time.Timer
+	scrub     scrubState
+}
+
+// miniPlayerButton renders the quick-toggle Mini Player button in the main
+// window's bottom player bar so the user can open/close it in one click.
+func (a *app) miniPlayerButton(c *ui.Context) {
+	col := a.pal.muted
+	tip := "打开迷你播放器"
+	if a.settings.MiniPlayer {
+		col = a.pal.accent
+		tip = "关闭迷你播放器"
+	}
+	if iconButton(c.Key("mini-player-toggle"), iconMiniPlayer, 16, col, "迷你播放器").Tooltip(tip).Clicked() {
+		a.setMiniPlayerEnabled(!a.settings.MiniPlayer)
+	}
+}
+
+// miniSmokeColor ensures the comet progress bar & smoke stay luminous and
+// readable even when the album cover is nearly black or desaturated.
+func miniSmokeColor(tint, fallback ui.Color, dark bool) ui.Color {
+	if tint == (ui.Color{}) {
+		return fallback
+	}
+	lum := 0.299*float32(tint.R) + 0.587*float32(tint.G) + 0.114*float32(tint.B)
+	if lum < 75 {
+		return tint.Mix(fallback, 0.72)
+	}
+	if !dark && lum > 220 {
+		return tint.Mix(fallback, 0.55)
+	}
+	return tint
+}
+
+// miniProgressBar draws an interactive, seekable progress bar with Sonora's
+// luminous comet head & rising bass-reactive smoke trail.
+func (a *app) miniProgressBar(c *ui.Context, trackCol, fillCol, smokeCol ui.Color, height float32) ui.Element {
+	pl := a.pl
+	st := &a.mini.scrub
+	dur := pl.Duration().Seconds()
+	if !st.active {
+		st.v = pl.Position().Seconds()
+	}
+	if dur <= 0 {
+		st.v = 0
+	}
+	maxV := max(dur, 1)
+	s := ui.SliderBase(c, &st.v, 0, maxV).Height(height).Disabled(dur <= 0).
+		Step(1).FocusRing(false).Label("迷你播放进度")
+	pressed := s.Pressed()
+	switch {
+	case pressed && !st.active:
+		st.active, st.track = true, pl.Current()
+	case !pressed && st.active:
+		st.active = false
+		if st.track != nil && st.track == pl.Current() {
+			pl.Seek(secs(min(st.v, max(0, dur-1))))
+		}
+		st.track = nil
+	case s.Changed():
+		pl.Seek(secs(min(st.v, max(0, dur-1))))
+	}
+	scrubbing := pressed && st.track == pl.Current()
+	hot := s.Hovered() || scrubbing
+	thick := float32(3.5)
+	if hot {
+		thick = 5.5
+	}
+	thick = s.AnimateTo("mini-thick", thick, ui.Snappy)
+	knob := float32(0)
+	if hot {
+		knob = 1
+	}
+	knob = s.AnimateTo("mini-knob", knob, ui.Snappy)
+
+	smoking := float32(0)
+	if !c.Preferences().ReduceMotion && pl.Playing() && !pl.Loading() && !scrubbing && dur > 0 {
+		smoking = 1
+	}
+	smoking = s.AnimateTo("mini-smoke", smoking, ui.Animation{Duration: 550 * time.Millisecond})
+	white := ui.RGB(255, 255, 255)
+
+	s.Draw(func(p *ui.Painter, r ui.Rect) {
+		at := st.v
+		if !scrubbing {
+			at = pl.SongPosition().Seconds()
+		}
+		frac := float32(0)
+		if dur > 0 {
+			frac = float32(min(1, max(0, at/dur)))
+		}
+		y := r.Y + (r.H-thick)/2
+		head, cy := r.X+r.W*frac, r.Y+r.H/2
+		rail := ui.Rect{X: r.X, Y: y, W: r.W, H: thick}
+		radius := thick / 2
+		p.Fill(rail, trackCol, radius)
+		if frac > 0 {
+			played := ui.Rect{X: r.X, Y: y, W: max(thick, head-r.X), H: thick}
+			if smoking > 0.01 {
+				p.FillGradient(played, ui.LinearGradient{
+					Angle: 90,
+					Oklab: true,
+					From:  fillCol.Mix(smokeCol, smoking).Alpha(0.35),
+					To:    fillCol.Mix(smokeCol, 0.85*smoking),
+				}, radius)
+				lv, live := pl.Levels()
+				st.level.step(p.Now(), lv, live)
+				bass := st.level.group(0, 6)
+				drawSmoke(p, head, cy, p.Now(), bass, smokeCol, smoking*0.85)
+				glow := 8 + 7*bass
+				p.Shadow(ui.Rect{X: head, Y: cy}, 0, 0, 0, glow, 2+2*bass, smokeCol.Alpha(0.92*smoking))
+				core := thick * (1.1 + 0.25*bass)
+				p.Fill(ui.Rect{X: head - core/2, Y: cy - core/2, W: core, H: core}, white.Mix(smokeCol, 0.18).Alpha(smoking), core/2)
+			} else {
+				p.FillGradient(played, ui.LinearGradient{
+					Angle: 90,
+					Oklab: true,
+					From:  fillCol.Alpha(0.65),
+					To:    smokeCol,
+				}, radius)
+			}
+		}
+		if knob > 0.01 {
+			k := 10 * knob
+			p.Shadow(ui.Rect{X: head - k/2, Y: cy - k/2, W: k, H: k}, k/2, 0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.28))
+			p.Fill(ui.Rect{X: head - k/2, Y: cy - k/2, W: k, H: k}, white.Mix(smokeCol, 0.25), k/2)
+		}
+		switch {
+		case smoking > 0.01 && (pl.Playing() || smoking < 1):
+			p.After(time.Second / 30)
+		case pl.Playing() && !scrubbing && dur > 0:
+			perPixel := dur / float64(max(1, r.W*p.Scale()))
+			p.After(max(16*time.Millisecond, secs(perPixel)))
+		}
+	})
+	return s
 }
 
 func (s settings) effectiveMiniStyle() string {
@@ -262,25 +397,6 @@ func (a *app) miniMenu(menu *ui.Menu) {
 	}
 }
 
-// miniProgress returns the current playback ratio [0, 1] and schedules a
-// lightweight refresh while music is playing.
-func (a *app) miniProgress(c *ui.Context) float32 {
-	pl := a.pl
-	dur := pl.Duration().Seconds()
-	pos := pl.SongPosition().Seconds()
-	if pl.Playing() && dur > 0 {
-		c.After(250 * time.Millisecond)
-	}
-	if dur <= 0 || pos <= 0 {
-		return 0
-	}
-	p := float32(pos / dur)
-	if p > 1 {
-		return 1
-	}
-	return p
-}
-
 func (a *app) miniView(c *ui.Context) {
 	t := *c.Theme()
 	pal := paletteFor(&t)
@@ -300,11 +416,10 @@ func (a *app) miniView(c *ui.Context) {
 }
 
 // miniBarView renders the compact Liquid Glass horizontal floating bar:
-// blurred cover backdrop + glass lens + cover + title/artist + controls +
-// cleanly inset bottom progress track.
+// seamless optical glass lens over blurred album art + borderless controls +
+// interactive comet/smoke progress bar.
 func (a *app) miniBarView(c *ui.Context, pal palette) {
 	cur := a.pl.Current()
-	progress := a.miniProgress(c)
 
 	var art *artwork
 	var tint ui.Color
@@ -317,20 +432,20 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 	if tint == (ui.Color{}) {
 		tint = pal.accent
 	}
+	smokeCol := miniSmokeColor(tint, pal.accent, pal.dark)
 	bd := backdrop(art)
 
-	const rad float32 = 22
+	// Concentric outer corner radius: cover radius 12 + horizontal padding 12 = 24.
+	const rad float32 = 24
 	shadowCol := ui.RGBA(0, 0, 0, 0.16)
 	baseFill := ui.RGBA(248, 250, 252, 0.72)
-	trackBG := ui.RGBA(0, 0, 0, 0.08)
-	rimCol := ui.RGBA(255, 255, 255, 0.72)
-	outerBorder := ui.RGBA(0, 0, 0, 0.08)
+	trackBG := ui.RGBA(0, 0, 0, 0.09)
+	fallbackBorder := ui.RGBA(0, 0, 0, 0.08)
 	if pal.dark {
 		shadowCol = ui.RGBA(0, 0, 0, 0.38)
 		baseFill = ui.RGBA(26, 27, 32, 0.72)
 		trackBG = ui.RGBA(255, 255, 255, 0.14)
-		rimCol = ui.RGBA(255, 255, 255, 0.18)
-		outerBorder = ui.RGBA(255, 255, 255, 0.12)
+		fallbackBorder = ui.RGBA(255, 255, 255, 0.10)
 	}
 
 	// Outer shell carries only the soft elevation shadow (well within miniShadowPad).
@@ -372,41 +487,30 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 				}
 			})
 
-			// Layer 2 (Liquid Glass lens container): refracts Layer 1 behind it,
-			// while all crisp foreground controls live INSIDE its Children.
+			// Layer 2 (Liquid Glass lens container): let Liquid Glass draw its own
+			// seamless optical edge — no double manual wireframe border!
 			glassCard := ui.Box(c.Key("mini-bar-glass")).Absolute().Top(0).Left(0).Right(0).Bottom(0).
 				Radius(rad).Clip()
 			if a.glassEnabled() {
 				mat := a.liquidGlass(false, ui.Color{})
-				mat.Tint = pal.bg.Alpha(0.26)
+				mat.Tint = pal.bg.Alpha(0.24)
 				glassCard.Material(mat)
+			} else {
+				glassCard.Border(0.5, fallbackBorder)
 			}
-			glassCard.DrawOver(func(pt *ui.Painter, r ui.Rect) {
-				// Inner top specular rim + crisp outer glass edge.
-				pt.Stroke(ui.Rect{X: r.X + 0.5, Y: r.Y + 0.5, W: r.W - 1, H: r.H - 1}, rimCol, rad-0.5, 1)
-				pt.Stroke(r, outerBorder, rad, 1)
-				// Cleanly inset rounded progress track along the bottom.
-				const insetX float32 = 20
-				trackRect := ui.Rect{X: r.X + insetX, Y: r.Y + r.H - 7, W: max(0, r.W-insetX*2), H: 3}
-				pt.Fill(trackRect, trackBG, 1.5)
-				if progress > 0 && trackRect.W > 0 {
-					fillW := max(3, trackRect.W*progress)
-					pt.Fill(ui.Rect{X: trackRect.X, Y: trackRect.Y, W: min(trackRect.W, fillW), H: 3}, tint.Alpha(0.92), 1.5)
-				}
-			})
 			glassCard.Children(func() {
 				// Foreground cover, title/artist, and compact playback controls — razor sharp!
-				ui.Row(c).Fill().AlignItems(ui.Center).Padding(0, 14, 6, 12).Gap(10).Children(func() {
-					artBtn := ui.ButtonBase(c.Key("mini-cover")).Size(50, 50).Shrink(0).Radius(12).
+				ui.Row(c).Fill().AlignItems(ui.Center).Padding(0, 14, 10, 12).Gap(10).Children(func() {
+					artBtn := ui.ButtonBase(c.Key("mini-cover")).Size(48, 48).Shrink(0).Radius(12).
 						Label("打开主窗口").Tooltip("点击打开 Sonora 主窗口")
 					if artBtn.Clicked() {
 						a.showMain()
 					}
 					artBtn.Children(func() {
 						if cur != nil && cur.Album.PicURL != "" {
-							a.cover(c, cur.Album.PicURL, 160, 50, 12).Shadow(0, 3, 10, -2, ui.RGBA(0, 0, 0, 0.22))
+							a.cover(c, cur.Album.PicURL, 160, 48, 12).Shadow(0, 3, 10, -2, ui.RGBA(0, 0, 0, 0.22))
 						} else {
-							ui.Box(c).Size(50, 50).Radius(12).Center().Background(pal.hover).Children(func() {
+							ui.Box(c).Size(48, 48).Radius(12).Center().Background(pal.hover).Children(func() {
 								ui.Icon(c, iconNote).Size(20, 20).TextColor(pal.muted)
 							})
 						}
@@ -426,6 +530,10 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 					a.miniTransport(c, pal.text, pal.muted, pal.accent, false)
 				})
 
+				// Interactive comet + smoke progress bar inset cleanly along the bottom.
+				a.miniProgressBar(c.Key("mini-bar-scrub"), trackBG, tint, smokeCol, 14).
+					Absolute().Left(20).Right(20).Bottom(2)
+
 				// Topmost z-order inside glassCard: single clean close button on hover.
 				if hovered {
 					if miniCornerCloseBtn(c.Key("mini-close"), pal.muted).
@@ -439,11 +547,10 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 }
 
 // miniCardView renders the Apple-Music-style square artwork mini player:
-// crisp album cover + inset bottom progress track at rest, Liquid Glass
+// crisp album cover + comet/smoke bottom progress bar at rest, Liquid Glass
 // floating playback capsule + top-right close button on hover.
 func (a *app) miniCardView(c *ui.Context, pal palette) {
 	cur := a.pl.Current()
-	progress := a.miniProgress(c)
 
 	var bmp *ui.Bitmap
 	var tint ui.Color
@@ -454,6 +561,7 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 	if tint == (ui.Color{}) {
 		tint = pal.accent
 	}
+	smokeCol := miniSmokeColor(tint, pal.accent, true)
 
 	const rad float32 = 24
 	white := ui.RGB(255, 255, 255)
@@ -494,7 +602,7 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 				})
 			}
 
-			// Layer 2: Bottom readability scrim, glass rim, and cleanly inset progress track.
+			// Layer 2: Soft readability scrim (no harsh white wireframe edge).
 			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(pt *ui.Painter, r ui.Rect) {
 				pt.Clip(r, rad, func() {
 					if hoverAlpha > 0.01 {
@@ -503,25 +611,16 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 					pt.FillGradient(r, ui.LinearGradient{
 						Angle: 180,
 						Stops: []ui.GradientStop{
-							{Color: ui.RGBA(0, 0, 0, 0.16*hoverAlpha), At: 0},
+							{Color: ui.RGBA(0, 0, 0, 0.14*hoverAlpha), At: 0},
 							{Color: ui.RGBA(0, 0, 0, 0.0), At: 0.42},
 							{Color: ui.RGBA(0, 0, 0, 0.76), At: 1},
 						},
 					}, rad)
-					// Cleanly inset rounded progress track well clear of the corner curve.
-					const insetX float32 = 16
-					trackRect := ui.Rect{X: r.X + insetX, Y: r.Y + r.H - 11, W: max(0, r.W-insetX*2), H: 3}
-					pt.Fill(trackRect, white.Alpha(0.24), 1.5)
-					if progress > 0 && trackRect.W > 0 {
-						fillW := max(3, trackRect.W*progress)
-						pt.Fill(ui.Rect{X: trackRect.X, Y: trackRect.Y, W: min(trackRect.W, fillW), H: 3}, white.Alpha(0.94), 1.5)
-					}
 				})
-				pt.Stroke(r, white.Alpha(0.22), rad, 1)
 			})
 
 			// Layer 3: Bottom song info (click to open Sonora main window).
-			infoBtn := ui.ButtonBase(c.Key("card-open-main")).Absolute().Left(10).Right(10).Bottom(16).
+			infoBtn := ui.ButtonBase(c.Key("card-open-main")).Absolute().Left(10).Right(10).Bottom(18).
 				Padding(4, 6).Radius(8).Label("打开主窗口").Tooltip("点击打开 Sonora 主窗口")
 			if infoBtn.Clicked() {
 				a.showMain()
@@ -539,15 +638,18 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 				})
 			})
 
-			// Layer 4: Liquid Glass floating control dock in the center band ONLY
-			// (never overlaps the top-right close button!).
+			// Layer 4: Interactive comet + smoke progress bar cleanly inset along bottom.
+			a.miniProgressBar(c.Key("mini-card-scrub"), white.Alpha(0.24), white.Alpha(0.92), smokeCol.Mix(white, 0.30), 14).
+				Absolute().Left(16).Right(16).Bottom(4)
+
+			// Layer 5: Liquid Glass floating control dock in the center band ONLY.
 			if hoverAlpha > 0.05 {
 				ui.Box(c.Key("mini-card-controls")).Absolute().Top(52).Left(8).Right(8).Bottom(56).Center().Opacity(hoverAlpha).Children(func() {
-					dock := ui.Box(c.Key("mini-card-dock")).Radius(999).Padding(6, 10)
+					dock := ui.Box(c.Key("mini-card-dock")).Radius(999).Padding(5, 10)
 					if a.glassEnabled() {
 						dock.Material(a.liquidGlass(false, ui.RGBA(12, 14, 18, 0.34)))
 					} else {
-						dock.Background(ui.RGBA(16, 18, 24, 0.72)).Border(1, white.Alpha(0.18))
+						dock.Background(ui.RGBA(16, 18, 24, 0.72))
 					}
 					dock.Children(func() {
 						a.miniTransport(c, white, white.Alpha(0.74), tint.Mix(white, 0.40), true)
@@ -555,7 +657,7 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 				})
 			}
 
-			// Layer 5 (topmost z-order): single unmistakable Liquid Glass close button.
+			// Layer 6 (topmost z-order): single unmistakable Liquid Glass close button.
 			if hoverAlpha > 0.05 {
 				closeBtn := ui.ButtonBase(c.Key("card-close")).Absolute().Top(10).Right(10).
 					Size(24, 24).Center().Radius(999).Opacity(hoverAlpha).
@@ -651,32 +753,25 @@ func (a *app) miniTransport(c *ui.Context, color, dim, on ui.Color, cardMode boo
 		if btn("mini-prev", iconPrev, 14, navSize, color, "上一首").Clicked() {
 			pl.Prev()
 		}
-		playBox := float32(36)
-		playIconSize := float32(16)
+		playBox := float32(34)
+		playIconSize := float32(20)
 		if cardMode {
 			playBox = 36
-			playIconSize = 17
+			playIconSize = 21
 		}
 		pb := ui.ButtonBase(c.Key("mini-play")).Size(playBox, playBox).Center().Radius(999).Label("播放/暂停").TextColor(color)
-		if !cardMode && a.glassEnabled() {
-			pb.Material(a.liquidGlass(true, ui.Color{}))
-		} else {
-			playBG := ui.RGBA(128, 128, 128, 0.14)
+		playBG := ui.Transparent
+		if pb.Hovered() {
 			if cardMode {
 				playBG = ui.RGBA(255, 255, 255, 0.22)
+			} else {
+				playBG = ui.RGBA(128, 128, 128, 0.16)
 			}
-			if pb.Hovered() {
-				if cardMode {
-					playBG = ui.RGBA(255, 255, 255, 0.34)
-				} else {
-					playBG = ui.RGBA(128, 128, 128, 0.24)
-				}
-			}
-			pb.Background(playBG)
 		}
+		pb.Background(playBG)
 		pose := ui.Pose{}
 		if pb.Pressed() {
-			pose.Scale = 0.90
+			pose.Scale = 0.88
 		}
 		pb.AnimatePose(pose, ui.Snappy)
 		pb.Children(func() { playPause(c, pb, pl.Playing(), playIconSize) })

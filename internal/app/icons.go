@@ -62,6 +62,7 @@ var (
 	iconFullScreen     = strokeIcon(`<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>`)
 	iconMinus          = strokeIcon(`<path d="M5 12h14"/>`)
 	iconExitFullScreen = strokeIcon(`<path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/>`)
+	iconMiniPlayer     = strokeIcon(`<rect x="2.5" y="4" width="19" height="16" rx="2.5"/><rect x="11.5" y="11" width="7.5" height="6" rx="1.2" fill="currentColor" stroke="none"/>`)
 )
 
 var (

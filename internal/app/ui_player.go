@@ -421,7 +421,7 @@ func (a *app) playerBar(c *ui.Context) {
 	pl := a.pl
 	tr := pl.Current()
 	a.tickTimes(c)
-	const controls = 4*32 + 3*4
+	const controls = 5*32 + 4*4
 	var bar ui.Element
 	if a.glassEnabled() {
 		material := a.liquidGlass(false, ui.Color{})
@@ -508,6 +508,7 @@ func (a *app) playerBar(c *ui.Context) {
 			}
 			a.connectButton(c)
 			a.volumeButton(c, p.text.Alpha(0.75))
+			a.miniPlayerButton(c)
 			a.fusionButton(c)
 		})
 	})

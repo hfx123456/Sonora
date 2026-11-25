@@ -61,7 +61,8 @@ func TestMiniViewsRenderAndCloseButtonClickable(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.settings.MiniPlayer = true
-	a.pl.Cue([]spotify.Track{{ID: "t1", Name: "东风破", Artists: []spotify.Artist{{Name: "Jay Chou"}}}})
+	a.pl.Cue([]spotify.Track{{ID: "t1", Name: "东风破", Artists: []spotify.Artist{{Name: "Jay Chou"}}, Duration: 240000}})
+	a.pl.Hold(145 * time.Second)
 
 	snapDir := os.Getenv("MINI_SNAP_DIR")
 	saveSnap := func(name string, tt *ui.Tester) {
@@ -126,5 +127,23 @@ func TestMiniViewsRenderAndCloseButtonClickable(t *testing.T) {
 	tc.Frame()
 	if a.settings.MiniPlayer {
 		t.Fatal("clicking card close button did not close mini player")
+	}
+
+	// Main player bar quick-toggle button opens & closes mini player in one click.
+	tm := ui.NewTester(a.view, 1180, 720)
+	tm.Frame()
+	if err := tm.Click("迷你播放器"); err != nil {
+		t.Fatalf("player bar mini toggle missing: %v", err)
+	}
+	tm.Frame()
+	if !a.settings.MiniPlayer {
+		t.Fatal("clicking player bar mini toggle did not enable mini player")
+	}
+	if err := tm.Click("迷你播放器"); err != nil {
+		t.Fatalf("second click failed: %v", err)
+	}
+	tm.Frame()
+	if a.settings.MiniPlayer {
+		t.Fatal("clicking player bar mini toggle again did not disable mini player")
 	}
 }
