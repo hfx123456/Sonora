@@ -8,7 +8,7 @@ English | **[简体中文](README.md)**
 
 <p align="center">
   Native Spotify desktop client &amp; personal Cloud Music Disk built with <b>Go + MyGo</b> (based on <a href="https://github.com/margbug01/MySpotify">MySpotify</a>)<br>
-  <b>6 Cloud Drives · Word-by-Word Bilingual Lyrics · Draggable Dynamic Island · Liquid Glass &amp; Flow Backdrop · Windows &amp; macOS</b>
+  <b>6 Cloud Drives · Word-by-Word Bilingual Lyrics · Draggable Dynamic Island · Dual-Style Liquid Glass Mini Player · Flow Backdrop · Windows &amp; macOS</b>
 </p>
 
 <p align="center">
@@ -62,7 +62,7 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 
 - **Multi-Monitor Dynamic Island**: Drag freely away from the top bezel or onto another monitor—automatically morphing between a top-attached notch and a rounded floating capsule, with a menu shortcut to move to the next display.
 - **Instant Unlock Pill**: While locked (click-through), hovering or clicking reveals a compact **Unlock** pill without adding any dark background box.
-- **Embedded Bilingual Lookup**: Bundled Lyricify Lyrics Helper + .NET runtime aggregating **NetEase Cloud Music, QQ Music (local QRC decryption), and LRCLIB** with cross-script alias matching and ±0.5s timing offset.
+- **Pure-Go Multi-Source Bilingual Lookup**: Native zero-`.NET` lyrics engine aggregating **NetEase Cloud Music, QQ Music (local QRC decryption), and LRCLIB** with YRC / QRC / TTML (including inline translations) / LRC parsing, cross-script alias matching, and ±0.5s timing offset.
 
 <table>
   <tr>
@@ -91,11 +91,26 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 
 ---
 
+## 5. Dual-Style Liquid Glass Mini Player & Borderless Launch Animation
+
+- **Compact Bar & Square Artwork Card**: Toggle the floating desktop Mini Player anytime from the bottom-right player bar button or **Settings → Mini Player**, switch between **Classic Bar** and **Cover Card**, toggle **Always on Top**, and drag freely with automatic position persistence.
+- **Liquid Glass + Seekable Comet Smoke Progress**: The horizontal bar refracts the blurred album cover behind a seamless Liquid Glass surface with borderless transport controls; the square card displays clean artwork at rest and reveals a Liquid Glass control pill on hover. Both include a draggable comet progress bar with bass-reactive smoke wisps.
+- **Borderless Falling-Notes Launch Animation**: Cold launches float vector musical notes and circular sonic ripples directly over the desktop before assembling the borderless Sonora emblem and smoothly fading in the main window (toggleable in **Settings → Appearance → Startup Animation**, and automatically skipped when system Reduce Motion is enabled).
+
+<table>
+  <tr>
+    <td width="58%" align="center"><img src="docs/screenshots/mini-player-bar.png" alt="Liquid Glass horizontal bar mini player with comet smoke progress"><br><b>Classic Horizontal Bar</b>: Seamless Liquid Glass over blurred cover art with seekable comet smoke progress.</td>
+    <td width="42%" align="center"><img src="docs/screenshots/mini-player-card.png" alt="Square artwork cover card mini player with floating Liquid Glass controls"><br><b>Square Cover Card</b>: Pure album art at rest with a frosted Liquid Glass control capsule on hover.</td>
+  </tr>
+</table>
+
+---
+
 ## Install, Isolation & Build
 
 1. Download from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**:
-   - **Windows**: Run `sonora-setup-1.0.3-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.3-windows-amd64.zip`.
-   - **macOS**: Download `sonora-1.0.3-universal.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
+   - **Windows**: Run `sonora-setup-1.0.12-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.12-windows-amd64.zip`.
+   - **macOS**: Download `sonora-1.0.12.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
    Pure Go native binary (~20 MB) with built-in multi-source lyrics—no `.NET` runtime or extra setup needed.
 2. **Isolated from upstream MySpotify**: Uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), migrating existing settings on first launch without altering the legacy folder.
 
