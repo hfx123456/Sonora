@@ -17,8 +17,8 @@ func TestSplashLifecycle(t *testing.T) {
 	if dt, active := s.elapsed(now); !active || dt != 0 {
 		t.Fatalf("at start: got (%v, %v), want (0, true)", dt, active)
 	}
-	if dt, active := s.elapsed(now.Add(450 * time.Millisecond)); !active || dt < 0.44 || dt > 0.46 {
-		t.Fatalf("mid-animation: got (%v, %v), want (~0.45, true)", dt, active)
+	if dt, active := s.elapsed(now.Add(1100 * time.Millisecond)); !active || dt < 1.09 || dt > 1.11 {
+		t.Fatalf("mid-animation: got (%v, %v), want (~1.10, true)", dt, active)
 	}
 	if _, active := s.elapsed(now.Add(splashTotalDuration)); active {
 		t.Fatal("splash should finish once total duration elapses")
@@ -33,10 +33,10 @@ func TestSplashLifecycle(t *testing.T) {
 
 func TestSplashMorphRect(t *testing.T) {
 	r0, rad0 := splashMorphRect(1180, 780, 0)
-	if r0.W != 116 || r0.H != 116 || rad0 != 28 {
-		t.Fatalf("at expand=0: got rect=%+v radius=%v, want 116x116 r=28", r0, rad0)
+	if r0.W != 124 || r0.H != 124 || rad0 != 30 {
+		t.Fatalf("at expand=0: got rect=%+v radius=%v, want 124x124 r=30", r0, rad0)
 	}
-	if r0.X != (1180-116)/2 || r0.Y != (780-116)/2 {
+	if r0.X != (1180-124)/2 || r0.Y != (780-124)/2 {
 		t.Fatalf("at expand=0: expected centered rect, got (%v, %v)", r0.X, r0.Y)
 	}
 
@@ -47,14 +47,14 @@ func TestSplashMorphRect(t *testing.T) {
 }
 
 func TestSplashBarBounce(t *testing.T) {
-	if s, a := splashBarBounce(0.10, 0.25); s != 0 || a != 0 {
+	if s, a := splashBarBounce(0.10, 0.34); s != 0 || a != 0 {
 		t.Fatalf("before start: got (%v, %v), want (0, 0)", s, a)
 	}
-	s, a := splashBarBounce(0.40, 0.18)
+	s, a := splashBarBounce(0.60, 0.34)
 	if s <= 0.5 || a < 0.99 {
 		t.Fatalf("during beat: got scale=%v alpha=%v, expected active bounce", s, a)
 	}
-	sEnd, aEnd := splashBarBounce(1.0, 0.18)
+	sEnd, aEnd := splashBarBounce(1.40, 0.34)
 	if sEnd < 0.99 || sEnd > 1.01 || aEnd != 1 {
 		t.Fatalf("settled bar: got scale=%v alpha=%v, want (~1, 1)", sEnd, aEnd)
 	}
