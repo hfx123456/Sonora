@@ -2,6 +2,7 @@ package app
 
 import (
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -19,8 +20,8 @@ func TestMiniBoundsDefaultAndClamped(t *testing.T) {
 	if got.Width != barW || got.Height != barH {
 		t.Fatalf("bar size: got %dx%d, want %dx%d", got.Width, got.Height, barW, barH)
 	}
-	if got.X != 1920-barW-16 || got.Y != 1040-barH-16 {
-		t.Fatalf("default bar pos: got (%d,%d), want (%d,%d)", got.X, got.Y, 1920-barW-16, 1040-barH-16)
+	if got.X != 1920-barW-10 || got.Y != 1040-barH-10 {
+		t.Fatalf("default bar pos: got (%d,%d), want (%d,%d)", got.X, got.Y, 1920-barW-10, 1040-barH-10)
 	}
 
 	// Out-of-bounds saved position should be clamped back onto the display.
@@ -51,7 +52,7 @@ func TestMiniSettingsDefaults(t *testing.T) {
 	}
 }
 
-func TestMiniViewsRenderCleanly(t *testing.T) {
+func TestMiniViewsRenderAndCloseButtonClickable(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.settings.MiniPlayer = true
@@ -70,10 +71,33 @@ func TestMiniViewsRenderCleanly(t *testing.T) {
 	if _, ok := tb.Find("下一首"); !ok {
 		t.Fatal("bar mini player missing next button")
 	}
+	// Hover card and click close button.
+	tb.Move(float32(bw)/2, float32(bh)/2)
+	tb.Frame()
+	if _, ok := tb.Find("关闭迷你播放器"); !ok {
+		t.Fatal("bar mini player missing close button on hover")
+	}
+	tb.Click("关闭迷你播放器")
+	tb.Frame()
+	if a.settings.MiniPlayer {
+		t.Fatal("clicking bar close button did not close mini player")
+	}
 
-	// Square cover card mode.
+	// Square cover card mode: hover and verify close button is not occluded.
+	a.settings.MiniPlayer = true
 	a.settings.MiniStyle = miniStyleCard
 	cw, ch := miniWindowSize(miniStyleCard)
 	tc := ui.NewTester(a.miniView, cw, ch)
 	tc.Frame()
+	tc.Move(float32(cw)/2, float32(ch)/2)
+	tc.Advance(200 * time.Millisecond)
+	tc.Frame()
+	if _, ok := tc.Find("关闭迷你播放器"); !ok {
+		t.Fatal("card mini player missing close button on hover")
+	}
+	tc.Click("关闭迷你播放器")
+	tc.Frame()
+	if a.settings.MiniPlayer {
+		t.Fatal("clicking card close button did not close mini player")
+	}
 }

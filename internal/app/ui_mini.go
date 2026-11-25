@@ -16,11 +16,13 @@ const (
 	miniStyleBar  = "bar"
 	miniStyleCard = "card"
 
-	miniShadowPad = 14
-	miniBarW      = 404
-	miniBarH      = 76
-	miniCardW     = 216
-	miniCardH     = 216
+	// Generous transparent margin so rounded elevation shadows decay cleanly
+	// to zero well inside the frameless window (preventing rectangular clipping).
+	miniShadowPad = 28
+	miniBarW      = 408
+	miniBarH      = 80
+	miniCardW     = 220
+	miniCardH     = 220
 )
 
 type miniState struct {
@@ -54,8 +56,8 @@ func miniBounds(style string, pos [2]int, posSet bool, displays []mygo.Display, 
 		if area.Width <= 0 || area.Height <= 0 {
 			area = mygo.Rectangle{X: 0, Y: 0, Width: 1440, Height: 900}
 		}
-		x := area.X + area.Width - w - 16
-		y := area.Y + area.Height - h - 16
+		x := area.X + area.Width - w - 10
+		y := area.Y + area.Height - h - 10
 		return mygo.Rectangle{X: x, Y: y, Width: w, Height: h}
 	}
 
@@ -297,105 +299,146 @@ func (a *app) miniView(c *ui.Context) {
 	})
 }
 
-// miniBarView renders the compact QQ-Music-inspired horizontal floating bar:
-// cover + title/artist + shuffle/prev/play/next/repeat + bottom progress line.
+// miniBarView renders the compact Liquid Glass horizontal floating bar:
+// blurred cover backdrop + glass lens + cover + title/artist + controls +
+// cleanly inset bottom progress track.
 func (a *app) miniBarView(c *ui.Context, pal palette) {
 	cur := a.pl.Current()
 	progress := a.miniProgress(c)
 
+	var art *artwork
 	var tint ui.Color
-	if cur != nil {
-		tint = a.coverTint(cur.Album.PicURL, 120)
+	if cur != nil && cur.Album.PicURL != "" {
+		art = a.art.get(spotify.Sized(cur.Album.PicURL, 240), true)
+		if art != nil && !art.failed {
+			tint = art.tint
+		}
 	}
 	if tint == (ui.Color{}) {
 		tint = pal.accent
 	}
+	bd := backdrop(art)
 
-	surface := ui.RGBA(252, 252, 254, 0.94)
-	border := ui.RGBA(0, 0, 0, 0.09)
-	shadowCol := ui.RGBA(0, 0, 0, 0.20)
+	const rad float32 = 22
+	shadowCol := ui.RGBA(0, 0, 0, 0.16)
+	baseFill := ui.RGBA(248, 250, 252, 0.72)
+	trackBG := ui.RGBA(0, 0, 0, 0.08)
+	rimCol := ui.RGBA(255, 255, 255, 0.72)
+	outerBorder := ui.RGBA(0, 0, 0, 0.08)
 	if pal.dark {
-		surface = ui.RGBA(28, 28, 32, 0.92)
-		border = ui.RGBA(255, 255, 255, 0.12)
-		shadowCol = ui.RGBA(0, 0, 0, 0.45)
+		shadowCol = ui.RGBA(0, 0, 0, 0.38)
+		baseFill = ui.RGBA(26, 27, 32, 0.72)
+		trackBG = ui.RGBA(255, 255, 255, 0.14)
+		rimCol = ui.RGBA(255, 255, 255, 0.18)
+		outerBorder = ui.RGBA(255, 255, 255, 0.12)
 	}
 
-	const rad float32 = 20
-	card := ui.Box(c.Key("mini-bar")).Fill().Radius(rad).Clip().
-		DragWindow().ContextMenu(a.miniMenu).
-		Shadow(0, 8, 22, -4, shadowCol).
-		Draw(func(pt *ui.Painter, r ui.Rect) {
-			pt.Fill(r, surface, rad)
-			// Subtle ambient tint from the active album cover.
-			glowAlpha := float32(0.11)
-			if pal.dark {
-				glowAlpha = 0.22
-			}
-			pt.FillRadialGradient(r, ui.RadialGradient{
-				Center: ui.Point{X: 0.14, Y: 0.50},
-				Radius: r.W * 0.55,
-				Stops: []ui.GradientStop{
-					{Color: tint.Alpha(glowAlpha), At: 0},
-					{Color: tint.Alpha(0), At: 1},
-				},
-			}, rad)
-			// Sleek playback progress hairline along the bottom edge.
-			if progress > 0 {
-				pt.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - 2.5, W: r.W * progress, H: 2.5}, tint.Alpha(0.85), 1.5)
-			}
-			pt.Stroke(r, border, rad, 1)
-		})
+	// Outer shell carries only the soft elevation shadow (well within miniShadowPad).
+	shell := ui.Box(c.Key("mini-bar-shell")).Fill().Radius(rad).
+		Shadow(0, 6, 16, -4, shadowCol)
 
-	hovered := card.Hovered()
-	card.Children(func() {
-		ui.Row(c).Fill().AlignItems(ui.Center).Padding(0, 12, 0, 12).Gap(10).Children(func() {
-			// Album art button: click to open the main window.
-			artBtn := ui.ButtonBase(c.Key("mini-cover")).Size(50, 50).Shrink(0).Radius(12).Label("打开主窗口").Tooltip("点击打开 Sonora 主窗口")
-			if artBtn.Clicked() {
-				a.showMain()
+	hovered := shell.Hovered()
+
+	shell.Children(func() {
+		// Clipped glass body: everything inside stays strictly within the rounded corners.
+		body := ui.Box(c.Key("mini-bar")).Fill().Radius(rad).Clip().
+			DragWindow().ContextMenu(a.miniMenu)
+
+		body.Children(func() {
+			// Layer 1: Blurred album cover + frosted atmospheric tint for real depth.
+			if bd != nil {
+				imgOpacity := float32(0.28)
+				if pal.dark {
+					imgOpacity = 0.42
+				}
+				ui.Image(c, bd).Absolute().Top(0).Left(0).Right(0).Bottom(0).
+					Fit(ui.Cover).Radius(rad).Opacity(imgOpacity).PassThrough()
 			}
-			artBtn.Children(func() {
-				if cur != nil && cur.Album.PicURL != "" {
-					a.cover(c, cur.Album.PicURL, 160, 50, 12)
-				} else {
-					ui.Box(c).Size(50, 50).Radius(12).Center().Background(pal.hover).Children(func() {
-						ui.Icon(c, iconNote).Size(20, 20).TextColor(pal.muted)
-					})
+			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(pt *ui.Painter, r ui.Rect) {
+				pt.Clip(r, rad, func() {
+					pt.Fill(r, baseFill, rad)
+					glowAlpha := float32(0.14)
+					if pal.dark {
+						glowAlpha = 0.24
+					}
+					pt.FillRadialGradient(r, ui.RadialGradient{
+						Center: ui.Point{X: 0.15, Y: 0.45},
+						Radius: r.W * 0.52,
+						Stops: []ui.GradientStop{
+							{Color: tint.Alpha(glowAlpha), At: 0},
+							{Color: tint.Alpha(0), At: 1},
+						},
+					}, 0)
+				})
+			})
+
+			// Layer 2: Real Liquid Glass lens refracting the cover/tint backdrop.
+			glassLens := ui.Box(c.Key("mini-bar-glass")).Absolute().Top(0).Left(0).Right(0).Bottom(0).
+				Radius(rad).PassThrough()
+			if a.glassEnabled() {
+				mat := a.liquidGlass(false, ui.Color{})
+				mat.Tint = pal.bg.Alpha(0.18)
+				glassLens.Material(mat)
+			}
+			glassLens.Draw(func(pt *ui.Painter, r ui.Rect) {
+				// Inner top specular rim + crisp outer glass edge.
+				pt.Stroke(ui.Rect{X: r.X + 0.5, Y: r.Y + 0.5, W: r.W - 1, H: r.H - 1}, rimCol, rad-0.5, 1)
+				pt.Stroke(r, outerBorder, rad, 1)
+				// Cleanly inset rounded progress track along the bottom.
+				const insetX float32 = 20
+				trackRect := ui.Rect{X: r.X + insetX, Y: r.Y + r.H - 7, W: max(0, r.W-insetX*2), H: 3}
+				pt.Fill(trackRect, trackBG, 1.5)
+				if progress > 0 && trackRect.W > 0 {
+					fillW := max(3, trackRect.W*progress)
+					pt.Fill(ui.Rect{X: trackRect.X, Y: trackRect.Y, W: min(trackRect.W, fillW), H: 3}, tint.Alpha(0.90), 1.5)
 				}
 			})
 
-			// Track title & artist.
-			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(2).Justify(ui.Center).Children(func() {
-				title := "暂未播放"
-				artist := appName
-				if cur != nil {
-					title = cmp.Or(cur.Name, "未知歌曲")
-					artist = cmp.Or(cur.ArtistNames(), "未知歌手")
+			// Layer 3: Foreground cover, title/artist, and compact playback controls.
+			ui.Row(c).Fill().AlignItems(ui.Center).Padding(0, 12, 6, 12).Gap(10).Children(func() {
+				artBtn := ui.ButtonBase(c.Key("mini-cover")).Size(50, 50).Shrink(0).Radius(12).
+					Label("打开主窗口").Tooltip("点击打开 Sonora 主窗口")
+				if artBtn.Clicked() {
+					a.showMain()
 				}
-				ui.Text(c, title).FontSize(13.5).FontWeight(600).TextColor(pal.text).SingleLine()
-				ui.Text(c, artist).FontSize(11.5).TextColor(pal.muted).SingleLine()
+				artBtn.Children(func() {
+					if cur != nil && cur.Album.PicURL != "" {
+						a.cover(c, cur.Album.PicURL, 160, 50, 12).Shadow(0, 3, 10, -2, ui.RGBA(0, 0, 0, 0.22))
+					} else {
+						ui.Box(c).Size(50, 50).Radius(12).Center().Background(pal.hover).Children(func() {
+							ui.Icon(c, iconNote).Size(20, 20).TextColor(pal.muted)
+						})
+					}
+				})
+
+				ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(2).Justify(ui.Center).Children(func() {
+					title := "暂未播放"
+					artist := appName
+					if cur != nil {
+						title = cmp.Or(cur.Name, "未知歌曲")
+						artist = cmp.Or(cur.ArtistNames(), "未知歌手")
+					}
+					ui.Text(c, title).FontSize(13.5).FontWeight(600).TextColor(pal.text).SingleLine()
+					ui.Text(c, artist).FontSize(11.5).TextColor(pal.muted).SingleLine()
+				})
+
+				a.miniTransport(c, pal.text, pal.muted, pal.accent, false)
 			})
 
-			// Compact playback controls: shuffle, prev, play/pause, next, repeat.
-			a.miniTransport(c, pal.text, pal.muted, pal.accent, false)
-		})
-
-		// Subtle hover actions on top-right corner: switch to card, open main, close.
-		if hovered {
-			ui.Row(c.Key("mini-bar-actions")).Absolute().Top(4).Right(8).Gap(2).AlignItems(ui.Center).Children(func() {
-				if miniCornerBtn(c.Key("mini-to-card"), iconExpand, pal.muted, "切换为封面方卡").Clicked() {
-					a.setMiniStyle(miniStyleCard)
-				}
-				if miniCornerBtn(c.Key("mini-close"), iconX, pal.muted, "关闭迷你播放器").Clicked() {
+			// Layer 4 (topmost z-order): single clean close button on hover.
+			if hovered {
+				if miniCornerCloseBtn(c.Key("mini-close"), pal.muted).
+					Absolute().Top(6).Right(8).Clicked() {
 					a.setMiniPlayerEnabled(false)
 				}
-			})
-		}
+			}
+		})
 	})
 }
 
 // miniCardView renders the Apple-Music-style square artwork mini player:
-// crisp album cover + bottom title & progress bar at rest, frosted controls on hover.
+// crisp album cover + inset bottom progress track at rest, Liquid Glass
+// floating playback capsule + top-right close button on hover.
 func (a *app) miniCardView(c *ui.Context, pal palette) {
 	cur := a.pl.Current()
 	progress := a.miniProgress(c)
@@ -413,91 +456,122 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 	const rad float32 = 24
 	white := ui.RGB(255, 255, 255)
 	fallbackBG := ui.Hex("#1e2026")
-	if !pal.dark && bmp == nil {
-		fallbackBG = ui.Hex("#262932")
-	}
 
-	card := ui.Box(c.Key("mini-card")).Fill().Radius(rad).Clip().
-		DragWindow().ContextMenu(a.miniMenu).
-		Shadow(0, 12, 28, -6, ui.RGBA(0, 0, 0, 0.36)).
-		Draw(func(pt *ui.Painter, r ui.Rect) {
-			pt.Fill(r, fallbackBG, rad)
-			if bmp == nil {
-				pt.FillRadialGradient(r, ui.RadialGradient{
-					Center: ui.Point{X: 0.35, Y: 0.30},
-					Radius: r.W * 0.75,
-					Stops: []ui.GradientStop{
-						{Color: ui.Hex("#18C964").Alpha(0.28), At: 0},
-						{Color: ui.Hex("#0EA5E9").Alpha(0.14), At: 0.6},
-						{Color: ui.Transparent, At: 1},
-					},
-				}, rad)
-			}
-		})
+	// Outer shell carries only the refined drop shadow (fits comfortably inside miniShadowPad).
+	shell := ui.Box(c.Key("mini-card-shell")).Fill().Radius(rad).
+		Shadow(0, 8, 18, -4, ui.RGBA(0, 0, 0, 0.30))
 
-	hovered := card.Hovered()
-	hoverAlpha := card.AnimateTo("mini-card-hover", boolFloat(hovered), ui.Animation{Duration: 160 * time.Millisecond})
+	hovered := shell.Hovered()
+	hoverAlpha := shell.AnimateTo("mini-card-hover", boolFloat(hovered), ui.Animation{Duration: 150 * time.Millisecond})
 
-	card.Children(func() {
-		if bmp != nil {
-			ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Radius(rad)
-		} else {
-			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Children(func() {
-				ui.Icon(c, iconNote).Size(46, 46).TextColor(white.Alpha(0.32))
+	shell.Children(func() {
+		card := ui.Box(c.Key("mini-card")).Fill().Radius(rad).Clip().
+			DragWindow().ContextMenu(a.miniMenu).
+			Draw(func(pt *ui.Painter, r ui.Rect) {
+				pt.Fill(r, fallbackBG, rad)
+				if bmp == nil {
+					pt.FillRadialGradient(r, ui.RadialGradient{
+						Center: ui.Point{X: 0.35, Y: 0.30},
+						Radius: r.W * 0.75,
+						Stops: []ui.GradientStop{
+							{Color: ui.Hex("#18C964").Alpha(0.28), At: 0},
+							{Color: ui.Hex("#0EA5E9").Alpha(0.14), At: 0.6},
+							{Color: ui.Transparent, At: 1},
+						},
+					}, rad)
+				}
 			})
-		}
 
-		// Bottom readability scrim + full hover veil + progress bar + crisp border.
-		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(pt *ui.Painter, r ui.Rect) {
-			if hoverAlpha > 0.01 {
-				pt.Fill(r, ui.RGBA(12, 13, 18, 0.46*hoverAlpha), rad)
+		card.Children(func() {
+			// Layer 1: Full-bleed album cover.
+			if bmp != nil {
+				ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).Fit(ui.Cover).Radius(rad).PassThrough()
+			} else {
+				ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().PassThrough().Children(func() {
+					ui.Icon(c, iconNote).Size(46, 46).TextColor(white.Alpha(0.32))
+				})
 			}
-			pt.FillGradient(r, ui.LinearGradient{
-				Angle: 180,
-				Stops: []ui.GradientStop{
-					{Color: ui.RGBA(0, 0, 0, 0.14*hoverAlpha), At: 0},
-					{Color: ui.RGBA(0, 0, 0, 0.0), At: 0.40},
-					{Color: ui.RGBA(0, 0, 0, 0.72), At: 1},
-				},
-			}, rad)
-			if progress > 0 {
-				pt.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - 3, W: r.W * progress, H: 3}, white.Alpha(0.88), 1.5)
-			}
-			pt.Stroke(r, white.Alpha(0.16), rad, 1)
-		})
 
-		// Top-right hover actions: switch to bar, open main window, close.
-		if hoverAlpha > 0.05 {
-			ui.Row(c.Key("mini-card-top")).Absolute().Top(8).Right(8).Gap(4).Opacity(hoverAlpha).Children(func() {
-				if miniOverlayBtn(c.Key("card-to-bar"), iconShrink, "切换为经典横条").Clicked() {
-					a.setMiniStyle(miniStyleBar)
+			// Layer 2: Bottom readability scrim, glass rim, and cleanly inset progress track.
+			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(pt *ui.Painter, r ui.Rect) {
+				pt.Clip(r, rad, func() {
+					if hoverAlpha > 0.01 {
+						pt.Fill(r, ui.RGBA(10, 12, 16, 0.28*hoverAlpha), rad)
+					}
+					pt.FillGradient(r, ui.LinearGradient{
+						Angle: 180,
+						Stops: []ui.GradientStop{
+							{Color: ui.RGBA(0, 0, 0, 0.16*hoverAlpha), At: 0},
+							{Color: ui.RGBA(0, 0, 0, 0.0), At: 0.42},
+							{Color: ui.RGBA(0, 0, 0, 0.76), At: 1},
+						},
+					}, rad)
+					// Cleanly inset rounded progress track well clear of the corner curve.
+					const insetX float32 = 16
+					trackRect := ui.Rect{X: r.X + insetX, Y: r.Y + r.H - 11, W: max(0, r.W-insetX*2), H: 3}
+					pt.Fill(trackRect, white.Alpha(0.24), 1.5)
+					if progress > 0 && trackRect.W > 0 {
+						fillW := max(3, trackRect.W*progress)
+						pt.Fill(ui.Rect{X: trackRect.X, Y: trackRect.Y, W: min(trackRect.W, fillW), H: 3}, white.Alpha(0.94), 1.5)
+					}
+				})
+				pt.Stroke(r, white.Alpha(0.22), rad, 1)
+			})
+
+			// Layer 3: Bottom song info (click to open Sonora main window).
+			infoBtn := ui.ButtonBase(c.Key("card-open-main")).Absolute().Left(10).Right(10).Bottom(16).
+				Padding(4, 6).Radius(8).Label("打开主窗口").Tooltip("点击打开 Sonora 主窗口")
+			if infoBtn.Clicked() {
+				a.showMain()
+			}
+			infoBtn.Children(func() {
+				ui.Column(c).Gap(1).Children(func() {
+					title := "暂未播放"
+					artist := appName
+					if cur != nil {
+						title = cmp.Or(cur.Name, "未知歌曲")
+						artist = cmp.Or(cur.ArtistNames(), "未知歌手")
+					}
+					ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(white).SingleLine()
+					ui.Text(c, artist).FontSize(11).TextColor(white.Alpha(0.78)).SingleLine()
+				})
+			})
+
+			// Layer 4: Liquid Glass floating control dock in the center band ONLY
+			// (never overlaps the top-right close button!).
+			if hoverAlpha > 0.05 {
+				ui.Box(c.Key("mini-card-controls")).Absolute().Top(52).Left(8).Right(8).Bottom(56).Center().Opacity(hoverAlpha).Children(func() {
+					dock := ui.Box(c.Key("mini-card-dock")).Radius(999).Padding(6, 10)
+					if a.glassEnabled() {
+						dock.Material(a.liquidGlass(false, ui.RGBA(12, 14, 18, 0.34)))
+					} else {
+						dock.Background(ui.RGBA(16, 18, 24, 0.72)).Border(1, white.Alpha(0.18))
+					}
+					dock.Children(func() {
+						a.miniTransport(c, white, white.Alpha(0.74), tint.Mix(white, 0.40), true)
+					})
+				})
+			}
+
+			// Layer 5 (topmost z-order): single unmistakable Liquid Glass close button.
+			if hoverAlpha > 0.05 {
+				closeBtn := ui.ButtonBase(c.Key("card-close")).Absolute().Top(10).Right(10).
+					Size(24, 24).Center().Radius(999).Opacity(hoverAlpha).
+					TextColor(white).Label("关闭迷你播放器").Tooltip("关闭迷你播放器")
+				if a.glassEnabled() {
+					closeBtn.Material(a.liquidGlass(true, ui.RGBA(0, 0, 0, 0.28)))
+				} else {
+					bg := ui.RGBA(0, 0, 0, 0.48)
+					if closeBtn.Hovered() {
+						bg = ui.RGBA(0, 0, 0, 0.72)
+					}
+					closeBtn.Background(bg)
 				}
-				if miniOverlayBtn(c.Key("card-open"), iconExpand, "打开 Sonora 主窗口").Clicked() {
-					a.showMain()
-				}
-				if miniOverlayBtn(c.Key("card-close"), iconX, "关闭迷你播放器").Clicked() {
+				closeBtn.Children(func() { ui.Icon(c, iconX).Size(11, 11) })
+				if closeBtn.Clicked() {
 					a.setMiniPlayerEnabled(false)
 				}
-			})
-		}
-
-		// Center controls appear smoothly on hover.
-		if hoverAlpha > 0.05 {
-			ui.Box(c.Key("mini-card-controls")).Absolute().Top(0).Left(0).Right(0).Bottom(34).Center().Opacity(hoverAlpha).Children(func() {
-				a.miniTransport(c, white, white.Alpha(0.70), tint.Mix(white, 0.35), true)
-			})
-		}
-
-		// Track title & artist anchored cleanly along the bottom.
-		ui.Column(c).Absolute().Left(12).Right(12).Bottom(10).Gap(1).PassThrough().Children(func() {
-			title := "暂未播放"
-			artist := appName
-			if cur != nil {
-				title = cmp.Or(cur.Name, "未知歌曲")
-				artist = cmp.Or(cur.ArtistNames(), "未知歌手")
 			}
-			ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(white).SingleLine()
-			ui.Text(c, artist).FontSize(11).TextColor(white.Alpha(0.76)).SingleLine()
 		})
 	})
 }
@@ -509,24 +583,12 @@ func boolFloat(v bool) float32 {
 	return 0
 }
 
-func miniCornerBtn(c *ui.Context, icon *ui.SVG, col ui.Color, tip string) ui.Element {
-	b := ui.ButtonBase(c).Size(18, 18).Center().Radius(999).TextColor(col).Label(tip).Tooltip(tip)
+func miniCornerCloseBtn(c *ui.Context, col ui.Color) ui.Element {
+	b := ui.ButtonBase(c).Size(20, 20).Center().Radius(999).TextColor(col).Label("关闭迷你播放器").Tooltip("关闭迷你播放器")
 	if b.Hovered() {
-		b.Background(ui.RGBA(128, 128, 128, 0.18))
+		b.Background(ui.RGBA(128, 128, 128, 0.20))
 	}
-	b.Children(func() { ui.Icon(c, icon).Size(10, 10) })
-	return b
-}
-
-func miniOverlayBtn(c *ui.Context, icon *ui.SVG, tip string) ui.Element {
-	white := ui.RGB(255, 255, 255)
-	b := ui.ButtonBase(c).Size(24, 24).Center().Radius(999).TextColor(white).Label(tip).Tooltip(tip)
-	bg := ui.RGBA(0, 0, 0, 0.42)
-	if b.Hovered() {
-		bg = ui.RGBA(0, 0, 0, 0.66)
-	}
-	b.Background(bg)
-	b.Children(func() { ui.Icon(c, icon).Size(12, 12) })
+	b.Children(func() { ui.Icon(c, iconX).Size(10, 10) })
 	return b
 }
 
@@ -555,7 +617,7 @@ func (a *app) miniTransport(c *ui.Context, color, dim, on ui.Color, cardMode boo
 		bg := ui.Transparent
 		if b.Hovered() {
 			if cardMode {
-				bg = ui.RGBA(255, 255, 255, 0.20)
+				bg = ui.RGBA(255, 255, 255, 0.22)
 			} else {
 				bg = ui.RGBA(128, 128, 128, 0.16)
 			}
@@ -572,34 +634,44 @@ func (a *app) miniTransport(c *ui.Context, color, dim, on ui.Color, cardMode boo
 
 	gap := float32(2)
 	if cardMode {
-		gap = 4
+		gap = 2
 	}
 	ui.Row(c).AlignItems(ui.Center).Gap(gap).Shrink(0).Children(func() {
-		if btn("mini-shuffle", sicon, 13, 28, shuffleCol, stip).Clicked() {
+		btnSize := float32(28)
+		navSize := float32(30)
+		if cardMode {
+			btnSize = 26
+			navSize = 28
+		}
+		if btn("mini-shuffle", sicon, 13, btnSize, shuffleCol, stip).Clicked() {
 			a.cycleShuffle()
 		}
-		if btn("mini-prev", iconPrev, 15, 30, color, "上一首").Clicked() {
+		if btn("mini-prev", iconPrev, 14, navSize, color, "上一首").Clicked() {
 			pl.Prev()
 		}
-		playBox := float32(34)
+		playBox := float32(36)
 		playIconSize := float32(16)
 		if cardMode {
-			playBox = 40
-			playIconSize = 18
+			playBox = 36
+			playIconSize = 17
 		}
 		pb := ui.ButtonBase(c.Key("mini-play")).Size(playBox, playBox).Center().Radius(999).Label("播放/暂停").TextColor(color)
-		playBG := ui.RGBA(128, 128, 128, 0.14)
-		if cardMode {
-			playBG = ui.RGBA(255, 255, 255, 0.24)
-		}
-		if pb.Hovered() {
+		if !cardMode && a.glassEnabled() {
+			pb.Material(a.liquidGlass(true, ui.Color{}))
+		} else {
+			playBG := ui.RGBA(128, 128, 128, 0.14)
 			if cardMode {
-				playBG = ui.RGBA(255, 255, 255, 0.36)
-			} else {
-				playBG = ui.RGBA(128, 128, 128, 0.24)
+				playBG = ui.RGBA(255, 255, 255, 0.22)
 			}
+			if pb.Hovered() {
+				if cardMode {
+					playBG = ui.RGBA(255, 255, 255, 0.34)
+				} else {
+					playBG = ui.RGBA(128, 128, 128, 0.24)
+				}
+			}
+			pb.Background(playBG)
 		}
-		pb.Background(playBG)
 		pose := ui.Pose{}
 		if pb.Pressed() {
 			pose.Scale = 0.90
@@ -609,10 +681,10 @@ func (a *app) miniTransport(c *ui.Context, color, dim, on ui.Color, cardMode boo
 		if pb.Clicked() {
 			pl.TogglePlay()
 		}
-		if btn("mini-next", iconNext, 15, 30, color, "下一首").Clicked() {
+		if btn("mini-next", iconNext, 14, navSize, color, "下一首").Clicked() {
 			pl.Next()
 		}
-		if btn("mini-repeat", ricon, 13, 28, repeatCol, rtip).Clicked() {
+		if btn("mini-repeat", ricon, 13, btnSize, repeatCol, rtip).Clicked() {
 			a.cycleRepeat()
 		}
 	})
