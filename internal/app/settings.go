@@ -174,6 +174,16 @@ type settings struct {
 	// it as music plays on.
 	QuitOnClose bool `json:"quitOnClose"`
 
+	// MiniPlayer shows a compact floating desktop playback controller.
+	MiniPlayer bool `json:"miniPlayer,omitempty"`
+	// MiniStyle picks the mini player layout: "bar" (horizontal) or "card" (square cover).
+	MiniStyle string `json:"miniStyle,omitempty"`
+	// MiniAlwaysOnTop keeps the mini player floating above other windows.
+	MiniAlwaysOnTop bool `json:"miniAlwaysOnTop"`
+	// MiniPosition remembers the last dragged screen position of the mini player.
+	MiniPosition    [2]int `json:"miniPosition,omitempty"`
+	MiniPositionSet bool   `json:"miniPositionSet,omitempty"`
+
 	// CacheMB is how many megabytes the parts of tracks kept on disk may
 	// take; 0 keeps none.
 	CacheMB int `json:"cacheMB"`
@@ -204,6 +214,8 @@ func defaultSettings() settings {
 		CacheMB:             1024,
 		MVLyrics:            true,
 		MVQueue:             true,
+		MiniStyle:           "bar",
+		MiniAlwaysOnTop:     true,
 		AutoUpdate:          true,
 	}
 }

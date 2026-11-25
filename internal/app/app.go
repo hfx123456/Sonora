@@ -276,6 +276,7 @@ type app struct {
 	fusionSaveTimer *time.Timer // debounces settings.save during floating window drag
 	homeFile       string // where what the home page shows is kept, "" to keep none
 	splash         splashState
+	mini           miniState
 }
 
 // playbackChanged follows what the player did to what plays.
@@ -328,6 +329,9 @@ func (a *app) redraw() {
 	}
 	if a.fusion.win != nil && a.settings.FusionMode != "" {
 		a.fusion.win.Invalidate()
+	}
+	if a.mini.win != nil && a.settings.MiniPlayer {
+		a.mini.win.Invalidate()
 	}
 }
 
@@ -536,6 +540,9 @@ func Run() error {
 			a.fusion.manualShow = false
 			a.syncFusionVisibility()
 		}
+		if a.settings.MiniPlayer && shotHook == nil {
+			a.syncMiniPlayer()
+		}
 		if shotHook != nil {
 			shotHook(a)
 		}
@@ -569,6 +576,7 @@ func Run() error {
 			a.fusion.cancel()
 		}
 		a.keepFusionPosition()
+		a.closeMiniPlayer()
 		a.closeSignin()
 		a.closeCloudLoginWindow()
 		a.stopConnectWait(1500 * time.Millisecond)

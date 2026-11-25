@@ -22,6 +22,7 @@ func (a *app) changed() {
 	if a.notch != nil {
 		a.notch.setEnabled(a.settings.Notch)
 	}
+	a.syncMiniPlayer()
 	a.redraw()
 }
 
@@ -202,6 +203,33 @@ func (a *app) settingsPage(c *ui.Context) {
 		group("窗口", func() {
 			row("关闭窗口时退出", "关掉后音乐停止；不打开时，关闭窗口只是收起，音乐接着放", func() {
 				if ui.Switch(c.Key("quit-on-close"), &s.QuitOnClose).Label("关闭窗口时退出").Changed() {
+					a.changed()
+				}
+			})
+		})
+
+		group("迷你播放器", func() {
+			row("显示迷你播放器", "在桌面角落显示小巧的悬浮播控窗，支持自由拖动与右键快捷切换", func() {
+				if ui.Switch(c.Key("mini-player"), &s.MiniPlayer).Label("显示迷你播放器").Changed() {
+					a.changed()
+				}
+			})
+			row("迷你播放器样式", "经典横条紧凑省空间，封面方卡平时展示专辑封面、悬停浮现播控", func() {
+				i := 0
+				if s.effectiveMiniStyle() == miniStyleCard {
+					i = 1
+				}
+				if segmented(c.Key("mini-style"), &i, "经典横条", "封面方卡") {
+					if i == 1 {
+						s.MiniStyle = miniStyleCard
+					} else {
+						s.MiniStyle = miniStyleBar
+					}
+					a.changed()
+				}
+			})
+			row("始终置顶", "开启后迷你播放器始终悬浮在其他窗口上方", func() {
+				if ui.Switch(c.Key("mini-top"), &s.MiniAlwaysOnTop).Label("始终置顶").Disabled(!s.MiniPlayer).Changed() {
 					a.changed()
 				}
 			})
