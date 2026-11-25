@@ -48,10 +48,11 @@ func (a *app) editable(id string) *spotify.Playlist {
 	return nil
 }
 
-// playlistChanged forgets what was loaded of playlist id, which Spotify
-// changed: loaded anew if shown, and the sidebar's covers with it.
+// playlistChanged refreshes playlist id silently in the background while
+// keeping any already-loaded copy visible on screen so opening it never stalls
+// on an empty skeleton.
 func (a *app) playlistChanged(id string) {
-	delete(a.playlists, id)
+	a.savePlaylistCacheAsync(id)
 	a.cachePlaylistSoon(id)
 	if a.route.page == pagePlaylist && a.route.playlist == id {
 		a.requestPlaylist(id, false, true)
@@ -205,6 +206,7 @@ func (a *app) addTo(pid string, tr *spotify.Track) {
 		return
 	}
 	id, gen := tr.ID, a.accountGen
+	added := *tr
 	go func() {
 		err := addToPlaylist(pid, id)
 		a.post(func() {
@@ -214,6 +216,15 @@ func (a *app) addTo(pid string, tr *spotify.Track) {
 			if err != nil {
 				a.toast = "添加失败，请稍后再试"
 				return
+			}
+			if pl := a.playlists[pid]; pl != nil && !slices.ContainsFunc(pl.Tracks, func(t spotify.Track) bool { return t.ID == added.ID }) {
+				next := make([]spotify.Track, 0, len(pl.Tracks)+1)
+				next = append(next, pl.Tracks...)
+				next = append(next, added)
+				pl.Tracks = next
+				if pl.TrackCount < len(next) {
+					pl.TrackCount = len(next)
+				}
 			}
 			a.toast = "已添加到歌单"
 			a.playlistChanged(pid)

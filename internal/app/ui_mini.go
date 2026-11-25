@@ -345,42 +345,43 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 			DragWindow().ContextMenu(a.miniMenu)
 
 		body.Children(func() {
-			// Layer 1: Blurred album cover + frosted atmospheric tint for real depth.
-			if bd != nil {
-				imgOpacity := float32(0.28)
+			// Layer 1 (flow, painted first): blurred album cover + atmospheric color wash.
+			bgBox := ui.Box(c.Key("mini-bar-bg")).Fill().Radius(rad).Clip().PassThrough()
+			bgBox.Draw(func(pt *ui.Painter, r ui.Rect) {
+				pt.Fill(r, baseFill, rad)
+				glowAlpha := float32(0.18)
 				if pal.dark {
-					imgOpacity = 0.42
+					glowAlpha = 0.28
 				}
-				ui.Image(c, bd).Absolute().Top(0).Left(0).Right(0).Bottom(0).
-					Fit(ui.Cover).Radius(rad).Opacity(imgOpacity).PassThrough()
-			}
-			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(pt *ui.Painter, r ui.Rect) {
-				pt.Clip(r, rad, func() {
-					pt.Fill(r, baseFill, rad)
-					glowAlpha := float32(0.14)
+				pt.FillRadialGradient(r, ui.RadialGradient{
+					Center: ui.Point{X: 0.16, Y: 0.45},
+					Radius: r.W * 0.56,
+					Stops: []ui.GradientStop{
+						{Color: tint.Alpha(glowAlpha), At: 0},
+						{Color: tint.Alpha(0), At: 1},
+					},
+				}, rad)
+			})
+			bgBox.Children(func() {
+				if bd != nil {
+					imgOpacity := float32(0.32)
 					if pal.dark {
-						glowAlpha = 0.24
+						imgOpacity = 0.46
 					}
-					pt.FillRadialGradient(r, ui.RadialGradient{
-						Center: ui.Point{X: 0.15, Y: 0.45},
-						Radius: r.W * 0.52,
-						Stops: []ui.GradientStop{
-							{Color: tint.Alpha(glowAlpha), At: 0},
-							{Color: tint.Alpha(0), At: 1},
-						},
-					}, 0)
-				})
+					ui.Image(c, bd).Fill().Fit(ui.Cover).Radius(rad).Opacity(imgOpacity).PassThrough()
+				}
 			})
 
-			// Layer 2: Real Liquid Glass lens refracting the cover/tint backdrop.
-			glassLens := ui.Box(c.Key("mini-bar-glass")).Absolute().Top(0).Left(0).Right(0).Bottom(0).
-				Radius(rad).PassThrough()
+			// Layer 2 (Liquid Glass lens container): refracts Layer 1 behind it,
+			// while all crisp foreground controls live INSIDE its Children.
+			glassCard := ui.Box(c.Key("mini-bar-glass")).Absolute().Top(0).Left(0).Right(0).Bottom(0).
+				Radius(rad).Clip()
 			if a.glassEnabled() {
 				mat := a.liquidGlass(false, ui.Color{})
-				mat.Tint = pal.bg.Alpha(0.18)
-				glassLens.Material(mat)
+				mat.Tint = pal.bg.Alpha(0.26)
+				glassCard.Material(mat)
 			}
-			glassLens.Draw(func(pt *ui.Painter, r ui.Rect) {
+			glassCard.DrawOver(func(pt *ui.Painter, r ui.Rect) {
 				// Inner top specular rim + crisp outer glass edge.
 				pt.Stroke(ui.Rect{X: r.X + 0.5, Y: r.Y + 0.5, W: r.W - 1, H: r.H - 1}, rimCol, rad-0.5, 1)
 				pt.Stroke(r, outerBorder, rad, 1)
@@ -390,48 +391,49 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 				pt.Fill(trackRect, trackBG, 1.5)
 				if progress > 0 && trackRect.W > 0 {
 					fillW := max(3, trackRect.W*progress)
-					pt.Fill(ui.Rect{X: trackRect.X, Y: trackRect.Y, W: min(trackRect.W, fillW), H: 3}, tint.Alpha(0.90), 1.5)
+					pt.Fill(ui.Rect{X: trackRect.X, Y: trackRect.Y, W: min(trackRect.W, fillW), H: 3}, tint.Alpha(0.92), 1.5)
 				}
 			})
+			glassCard.Children(func() {
+				// Foreground cover, title/artist, and compact playback controls — razor sharp!
+				ui.Row(c).Fill().AlignItems(ui.Center).Padding(0, 14, 6, 12).Gap(10).Children(func() {
+					artBtn := ui.ButtonBase(c.Key("mini-cover")).Size(50, 50).Shrink(0).Radius(12).
+						Label("打开主窗口").Tooltip("点击打开 Sonora 主窗口")
+					if artBtn.Clicked() {
+						a.showMain()
+					}
+					artBtn.Children(func() {
+						if cur != nil && cur.Album.PicURL != "" {
+							a.cover(c, cur.Album.PicURL, 160, 50, 12).Shadow(0, 3, 10, -2, ui.RGBA(0, 0, 0, 0.22))
+						} else {
+							ui.Box(c).Size(50, 50).Radius(12).Center().Background(pal.hover).Children(func() {
+								ui.Icon(c, iconNote).Size(20, 20).TextColor(pal.muted)
+							})
+						}
+					})
 
-			// Layer 3: Foreground cover, title/artist, and compact playback controls.
-			ui.Row(c).Fill().AlignItems(ui.Center).Padding(0, 12, 6, 12).Gap(10).Children(func() {
-				artBtn := ui.ButtonBase(c.Key("mini-cover")).Size(50, 50).Shrink(0).Radius(12).
-					Label("打开主窗口").Tooltip("点击打开 Sonora 主窗口")
-				if artBtn.Clicked() {
-					a.showMain()
+					ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(2).Justify(ui.Center).Children(func() {
+						title := "此刻静悄悄的"
+						artist := "选一首歌，让旋律流淌起来"
+						if cur != nil {
+							title = cmp.Or(cur.Name, "未知歌曲")
+							artist = cmp.Or(cur.ArtistNames(), "未知歌手")
+						}
+						ui.Text(c, title).FontSize(13.5).FontWeight(600).TextColor(pal.text).SingleLine()
+						ui.Text(c, artist).FontSize(11.5).TextColor(pal.muted).SingleLine()
+					})
+
+					a.miniTransport(c, pal.text, pal.muted, pal.accent, false)
+				})
+
+				// Topmost z-order inside glassCard: single clean close button on hover.
+				if hovered {
+					if miniCornerCloseBtn(c.Key("mini-close"), pal.muted).
+						Absolute().Top(6).Right(8).Clicked() {
+						a.setMiniPlayerEnabled(false)
+					}
 				}
-				artBtn.Children(func() {
-					if cur != nil && cur.Album.PicURL != "" {
-						a.cover(c, cur.Album.PicURL, 160, 50, 12).Shadow(0, 3, 10, -2, ui.RGBA(0, 0, 0, 0.22))
-					} else {
-						ui.Box(c).Size(50, 50).Radius(12).Center().Background(pal.hover).Children(func() {
-							ui.Icon(c, iconNote).Size(20, 20).TextColor(pal.muted)
-						})
-					}
-				})
-
-				ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(2).Justify(ui.Center).Children(func() {
-					title := "暂未播放"
-					artist := appName
-					if cur != nil {
-						title = cmp.Or(cur.Name, "未知歌曲")
-						artist = cmp.Or(cur.ArtistNames(), "未知歌手")
-					}
-					ui.Text(c, title).FontSize(13.5).FontWeight(600).TextColor(pal.text).SingleLine()
-					ui.Text(c, artist).FontSize(11.5).TextColor(pal.muted).SingleLine()
-				})
-
-				a.miniTransport(c, pal.text, pal.muted, pal.accent, false)
 			})
-
-			// Layer 4 (topmost z-order): single clean close button on hover.
-			if hovered {
-				if miniCornerCloseBtn(c.Key("mini-close"), pal.muted).
-					Absolute().Top(6).Right(8).Clicked() {
-					a.setMiniPlayerEnabled(false)
-				}
-			}
 		})
 	})
 }
@@ -526,8 +528,8 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 			}
 			infoBtn.Children(func() {
 				ui.Column(c).Gap(1).Children(func() {
-					title := "暂未播放"
-					artist := appName
+					title := "此刻静悄悄的"
+					artist := "选一首歌，让旋律流淌起来"
 					if cur != nil {
 						title = cmp.Or(cur.Name, "未知歌曲")
 						artist = cmp.Or(cur.ArtistNames(), "未知歌手")

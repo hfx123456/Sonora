@@ -773,7 +773,7 @@ func (a *app) requestPlaylist(id string, thenPlay, refresh bool) {
 		user = a.profile.UserID
 	}
 	root, generation, epoch, fetch := a.playlistCacheRoot, a.accountGen, accountEpoch(), playlistDetail
-	showCached := !refresh && a.playlists[id] == nil
+	showCached := a.playlists[id] == nil
 	go func() {
 		var cached *playlistSnapshot
 		if showCached {
@@ -819,7 +819,9 @@ func (a *app) requestPlaylist(id string, thenPlay, refresh bool) {
 func (a *app) receivePlaylist(id string, pl *spotify.Playlist, err error, thenPlay bool, asked time.Time) {
 	delete(a.loadingPl, id)
 	if err != nil {
-		a.plErr[id] = "歌单加载失败"
+		if a.playlists[id] == nil {
+			a.plErr[id] = "歌单加载失败"
+		}
 		return
 	}
 	a.playlists[id] = pl

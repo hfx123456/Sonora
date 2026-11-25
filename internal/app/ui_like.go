@@ -2,6 +2,7 @@ package app
 
 import (
 	"math"
+	"slices"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -90,6 +91,8 @@ func (a *app) toggleLike(tr *spotify.Track) {
 	id := libraryID(tr)
 	like := !a.liked[id]
 	a.setLiked(id, like)
+	likedCopy := *tr
+	a.applyLikedPlaylistChange(&likedCopy, id, like)
 	l := &liking{like: like}
 	if a.liking == nil {
 		a.liking = map[string]*liking{}
@@ -106,18 +109,62 @@ func (a *app) toggleLike(tr *spotify.Track) {
 			if err != nil {
 				delete(a.liking, id)
 				a.setLiked(id, !like)
+				a.applyLikedPlaylistChange(&likedCopy, id, !like)
 				a.toast = "操作失败，请稍后再试"
 				return
 			}
 			l.took = time.Now()
-			// The liked songs' playlist changed: load it anew when shown.
-			delete(a.playlists, spotify.LikedURI)
+			// Keep the already-updated in-memory playlist visible immediately
+			// (never wipe it to a slow skeleton), save the updated snapshot,
+			// and reconcile silently in the background.
+			a.savePlaylistCacheAsync(spotify.LikedURI)
 			a.cachePlaylistSoon(spotify.LikedURI)
-			if a.route.page == pagePlaylist && a.route.playlist == spotify.LikedURI {
-				a.loadPlaylist(spotify.LikedURI, false)
-			}
 		})
 	}()
+}
+
+// applyLikedPlaylistChange optimistically adds or removes tr in the in-memory
+// Liked Songs playlist so opening "我喜欢的音乐" is instantaneous instead of
+// dropping back to a slow full-network skeleton reload.
+func (a *app) applyLikedPlaylistChange(tr *spotify.Track, id string, like bool) {
+	pl := a.playlists[spotify.LikedURI]
+	if pl == nil || tr == nil {
+		return
+	}
+	if like {
+		if !slices.ContainsFunc(pl.Tracks, func(t spotify.Track) bool { return libraryID(&t) == id }) {
+			next := make([]spotify.Track, 0, len(pl.Tracks)+1)
+			next = append(next, *tr)
+			next = append(next, pl.Tracks...)
+			pl.Tracks = next
+			if pl.TrackCount < len(next) {
+				pl.TrackCount = len(next)
+			}
+		}
+		return
+	}
+	before := len(pl.Tracks)
+	next := slices.DeleteFunc(slices.Clone(pl.Tracks), func(t spotify.Track) bool { return libraryID(&t) == id })
+	if len(next) != before {
+		pl.Tracks = next
+		if pl.TrackCount > len(next) {
+			pl.TrackCount = len(next)
+		}
+	}
+}
+
+func (a *app) savePlaylistCacheAsync(id string) {
+	if a.playlistCacheRoot == "" || a.profile == nil {
+		return
+	}
+	pl := a.playlists[id]
+	if pl == nil {
+		return
+	}
+	cp := *pl
+	cp.Tracks = slices.Clone(pl.Tracks)
+	root, user, now := a.playlistCacheRoot, a.profile.UserID, time.Now()
+	go savePlaylistSnapshot(root, user, id, &cp, now)
 }
 
 // likeCurrent likes the song playing, or unlikes it, from the keyboard

@@ -1,11 +1,16 @@
 package app
 
 import (
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	"vinyl/internal/spotify"
 )
 
 func TestMiniBoundsDefaultAndClamped(t *testing.T) {
@@ -56,6 +61,21 @@ func TestMiniViewsRenderAndCloseButtonClickable(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.settings.MiniPlayer = true
+	a.pl.Cue([]spotify.Track{{ID: "t1", Name: "东风破", Artists: []spotify.Artist{{Name: "Jay Chou"}}}})
+
+	snapDir := os.Getenv("MINI_SNAP_DIR")
+	saveSnap := func(name string, tt *ui.Tester) {
+		if snapDir == "" {
+			return
+		}
+		_ = os.MkdirAll(snapDir, 0o755)
+		f, err := os.Create(filepath.Join(snapDir, name))
+		if err != nil {
+			t.Fatalf("create snap %s: %v", name, err)
+		}
+		defer f.Close()
+		_ = png.Encode(f, tt.Image())
+	}
 
 	// Horizontal bar mode.
 	a.settings.MiniStyle = miniStyleBar
@@ -73,6 +93,12 @@ func TestMiniViewsRenderAndCloseButtonClickable(t *testing.T) {
 	}
 	// Hover card and click close button.
 	tb.Move(float32(bw)/2, float32(bh)/2)
+	tb.Frame()
+	saveSnap("mini-bar-light.png", tb)
+	tb.SetDark(true)
+	tb.Frame()
+	saveSnap("mini-bar-dark.png", tb)
+	tb.SetDark(false)
 	tb.Frame()
 	if _, ok := tb.Find("关闭迷你播放器"); !ok {
 		t.Fatal("bar mini player missing close button on hover")
@@ -92,6 +118,7 @@ func TestMiniViewsRenderAndCloseButtonClickable(t *testing.T) {
 	tc.Move(float32(cw)/2, float32(ch)/2)
 	tc.Advance(200 * time.Millisecond)
 	tc.Frame()
+	saveSnap("mini-card-hover.png", tc)
 	if _, ok := tc.Find("关闭迷你播放器"); !ok {
 		t.Fatal("card mini player missing close button on hover")
 	}

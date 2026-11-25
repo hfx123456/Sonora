@@ -66,3 +66,36 @@ func TestDefaultSettingsStartupAnimation(t *testing.T) {
 		t.Fatal("StartupAnimation should be enabled by default")
 	}
 }
+
+func TestToggleLikeUpdatesLikedPlaylistWithoutWiping(t *testing.T) {
+	done := make(chan struct{}, 2)
+	prevLike := likeSong
+	likeSong = func(string, bool) error { done <- struct{}{}; return nil }
+	defer func() { likeSong = prevLike }()
+
+	a := newTestApp()
+	a.playlists[spotify.LikedURI] = &spotify.Playlist{
+		ID:         spotify.LikedURI,
+		Name:       "我喜欢的音乐",
+		TrackCount: 1,
+		Tracks:     []spotify.Track{{ID: "old", Name: "Old Song"}},
+	}
+	tr := &spotify.Track{ID: "new", Name: "New Song"}
+
+	a.toggleLike(tr)
+	<-done
+	pl := a.playlists[spotify.LikedURI]
+	if pl == nil {
+		t.Fatal("toggleLike wiped in-memory liked playlist instead of keeping it visible")
+	}
+	if len(pl.Tracks) != 2 || pl.Tracks[0].ID != "new" {
+		t.Fatalf("after like: got %+v, want [new, old]", pl.Tracks)
+	}
+
+	a.toggleLike(tr)
+	<-done
+	pl = a.playlists[spotify.LikedURI]
+	if pl == nil || len(pl.Tracks) != 1 || pl.Tracks[0].ID != "old" {
+		t.Fatalf("after unlike: got %+v, want [old]", pl)
+	}
+}
