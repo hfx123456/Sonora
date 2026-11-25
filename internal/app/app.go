@@ -341,6 +341,10 @@ func readsTraditional(langs []string) bool {
 var shotHook func(a *app)
 
 func (a *app) showMain() {
+	if a.splash.win != nil {
+		a.finishSplash()
+		return
+	}
 	if a.win != nil {
 		a.win.Show()
 		if a.win.IsMinimized() {
@@ -449,11 +453,9 @@ func Run() error {
 		a.played, a.playedFrom = loadPlayed()
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
-		if shotHook == nil && os.Getenv("NM_SCENE") == "" {
-			a.splash.start(time.Now())
-		}
+		useSplash := shotHook == nil && os.Getenv("NM_SCENE") == ""
 		a.win = mygo.NewWindow(mygo.WindowOptions{
-			Hidden:        os.Getenv("NM_SCENE") == "fusion-motion",
+			Hidden:        os.Getenv("NM_SCENE") == "fusion-motion" || useSplash,
 			Title:         appName,
 			Width:         1180,
 			Height:        780,
@@ -472,6 +474,9 @@ func Run() error {
 		})
 		if err := a.win.SetIcon(trayIcon); err != nil {
 			log.Printf("window icon: %v", err)
+		}
+		if useSplash {
+			a.openSplash()
 		}
 		// Music videos play in a web view of the window, which Now Playing
 		// shows where the cover goes.
@@ -547,6 +552,14 @@ func Run() error {
 	})
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
 		a.quitting = true
+		if a.splash.guard != nil {
+			a.splash.guard.Stop()
+			a.splash.guard = nil
+		}
+		if w := a.splash.win; w != nil {
+			a.splash.win = nil
+			w.Close()
+		}
 		if a.fusion.cancel != nil {
 			a.fusion.cancel()
 		}

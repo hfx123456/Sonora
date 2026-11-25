@@ -104,7 +104,6 @@ func (a *app) view(c *ui.Context) {
 		}
 		a.playlistNameDialog(c)
 		a.deletePlaylistDialog(c)
-		a.splashLayer(c)
 	})
 	if a.toast != "" {
 		c.Toast(a.toast)
