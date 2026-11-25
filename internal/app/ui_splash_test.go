@@ -17,8 +17,8 @@ func TestSplashLifecycle(t *testing.T) {
 	if dt, active := s.elapsed(now); !active || dt != 0 {
 		t.Fatalf("at start: got (%v, %v), want (0, true)", dt, active)
 	}
-	if dt, active := s.elapsed(now.Add(1100 * time.Millisecond)); !active || dt < 1.09 || dt > 1.11 {
-		t.Fatalf("mid-animation: got (%v, %v), want (~1.10, true)", dt, active)
+	if dt, active := s.elapsed(now.Add(1500 * time.Millisecond)); !active || dt < 1.49 || dt > 1.51 {
+		t.Fatalf("mid-animation: got (%v, %v), want (~1.50, true)", dt, active)
 	}
 	if _, active := s.elapsed(now.Add(splashTotalDuration)); active {
 		t.Fatal("splash should finish once total duration elapses")
@@ -31,30 +31,27 @@ func TestSplashLifecycle(t *testing.T) {
 	}
 }
 
-func TestSplashMorphRect(t *testing.T) {
-	r0, rad0 := splashMorphRect(1180, 780, 0)
-	if r0.W != 124 || r0.H != 124 || rad0 != 30 {
-		t.Fatalf("at expand=0: got rect=%+v radius=%v, want 124x124 r=30", r0, rad0)
+func TestSplashMainOpacity(t *testing.T) {
+	if op := splashMainOpacity(1.0); op != 0 {
+		t.Fatalf("before reveal: got %v, want 0", op)
 	}
-	if r0.X != (1180-124)/2 || r0.Y != (780-124)/2 {
-		t.Fatalf("at expand=0: expected centered rect, got (%v, %v)", r0.X, r0.Y)
+	if op := splashMainOpacity(2.30); op <= 0.1 || op >= 0.9 {
+		t.Fatalf("mid reveal: got %v, expected smooth transition between 0 and 1", op)
 	}
-
-	r1, rad1 := splashMorphRect(1180, 780, 1)
-	if r1.X != 0 || r1.Y != 0 || r1.W != 1180 || r1.H != 780 || rad1 != 10 {
-		t.Fatalf("at expand=1: got rect=%+v radius=%v, want full 1180x780 r=10", r1, rad1)
+	if op := splashMainOpacity(2.90); op != 1 {
+		t.Fatalf("after reveal: got %v, want 1", op)
 	}
 }
 
 func TestSplashBarBounce(t *testing.T) {
-	if s, a := splashBarBounce(0.10, 0.34); s != 0 || a != 0 {
+	if s, a := splashBarBounce(0.20, 0.96); s != 0 || a != 0 {
 		t.Fatalf("before start: got (%v, %v), want (0, 0)", s, a)
 	}
-	s, a := splashBarBounce(0.60, 0.34)
+	s, a := splashBarBounce(1.30, 0.96)
 	if s <= 0.5 || a < 0.99 {
 		t.Fatalf("during beat: got scale=%v alpha=%v, expected active bounce", s, a)
 	}
-	sEnd, aEnd := splashBarBounce(1.40, 0.34)
+	sEnd, aEnd := splashBarBounce(2.40, 0.96)
 	if sEnd < 0.99 || sEnd > 1.01 || aEnd != 1 {
 		t.Fatalf("settled bar: got scale=%v alpha=%v, want (~1, 1)", sEnd, aEnd)
 	}
