@@ -214,7 +214,7 @@ func (a *app) settingsPage(c *ui.Context) {
 					a.changed()
 				}
 			})
-			row("迷你播放器样式", "紧凑长条平时极简、悬停切换播控；封面卡片采用上图下文分体布局，完整展示封面", func() {
+			row("迷你播放器样式", "紧凑长条平时极简、悬停切换播控；封面卡片采用上图下文分体布局，自动同步应用浅色/黑夜外观", func() {
 				i := 0
 				if s.effectiveMiniStyle() == miniStyleCard {
 					i = 1
@@ -225,20 +225,6 @@ func (a *app) settingsPage(c *ui.Context) {
 					} else {
 						s.MiniStyle = miniStyleBar
 					}
-					a.changed()
-				}
-			})
-			row("迷你播放器外观", "可独立切换浅色或黑夜模式，也可默认跟随主窗口外观", func() {
-				modes := []string{miniThemeAuto, miniThemeLight, miniThemeDark}
-				i := 0
-				cur := s.effectiveMiniTheme()
-				for k, m := range modes {
-					if m == cur {
-						i = k
-					}
-				}
-				if segmented(c.Key("mini-theme"), &i, "跟随应用", "浅色", "深色") {
-					s.MiniTheme = modes[i]
 					a.changed()
 				}
 			})

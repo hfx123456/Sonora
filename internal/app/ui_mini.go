@@ -16,10 +16,6 @@ const (
 	miniStyleBar  = "bar"
 	miniStyleCard = "card"
 
-	miniThemeAuto  = "auto"
-	miniThemeLight = "light"
-	miniThemeDark  = "dark"
-
 	// Generous transparent margin so rounded elevation shadows decay cleanly
 	// to zero well inside the frameless window (preventing rectangular clipping).
 	miniShadowPad = 24
@@ -180,26 +176,6 @@ func (s settings) effectiveMiniStyle() string {
 	return miniStyleBar
 }
 
-func (s settings) effectiveMiniTheme() string {
-	switch s.MiniTheme {
-	case miniThemeLight, miniThemeDark:
-		return s.MiniTheme
-	default:
-		return miniThemeAuto
-	}
-}
-
-func (s settings) miniDark(systemDark bool) bool {
-	switch s.effectiveMiniTheme() {
-	case miniThemeDark:
-		return true
-	case miniThemeLight:
-		return false
-	default:
-		return systemDark
-	}
-}
-
 func miniWindowSize(style string) (w, h int) {
 	if style == miniStyleCard {
 		return miniCardW + miniShadowPad*2, miniCardH + miniShadowPad*2
@@ -357,31 +333,6 @@ func (a *app) setMiniStyle(style string) {
 	a.redraw()
 }
 
-func (a *app) setMiniTheme(theme string) {
-	switch theme {
-	case miniThemeLight, miniThemeDark:
-	default:
-		theme = miniThemeAuto
-	}
-	if a.settings.effectiveMiniTheme() == theme {
-		return
-	}
-	a.settings.MiniTheme = theme
-	a.settings.save()
-	if a.mini.win != nil {
-		a.mini.win.Invalidate()
-	}
-	a.redraw()
-}
-
-func (a *app) toggleMiniDark(currentlyDark bool) {
-	if currentlyDark {
-		a.setMiniTheme(miniThemeLight)
-	} else {
-		a.setMiniTheme(miniThemeDark)
-	}
-}
-
 func (a *app) toggleMiniAlwaysOnTop() {
 	a.settings.MiniAlwaysOnTop = !a.settings.MiniAlwaysOnTop
 	a.settings.save()
@@ -436,17 +387,6 @@ func (a *app) miniMenu(menu *ui.Menu) {
 		a.setMiniStyle(miniStyleCard)
 	}
 	menu.Separator()
-	theme := a.settings.effectiveMiniTheme()
-	if menu.Item("外观：跟随应用").Checked(theme == miniThemeAuto).Chosen() {
-		a.setMiniTheme(miniThemeAuto)
-	}
-	if menu.Item("外观：浅色模式").Checked(theme == miniThemeLight).Chosen() {
-		a.setMiniTheme(miniThemeLight)
-	}
-	if menu.Item("外观：黑夜模式").Checked(theme == miniThemeDark).Chosen() {
-		a.setMiniTheme(miniThemeDark)
-	}
-	menu.Separator()
 	if menu.Item("始终置顶").Checked(a.settings.MiniAlwaysOnTop).Chosen() {
 		a.toggleMiniAlwaysOnTop()
 	}
@@ -461,7 +401,6 @@ func (a *app) miniMenu(menu *ui.Menu) {
 
 func (a *app) miniView(c *ui.Context) {
 	t := *c.Theme()
-	t.Dark = a.settings.miniDark(t.Dark)
 	pal := paletteFor(&t)
 	t.Accent, t.AccentText = pal.accent, pal.onAccent
 	t.Font = appFont
@@ -542,7 +481,7 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 			})
 
 		body.Children(func() {
-			ui.Row(c).Fill().AlignItems(ui.Center).Padding(0, 8, 0, 8).Gap(10).Children(func() {
+			ui.Row(c).Fill().AlignItems(ui.Center).Padding(0, 8, 0, 8).Gap(10).DragWindow().Children(func() {
 				// Left: 40×40 crisp rounded album artwork (click opens Sonora main window).
 				artBtn := ui.ButtonBase(c.Key("mini-cover")).Size(40, 40).Shrink(0).Radius(8).
 					Label("打开主窗口").Tooltip("点击打开 Sonora 主窗口")
@@ -561,17 +500,14 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 
 				// Center: Apple Music signature crossfade — centered title/artist at rest,
 				// in-place playback controls on hover, with slim comet progress bar anchored underneath.
-				ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Height(44).Justify(ui.SpaceBetween).Children(func() {
-					stage := ui.Box(c.Key("mini-bar-stage")).Grow(1).WidthPercent(100)
+				ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Height(44).Justify(ui.SpaceBetween).DragWindow().Children(func() {
+					stage := ui.Box(c.Key("mini-bar-stage")).Grow(1).WidthPercent(100).DragWindow()
 					stage.Children(func() {
-						// Resting layer: centered title & artist.
+						// Resting layer: centered title & artist (pass-through so dragging works anywhere).
 						restAlpha := 1 - hoverAlpha
 						if restAlpha > 0.02 {
 							rest := ui.Column(c.Key("mini-bar-meta")).Absolute().Top(0).Left(0).Right(0).Bottom(0).
-								Center().Gap(1).Opacity(restAlpha)
-							if hoverAlpha > 0.35 {
-								rest.PassThrough()
-							}
+								Center().Gap(1).Opacity(restAlpha).PassThrough()
 							rest.Children(func() {
 								title := "此刻静悄悄的"
 								artist := "选一首歌，让旋律流淌起来"
@@ -587,7 +523,7 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 						// Hover layer: crisp borderless transport controls in-place.
 						if hoverAlpha > 0.02 {
 							ctrl := ui.Box(c.Key("mini-bar-ctrls")).Absolute().Top(0).Left(0).Right(0).Bottom(0).
-								Center().Opacity(hoverAlpha)
+								Center().Opacity(hoverAlpha).DragWindow()
 							if hoverAlpha < 0.2 {
 								ctrl.PassThrough()
 							}
@@ -602,19 +538,9 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 						WidthPercent(100)
 				})
 
-				// Right: crisp minimal icon strip (dark/light toggle, expand to card, close).
+				// Right: crisp minimal 2-icon strip (expand to card, close).
 				ui.Row(c).AlignItems(ui.Center).Gap(2).Shrink(0).Children(func() {
-					themeIcon := iconMoon
-					themeTip := "切换黑夜模式"
-					if pal.dark {
-						themeIcon = iconSun
-						themeTip = "切换浅色模式"
-					}
 					iconAlpha := float32(0.72) + 0.28*hoverAlpha
-					if miniActionBtn(c.Key("mini-theme-toggle"), themeIcon, 13, 22, pal.muted, pal.text, pal.hover, themeTip).
-						Opacity(iconAlpha).Clicked() {
-						a.toggleMiniDark(pal.dark)
-					}
 					if miniActionBtn(c.Key("mini-to-card"), iconExpand, 12.5, 22, pal.muted, pal.text, pal.hover, "展开为封面卡片").
 						Opacity(iconAlpha).Clicked() {
 						a.setMiniStyle(miniStyleCard)
@@ -693,10 +619,11 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 
 		card.Children(func() {
 			ui.Column(c).Fill().Children(func() {
-				// Top: Full-bleed unobstructed album artwork.
-				artZone := ui.Box(c.Key("mini-card-art")).WidthPercent(100).Height(miniCardArtH).Clip().
+				// Top: Full-bleed unobstructed album artwork (rounded top corners,
+				// directly draggable across the entire cover).
+				artZone := ui.Box(c.Key("mini-card-art")).WidthPercent(100).Height(miniCardArtH).
+					Radius(rad, rad, 0, 0).Clip().Background(artBG).DragWindow().
 					Draw(func(pt *ui.Painter, r ui.Rect) {
-						pt.Fill(r, artBG, 0)
 						if bmp == nil {
 							accentAlpha := float32(0.18)
 							if pal.dark {
@@ -715,25 +642,18 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 					})
 
 				artZone.Children(func() {
-					// Clicking artwork opens Sonora main window.
-					artClick := ui.ButtonBase(c.Key("card-open-main")).Absolute().Top(0).Left(0).Right(0).Bottom(0).
-						Label("打开主窗口").Tooltip("点击打开 Sonora 主窗口")
-					if artClick.Clicked() {
-						a.showMain()
+					if bmp != nil {
+						ui.Image(c, bmp).Absolute().Top(0).Left(0).Right(0).Bottom(0).
+							Fit(ui.Cover).Radius(rad, rad, 0, 0).PassThrough()
+					} else {
+						ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().PassThrough().Children(func() {
+							noteCol := pal.muted
+							if pal.dark {
+								noteCol = white.Alpha(0.36)
+							}
+							ui.Icon(c, iconNote).Size(44, 44).TextColor(noteCol)
+						})
 					}
-					artClick.Children(func() {
-						if bmp != nil {
-							ui.Image(c, bmp).Fill().Fit(ui.Cover).PassThrough()
-						} else {
-							ui.Box(c).Fill().Center().PassThrough().Children(func() {
-								noteCol := pal.muted
-								if pal.dark {
-									noteCol = white.Alpha(0.36)
-								}
-								ui.Icon(c, iconNote).Size(44, 44).TextColor(noteCol)
-							})
-						}
-					})
 
 					// Hover-only frosted floating toolbar in the top-right corner of artwork.
 					if hoverAlpha > 0.05 {
@@ -741,15 +661,6 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 							AlignItems(ui.Center).Gap(2).Padding(3, 5).Radius(999).Opacity(hoverAlpha).
 							Background(ui.RGBA(18, 18, 22, 0.64)).Border(0.5, white.Alpha(0.16))
 						pill.Children(func() {
-							themeIcon := iconMoon
-							themeTip := "切换黑夜模式"
-							if pal.dark {
-								themeIcon = iconSun
-								themeTip = "切换浅色模式"
-							}
-							if miniActionBtn(c.Key("card-theme-toggle"), themeIcon, 12.5, 22, white.Alpha(0.86), white, white.Alpha(0.18), themeTip).Clicked() {
-								a.toggleMiniDark(pal.dark)
-							}
 							if miniActionBtn(c.Key("card-to-bar"), iconShrink, 12.5, 22, white.Alpha(0.86), white, white.Alpha(0.18), "收起为紧凑长条").Clicked() {
 								a.setMiniStyle(miniStyleBar)
 							}
@@ -760,8 +671,10 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 					}
 				})
 
-				// Bottom: Dedicated Apple Music control deck (clean Light or Dark panel).
+				// Bottom: Dedicated Apple Music control deck (clean Light or Dark panel,
+				// rounded bottom corners, empty regions also draggable).
 				deck := ui.Column(c.Key("mini-card-deck")).WidthPercent(100).Height(miniCardFootH).
+					Radius(0, 0, rad, rad).Clip().DragWindow().
 					Padding(10, 14, 10, 14).Justify(ui.SpaceBetween).
 					Draw(func(pt *ui.Painter, r ui.Rect) {
 						pt.FillGradient(r, ui.LinearGradient{

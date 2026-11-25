@@ -1,6 +1,9 @@
 package app
 
 import (
+	"bytes"
+	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -12,6 +15,30 @@ import (
 
 	"vinyl/internal/spotify"
 )
+
+func testCoverBitmap(t *testing.T) *ui.Bitmap {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 120, 120))
+	for y := 0; y < 120; y++ {
+		for x := 0; x < 120; x++ {
+			img.SetRGBA(x, y, color.RGBA{
+				R: uint8(190 + x/3),
+				G: uint8(45 + y/2),
+				B: uint8(75 + (x+y)/4),
+				A: 255,
+			})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode test cover: %v", err)
+	}
+	bmp, err := ui.DecodeBitmap(buf.Bytes())
+	if err != nil {
+		t.Fatalf("decode test cover: %v", err)
+	}
+	return bmp
+}
 
 func TestMiniBoundsDefaultAndClamped(t *testing.T) {
 	primary := mygo.Display{
@@ -40,27 +67,13 @@ func TestMiniBoundsDefaultAndClamped(t *testing.T) {
 	}
 }
 
-func TestMiniSettingsDefaultsAndThemeResolution(t *testing.T) {
+func TestMiniSettingsDefaults(t *testing.T) {
 	s := defaultSettings()
 	if s.MiniPlayer {
 		t.Fatal("MiniPlayer should be off by default until enabled in settings")
 	}
 	if s.effectiveMiniStyle() != miniStyleBar {
 		t.Fatalf("default mini style=%q, want %q", s.effectiveMiniStyle(), miniStyleBar)
-	}
-	if s.effectiveMiniTheme() != miniThemeAuto {
-		t.Fatalf("default mini theme=%q, want %q", s.effectiveMiniTheme(), miniThemeAuto)
-	}
-	if s.miniDark(false) || !s.miniDark(true) {
-		t.Fatal("auto mini theme should follow system/app dark flag")
-	}
-	s.MiniTheme = miniThemeDark
-	if !s.miniDark(false) || !s.miniDark(true) {
-		t.Fatal("dark mini theme should force dark mode")
-	}
-	s.MiniTheme = miniThemeLight
-	if s.miniDark(false) || s.miniDark(true) {
-		t.Fatal("light mini theme should force light mode")
 	}
 	if !s.MiniAlwaysOnTop {
 		t.Fatal("MiniAlwaysOnTop should default to true")
@@ -92,14 +105,17 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 		_ = png.Encode(f, tt.Image())
 	}
 
-	// 1. Apple Music Compact Bar: resting state shows title/artist; hover reveals transport.
+	// 1. Apple Music Compact Bar: resting state shows title/artist; hover reveals transport;
+	// follows the app's Light / Dark appearance automatically.
 	a.settings.MiniStyle = miniStyleBar
-	a.settings.MiniTheme = miniThemeLight
 	bw, bh := miniWindowSize(miniStyleBar)
 	tb := ui.NewTester(a.miniView, bw, bh)
 	tb.Frame()
 	if !tb.HasText("The first ending") {
 		t.Fatal("bar mini player missing track title at rest")
+	}
+	if _, ok := tb.Find("切换黑夜模式"); ok {
+		t.Fatal("bar mini player should follow app theme without a separate dark-mode toggle button")
 	}
 	saveSnap("mini-bar-light-rest.png", tb)
 
@@ -118,14 +134,9 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	}
 	saveSnap("mini-bar-light-hover.png", tb)
 
-	// One-click Dark Mode toggle right on the compact bar.
-	if err := tb.Click("切换黑夜模式"); err != nil {
-		t.Fatalf("bar dark mode toggle missing: %v", err)
-	}
+	// App switches to Dark Mode -> mini bar syncs automatically.
+	tb.SetDark(true)
 	tb.Frame()
-	if a.settings.effectiveMiniTheme() != miniThemeDark {
-		t.Fatalf("mini theme after toggle = %q, want %q", a.settings.effectiveMiniTheme(), miniThemeDark)
-	}
 	saveSnap("mini-bar-dark-hover.png", tb)
 
 	// Move pointer off bar to capture dark resting state.
@@ -154,12 +165,19 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 		t.Fatal("clicking bar close button did not close mini player")
 	}
 
-	// 2. Apple Music Split Cover Card: light & dark modes + always-accessible transport + hover toolbar.
+	// 2. Apple Music Split Cover Card: syncs with app Dark/Light theme + always-accessible transport + hover toolbar.
+	// Also populate a real square cover bitmap to verify rounded top corners (no sharp 90° bleed).
+	coverURL := "https://example.invalid/cover.png"
+	bmp := testCoverBitmap(t)
+	a.art.art[spotify.Sized(coverURL, 460)] = &artwork{bmp: bmp, tint: ui.Hex("#e5484d"), used: time.Now()}
+	a.art.art[spotify.Sized(coverURL, 120)] = &artwork{bmp: bmp, tint: ui.Hex("#e5484d"), used: time.Now()}
+	a.pl.Cue([]spotify.Track{{ID: "t1", Name: "The first ending", Artists: []spotify.Artist{{Name: "MYTH & ROID"}}, Album: spotify.Album{PicURL: coverURL}, Duration: 240000}})
+	a.pl.Hold(145 * time.Second)
 	a.settings.MiniPlayer = true
 	a.settings.MiniStyle = miniStyleCard
-	a.settings.MiniTheme = miniThemeDark
 	cw, ch := miniWindowSize(miniStyleCard)
 	tc := ui.NewTester(a.miniView, cw, ch)
+	tc.SetDark(true)
 	tc.Frame()
 	if _, ok := tc.Find("播放/暂停"); !ok {
 		t.Fatal("split card missing always-visible play/pause button in bottom deck")
@@ -167,22 +185,26 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	if !tc.HasText("The first ending") {
 		t.Fatal("split card missing track title in bottom deck")
 	}
+	// Verify top-left corner of the cover image is rounded (not filled with solid opaque cover red).
+	img := tc.Image()
+	r, _, _, _ := img.At(miniShadowPad+1, miniShadowPad+1).RGBA()
+	if r>>8 > 140 {
+		t.Fatalf("split card top-left corner was not rounded; red channel at corner=%d", r>>8)
+	}
 	saveSnap("mini-card-dark-rest.png", tc)
 
-	// Hover card -> top-right frosted toolbar appears with theme, collapse, and close buttons.
+	// Hover card -> top-right frosted toolbar appears with collapse and close buttons.
 	tc.Move(float32(cw)/2, float32(ch)/2)
 	tc.Advance(200 * time.Millisecond)
 	tc.Frame()
+	if _, ok := tc.Find("切换浅色模式"); ok {
+		t.Fatal("card mini player should follow app theme without a separate theme toggle button")
+	}
 	saveSnap("mini-card-dark-hover.png", tc)
 
-	// Toggle from dark to light right from card toolbar.
-	if err := tc.Click("切换浅色模式"); err != nil {
-		t.Fatalf("card light mode toggle missing on hover: %v", err)
-	}
+	// App switches back to Light Mode -> split card syncs automatically.
+	tc.SetDark(false)
 	tc.Frame()
-	if a.settings.effectiveMiniTheme() != miniThemeLight {
-		t.Fatalf("card mini theme after toggle = %q, want %q", a.settings.effectiveMiniTheme(), miniThemeLight)
-	}
 	saveSnap("mini-card-light-hover.png", tc)
 
 	if err := tc.Click("关闭迷你播放器"); err != nil {
