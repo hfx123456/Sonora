@@ -66,8 +66,8 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/island-floating.webp" alt="Draggable floating Dynamic Island"><br><b>Floating Island</b>: Dragged away from the top edge or onto another monitor.</td>
-    <td width="50%"><img src="docs/screenshots/fusion-locked-unlock.webp" alt="Locked desktop lyrics with unlock pill"><br><b>Quick Unlock Pill</b>: Appears on hover/click while keeping lyrics click-through.</td>
+    <td width="50%"><img src="docs/screenshots/island-floating.png" alt="Draggable floating Dynamic Island"><br><b>Floating Island</b>: Dragged away from the top edge or onto another monitor.</td>
+    <td width="50%"><img src="docs/screenshots/fusion-locked-unlock.png" alt="Locked desktop lyrics with unlock pill"><br><b>Quick Unlock Pill</b>: Appears on hover/click while keeping lyrics click-through.</td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/island.webp" alt="Top-edge Dynamic Island"><br><b>Top-Edge Island</b>: Attached cleanly to the display's physical top with live spectrum bars.</td>
@@ -84,7 +84,7 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/playlist-covers.webp" alt="Playlist with unified per-row album covers"><br><b>Unified Track Covers (Toggleable)</b>: Consistent per-row album thumbnails across all lists.</td>
+    <td width="50%"><img src="docs/screenshots/playlist-covers.png" alt="Playlist with unified per-row album covers"><br><b>Unified Track Covers (Toggleable)</b>: Consistent per-row album thumbnails across all lists.</td>
     <td width="50%"><img src="docs/screenshots/playlist-search.webp" alt="Sticky playlist search"><br><b>Sticky Capsule Search</b>: Fast multi-term filtering while preserving the full playback queue.</td>
   </tr>
 </table>

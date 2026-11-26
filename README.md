@@ -93,8 +93,8 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/island-floating.webp" alt="可拖动悬浮灵动岛"><br><b>悬浮灵动岛</b>：拖离顶部或拖至副屏后自动切换为独立圆角胶囊。</td>
-    <td width="50%"><img src="docs/screenshots/fusion-locked-unlock.webp" alt="锁定点击穿透态悬停浮出解锁按钮"><br><b>锁定态一键解锁</b>：保持点击穿透，移入或点击自动浮出「解锁」按钮。</td>
+    <td width="50%"><img src="docs/screenshots/island-floating.png" alt="可拖动悬浮灵动岛"><br><b>悬浮灵动岛</b>：拖离顶部或拖至副屏后自动切换为独立圆角胶囊。</td>
+    <td width="50%"><img src="docs/screenshots/fusion-locked-unlock.png" alt="锁定点击穿透态悬停浮出解锁按钮"><br><b>锁定态一键解锁</b>：保持点击穿透，移入或点击自动浮出「解锁」按钮。</td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/island.webp" alt="贴顶灵动岛与彩色音频频谱"><br><b>贴顶灵动岛</b>：紧贴屏幕顶部边缘，集成动态音波柱与双语字幕。</td>
@@ -115,7 +115,7 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/playlist-covers.webp" alt="统一显示专辑封面的歌单列表"><br><b>统一专辑封面（可开关）</b>：歌单与我喜欢的音乐默认展示每首歌的专辑缩略图。</td>
+    <td width="50%"><img src="docs/screenshots/playlist-covers.png" alt="统一显示专辑封面的歌单列表"><br><b>统一专辑封面（可开关）</b>：歌单与我喜欢的音乐默认展示每首歌的专辑缩略图。</td>
     <td width="50%"><img src="docs/screenshots/playlist-search.webp" alt="吸顶胶囊搜索框与歌单排序"><br><b>吸顶胶囊搜索</b>：简繁匹配、空格多词筛选与一致的歌单排序。</td>
   </tr>
 </table>
