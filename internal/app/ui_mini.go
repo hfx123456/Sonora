@@ -320,6 +320,12 @@ func (a *app) setMiniPlayerEnabled(on bool) {
 	a.redraw()
 }
 
+// restoreMainFromMini switches back from mini mode to the normal main window.
+func (a *app) restoreMainFromMini() {
+	a.setMiniPlayerEnabled(false)
+	a.showMain()
+}
+
 func (a *app) setMiniStyle(style string) {
 	if style != miniStyleCard {
 		style = miniStyleBar
@@ -538,12 +544,12 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 						WidthPercent(100)
 				})
 
-				// Right: crisp minimal 2-icon strip (expand to card, close).
+				// Right: crisp minimal 2-icon strip (restore main window, close mini player).
 				ui.Row(c).AlignItems(ui.Center).Gap(2).Shrink(0).Children(func() {
 					iconAlpha := float32(0.72) + 0.28*hoverAlpha
-					if miniActionBtn(c.Key("mini-to-card"), iconExpand, 12.5, 22, pal.muted, pal.text, pal.hover, "展开为封面卡片").
+					if miniActionBtn(c.Key("mini-restore-main"), iconExpand, 12.5, 22, pal.muted, pal.text, pal.hover, "返回主窗口").
 						Opacity(iconAlpha).Clicked() {
-						a.setMiniStyle(miniStyleCard)
+						a.restoreMainFromMini()
 					}
 					closeAlpha := float32(0.45) + 0.55*hoverAlpha
 					if miniActionBtn(c.Key("mini-close"), iconX, 11.5, 22, pal.muted, pal.text, pal.hover, "关闭迷你播放器").
@@ -661,8 +667,8 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 							AlignItems(ui.Center).Gap(2).Padding(3, 5).Radius(999).Opacity(hoverAlpha).
 							Background(ui.RGBA(18, 18, 22, 0.64)).Border(0.5, white.Alpha(0.16))
 						pill.Children(func() {
-							if miniActionBtn(c.Key("card-to-bar"), iconShrink, 12.5, 22, white.Alpha(0.86), white, white.Alpha(0.18), "收起为紧凑长条").Clicked() {
-								a.setMiniStyle(miniStyleBar)
+							if miniActionBtn(c.Key("card-restore-main"), iconExpand, 12.5, 22, white.Alpha(0.86), white, white.Alpha(0.18), "返回主窗口").Clicked() {
+								a.restoreMainFromMini()
 							}
 							if miniActionBtn(c.Key("card-close"), iconX, 11.5, 22, white.Alpha(0.86), white, white.Alpha(0.18), "关闭迷你播放器").Clicked() {
 								a.setMiniPlayerEnabled(false)

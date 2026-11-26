@@ -145,16 +145,17 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	tb.Frame()
 	saveSnap("mini-bar-dark-rest.png", tb)
 
-	// Click expand-to-card button.
-	if err := tb.Click("展开为封面卡片"); err != nil {
-		t.Fatalf("expand-to-card button missing: %v", err)
+	// Click restore-main button -> exits mini mode back to normal main window.
+	if err := tb.Click("返回主窗口"); err != nil {
+		t.Fatalf("restore-main button missing: %v", err)
 	}
 	tb.Frame()
-	if a.settings.effectiveMiniStyle() != miniStyleCard {
-		t.Fatalf("mini style after expand = %q, want %q", a.settings.effectiveMiniStyle(), miniStyleCard)
+	if a.settings.MiniPlayer {
+		t.Fatal("clicking restore-main button should exit mini player back to normal mode")
 	}
 
 	// Click close button back in bar mode.
+	a.settings.MiniPlayer = true
 	a.settings.MiniStyle = miniStyleBar
 	tb.Frame()
 	if err := tb.Click("关闭迷你播放器"); err != nil {
@@ -207,6 +208,16 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	tc.Frame()
 	saveSnap("mini-card-light-hover.png", tc)
 
+	if err := tc.Click("返回主窗口"); err != nil {
+		t.Fatalf("card restore-main button missing on hover: %v", err)
+	}
+	tc.Frame()
+	if a.settings.MiniPlayer {
+		t.Fatal("clicking card restore-main button should exit mini player back to normal mode")
+	}
+
+	a.settings.MiniPlayer = true
+	tc.Frame()
 	if err := tc.Click("关闭迷你播放器"); err != nil {
 		t.Fatalf("card close button missing on hover: %v", err)
 	}
