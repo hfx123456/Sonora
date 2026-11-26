@@ -101,10 +101,22 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	a.settings.MiniPlayer = true
 	coverURL := "https://example.invalid/cover.png"
 	bmp := testCoverBitmap(t)
-	for _, sz := range []int{120, 160, 240, 460} {
-		a.art.art[spotify.Sized(coverURL, sz)] = &artwork{bmp: bmp, tint: ui.Hex("#e5484d"), used: time.Now()}
+	tint := ui.Hex("#e5484d")
+	if h := os.Getenv("MINI_SNAP_TINT"); h != "" {
+		tint = ui.Hex(h)
 	}
-	a.pl.Cue([]spotify.Track{{ID: "t1", Name: "The first ending", Artists: []spotify.Artist{{Name: "MYTH & ROID"}}, Album: spotify.Album{PicURL: coverURL}, Duration: 240000}})
+	for _, sz := range []int{120, 160, 240, 460} {
+		a.art.art[spotify.Sized(coverURL, sz)] = &artwork{bmp: bmp, tint: tint, used: time.Now()}
+	}
+	trackName := "The first ending"
+	if v := os.Getenv("MINI_SNAP_TITLE"); v != "" {
+		trackName = v
+	}
+	artistName := "MYTH & ROID"
+	if v := os.Getenv("MINI_SNAP_ARTIST"); v != "" {
+		artistName = v
+	}
+	a.pl.Cue([]spotify.Track{{ID: "t1", Name: trackName, Artists: []spotify.Artist{{Name: artistName}}, Album: spotify.Album{PicURL: coverURL}, Duration: 240000}})
 	a.pl.Hold(145 * time.Second)
 
 	snapDir := os.Getenv("MINI_SNAP_DIR")
@@ -127,7 +139,7 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	bw, bh := miniWindowSize(miniStyleBar)
 	tb := ui.NewTester(a.miniView, bw, bh)
 	tb.Frame()
-	if !tb.HasText("The first ending") {
+	if !tb.HasText(trackName) {
 		t.Fatal("bar mini player missing track title at rest")
 	}
 	if _, ok := tb.Find("切换黑夜模式"); ok {
@@ -192,7 +204,7 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	if _, ok := tc.Find("播放/暂停"); !ok {
 		t.Fatal("split card missing always-visible play/pause button in bottom deck")
 	}
-	if !tc.HasText("The first ending") {
+	if !tc.HasText(trackName) {
 		t.Fatal("split card missing track title in bottom deck")
 	}
 	// Verify top-left corner of the cover image is rounded (not filled with solid opaque cover red).
