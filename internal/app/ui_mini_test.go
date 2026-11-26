@@ -18,6 +18,17 @@ import (
 
 func testCoverBitmap(t *testing.T) *ui.Bitmap {
 	t.Helper()
+	if p := os.Getenv("MINI_SNAP_COVER"); p != "" {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read MINI_SNAP_COVER: %v", err)
+		}
+		bmp, err := ui.DecodeBitmap(b)
+		if err != nil {
+			t.Fatalf("decode MINI_SNAP_COVER: %v", err)
+		}
+		return bmp
+	}
 	img := image.NewRGBA(image.Rect(0, 0, 120, 120))
 	for y := 0; y < 120; y++ {
 		for x := 0; x < 120; x++ {
@@ -88,7 +99,12 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.settings.MiniPlayer = true
-	a.pl.Cue([]spotify.Track{{ID: "t1", Name: "The first ending", Artists: []spotify.Artist{{Name: "MYTH & ROID"}}, Duration: 240000}})
+	coverURL := "https://example.invalid/cover.png"
+	bmp := testCoverBitmap(t)
+	for _, sz := range []int{120, 160, 240, 460} {
+		a.art.art[spotify.Sized(coverURL, sz)] = &artwork{bmp: bmp, tint: ui.Hex("#e5484d"), used: time.Now()}
+	}
+	a.pl.Cue([]spotify.Track{{ID: "t1", Name: "The first ending", Artists: []spotify.Artist{{Name: "MYTH & ROID"}}, Album: spotify.Album{PicURL: coverURL}, Duration: 240000}})
 	a.pl.Hold(145 * time.Second)
 
 	snapDir := os.Getenv("MINI_SNAP_DIR")
@@ -119,8 +135,8 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	}
 	saveSnap("mini-bar-light-rest.png", tb)
 
-	// Hover center of compact bar -> transport controls crossfade in.
-	tb.Move(float32(bw)/2, float32(bh)/2)
+	// Hover inside compact bar (avoiding center button so icons stay crisp) -> transport controls crossfade in.
+	tb.Move(float32(bw)/2-96, float32(bh)/2)
 	tb.Advance(220 * time.Millisecond)
 	tb.Frame()
 	if _, ok := tb.Find("播放/暂停"); !ok {
@@ -167,13 +183,6 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	}
 
 	// 2. Apple Music Split Cover Card: syncs with app Dark/Light theme + always-accessible transport + hover toolbar.
-	// Also populate a real square cover bitmap to verify rounded top corners (no sharp 90° bleed).
-	coverURL := "https://example.invalid/cover.png"
-	bmp := testCoverBitmap(t)
-	a.art.art[spotify.Sized(coverURL, 460)] = &artwork{bmp: bmp, tint: ui.Hex("#e5484d"), used: time.Now()}
-	a.art.art[spotify.Sized(coverURL, 120)] = &artwork{bmp: bmp, tint: ui.Hex("#e5484d"), used: time.Now()}
-	a.pl.Cue([]spotify.Track{{ID: "t1", Name: "The first ending", Artists: []spotify.Artist{{Name: "MYTH & ROID"}}, Album: spotify.Album{PicURL: coverURL}, Duration: 240000}})
-	a.pl.Hold(145 * time.Second)
 	a.settings.MiniPlayer = true
 	a.settings.MiniStyle = miniStyleCard
 	cw, ch := miniWindowSize(miniStyleCard)
@@ -245,6 +254,8 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	}
 	a.settings.MiniStyle = miniStyleBar
 	tb.SetDark(false)
+	tb.Move(2, 2)
+	tb.Advance(240 * time.Millisecond)
 	for _, opt := range progressStyleOptions {
 		a.setProgressStyle(opt.id)
 		if a.settings.effectiveProgressStyle() != opt.id {
