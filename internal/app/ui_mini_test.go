@@ -213,6 +213,13 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	if r>>8 > 140 {
 		t.Fatalf("split card top-left corner was not rounded; red channel at corner=%d", r>>8)
 	}
+	// Verify dragging on the cover artwork initiates window drag (PassThrough feather doesn't block).
+	dragsBefore := tc.WindowDragRequests()
+	tc.Press(float32(cw)/2, float32(miniShadowPad)+80)
+	tc.Release(float32(cw)/2, float32(miniShadowPad)+80)
+	if tc.WindowDragRequests() <= dragsBefore {
+		t.Fatal("dragging on cover card artwork did not initiate window drag")
+	}
 	saveSnap("mini-card-dark-rest.png", tc)
 
 	// Hover card -> top-right frosted toolbar appears with collapse and close buttons.

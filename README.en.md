@@ -93,7 +93,7 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 
 ## 5. Apple Music-Style Mini Player, 6 Synced Progress Effects & Launch Animation
 
-- **One-Click Main Window ↔ Mini Mode**: Click the native-styled **Switch to Mini Mode** button in the top-right title bar (aligned seamlessly beside minimize/maximize/close on Windows, and in Now Playing) to hide the main window and enter the floating Mini Player; click `⤢` (or the cover) to jump straight back to the main window. Right-click or use Settings to switch between **Compact Bar** (`360 × 56`, minimal centered title & animated progress at rest, crossfading in-place to full transport controls on hover) and **Split Cover Card** (`232 × 324`, unobstructed rounded artwork you can drag anywhere + dedicated control deck below with Like heart and transport). Automatically syncs with the app's Light/Dark appearance and remembers its desktop position.
+- **One-Click Main Window ↔ Mini Mode**: Click the native-styled **Switch to Mini Mode** button in the top-right title bar (aligned seamlessly beside minimize/maximize/close on Windows, and in Now Playing) to hide the main window and enter the floating Mini Player; click `⤢` (or the cover) to jump straight back to the main window. Right-click or use Settings to switch between **Compact Bar** (`360 × 56`, strictly concentric `16px` corners and inset soft specular rim, minimal centered title & animated progress at rest, crossfading in-place to full transport controls on hover) and **Seamless Gradient-Melt Cover Card** (`232 × 324`, full-bleed rounded artwork smoothly feathered via Oklab gradient into the control deck with zero hard seam, draggable anywhere, plus Like heart and transport). Automatically syncs with the app's Light/Dark appearance and remembers its desktop position.
 - **6 Synchronized Progress Bar Effects**: Click the ✨ **Progress Style** button in the bottom player bar, right-click the progress bar or Mini Player, or open **Settings → Appearance → Progress Style** to switch live across the **main player bar, Now Playing, Stage, and Mini Player** (with vibrant fallback palettes so monochrome covers never turn muddy grey):
   - **Shimmer Aurora** (default): Smooth dual-tone gradient rail with a soft drifting light sweep;
   - **Mini Waveform**: Micro equalizer waveform bars whose playhead bars bounce live with the music;
@@ -105,7 +105,7 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 <table>
   <tr>
     <td width="58%" align="center"><img src="docs/screenshots/mini-player-bar.png" alt="Apple Music-style Compact Bar Mini Player in Light and Dark mode"><br><b>Apple Music Compact Bar (Light / Dark)</b>: Minimal at rest, in-place controls on hover, auto-synced with app appearance.</td>
-    <td width="42%" align="center"><img src="docs/screenshots/mini-player-card.png" alt="Apple Music-style Split Cover Card Mini Player in Dark mode"><br><b>Split Cover Card (Dark Mode)</b>: Unobstructed draggable rounded artwork on top with dedicated control deck below.</td>
+    <td width="42%" align="center"><img src="docs/screenshots/mini-player-card.png" alt="Apple Music-style Seamless Gradient-Melt Cover Card Mini Player in Dark mode"><br><b>Gradient-Melt Cover Card (Dark Mode)</b>: Full-bleed draggable rounded artwork smoothly melting into the control deck below.</td>
   </tr>
   <tr>
     <td colspan="2" align="center"><img src="docs/screenshots/progress-styles.png" alt="4 new synchronized progress bar effects rendered by Sonora: Shimmer Aurora, Mini Waveform, Liquid Pulse Bead, Stardust Sparkles"><br><b>4 New Synced Progress Bar Effects (Native Go Renders)</b>: Shimmer Aurora · Mini Waveform · Liquid Pulse Bead · Stardust Sparkles.</td>
@@ -117,8 +117,8 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 ## Install, Isolation & Build
 
 1. Download from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**:
-   - **Windows**: Run `sonora-setup-1.0.18-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.18-windows-amd64.zip`.
-   - **macOS**: Download `sonora-1.0.18.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
+   - **Windows**: Run `sonora-setup-1.0.19-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.19-windows-amd64.zip`.
+   - **macOS**: Download `sonora-1.0.19.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
    Pure Go native binary (~20 MB) with built-in multi-source lyrics—no `.NET` runtime or extra setup needed.
 2. **Isolated from upstream MySpotify**: Uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), migrating existing settings on first launch without altering the legacy folder.
 
