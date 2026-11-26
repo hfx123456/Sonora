@@ -237,4 +237,22 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 	if !a.settings.MiniPlayer {
 		t.Fatal("clicking titlebar mini mode switch did not enter mini mode")
 	}
+
+	// 4. Progress bar style button in main player bar exists and all 6 styles
+	// render cleanly across main bar and mini bar without panics.
+	if _, ok := tm.Find("进度条样式"); !ok {
+		t.Fatal("main player bar missing 进度条样式 button")
+	}
+	a.settings.MiniStyle = miniStyleBar
+	tb.SetDark(false)
+	for _, opt := range progressStyleOptions {
+		a.setProgressStyle(opt.id)
+		if a.settings.effectiveProgressStyle() != opt.id {
+			t.Fatalf("effectiveProgressStyle=%q, want %q", a.settings.effectiveProgressStyle(), opt.id)
+		}
+		tm.Frame()
+		tb.Advance(600 * time.Millisecond)
+		tb.Frame()
+		saveSnap("prog-"+opt.id+".png", tb)
+	}
 }

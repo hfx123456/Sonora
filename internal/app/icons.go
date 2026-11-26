@@ -63,6 +63,9 @@ var (
 	iconMinus          = strokeIcon(`<path d="M5 12h14"/>`)
 	iconExitFullScreen = strokeIcon(`<path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/>`)
 	iconMiniPlayer     = strokeIcon(`<rect x="2.5" y="4" width="19" height="16" rx="2.5"/><rect x="11.5" y="11" width="7.5" height="6" rx="1.2" fill="currentColor" stroke="none"/>`)
+	// Thinner caption-weight variant matching Windows 11 Segoe Fluent Icons beside minimize/maximize/close.
+	iconMiniCaption    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.6"/><rect x="7.75" y="7.5" width="4.5" height="3.75" rx="0.7" fill="currentColor" stroke="none"/></svg>`))
+	iconSparkles       = strokeIcon(`<path d="m12 3-1.9 5.1L5 10l5.1 1.9L12 17l1.9-5.1L19 10l-5.1-1.9Z"/><path d="M5 3v4"/><path d="M3 5h4"/><path d="M19 17v4"/><path d="M17 19h4"/>`)
 )
 
 var (

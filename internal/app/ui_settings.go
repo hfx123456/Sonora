@@ -167,6 +167,16 @@ func (a *app) settingsPage(c *ui.Context) {
 					a.changed()
 				}
 			})
+			row("进度条样式", "主界面底栏、播放页与迷你播放器进度条同步切换（极光扫光 / 律动声波 / 呼吸光珠 / 星尘光点等）", func() {
+				labels := make([]string, len(progressStyleOptions))
+				for i, opt := range progressStyleOptions {
+					labels[i] = opt.label
+				}
+				chosen := progressStyleLabel(s.effectiveProgressStyle())
+				if ui.Select(c.Key("progress-style"), &chosen, labels).Label("进度条样式").Width(140).Changed() {
+					a.setProgressStyle(progressStyleIDByLabel(chosen))
+				}
+			})
 		})
 
 		group("歌词", func() {
@@ -264,11 +274,6 @@ func (a *app) settingsPage(c *ui.Context) {
 		})
 
 		group("实验性功能", func() {
-			row("进度条烟雾特效", "播放时进度条化作拖着烟雾的光点，随音乐起伏；会多用一些电量", func() {
-				if ui.Switch(c.Key("smoke"), &s.Smoke).Label("进度条烟雾特效").Changed() {
-					a.changed()
-				}
-			})
 			row("烟雾背景", "播放页的背景化作封面色调的烟雾，缓缓升起，随低音起伏；仍在打磨，会多用一些电量", func() {
 				if ui.Switch(c.Key("fog"), &s.Fog).Label("烟雾背景").Changed() {
 					if s.Fog {

@@ -3,6 +3,7 @@ package app
 import (
 	"cmp"
 	"math"
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -37,17 +38,47 @@ type miniState struct {
 
 // titlebarMiniButton renders the top-right window-mode button beside the native
 // minimize/maximize/close controls to switch directly from the main window into
-// the floating mini player.
-func (a *app) titlebarMiniButton(c *ui.Context, color ui.Color) {
-	right := float32(14)
-	if c.TitleBar().Right > 0 {
-		right = c.TitleBar().Right + 6
-	}
-	ui.Row(c).Absolute().Top(0).Right(right).Height(topBar(c)).AlignItems(ui.Center).Children(func() {
-		if iconButton(c.Key("mini-mode-switch"), iconMiniPlayer, 15, color, "切换迷你模式").Tooltip("切换迷你模式").Clicked() {
-			a.enterMiniMode()
+// the floating mini player. On Windows it matches the exact 46×H square caption
+// tile geometry, hover/press backplate, and crisp thin glyph weight of MyGoCaption.
+func (a *app) titlebarMiniButton(c *ui.Context, darkOnOverlay bool) {
+	if runtime.GOOS == "darwin" {
+		col := a.pal.muted
+		if darkOnOverlay {
+			col = ui.RGBA(255, 255, 255, 0.72)
 		}
-	})
+		ui.Row(c).Absolute().Top(0).Right(14).Height(topBar(c)).AlignItems(ui.Center).Children(func() {
+			if iconButton(c.Key("mini-mode-switch"), iconMiniPlayer, 15, col, "切换迷你模式").Tooltip("切换迷你模式").Clicked() {
+				a.enterMiniMode()
+			}
+		})
+		return
+	}
+
+	bar := c.TitleBar()
+	h := bar.Height
+	if h <= 0 {
+		h = topBar(c)
+	}
+	dark := a.pal.dark || darkOnOverlay
+	fore := ui.RGBA(0, 0, 0, 0.89)
+	if dark {
+		fore = ui.RGB(255, 255, 255)
+	}
+	b := ui.ButtonBase(c.Key("mini-mode-switch")).
+		Absolute().Top(0).Right(bar.Right).Size(46, h).Center().Radius(0).
+		FocusRing(false).TextColor(fore).Label("切换迷你模式").Tooltip("切换迷你模式")
+	bg := ui.Transparent
+	switch {
+	case b.Pressed():
+		bg = fore.Alpha(0.20)
+	case b.Hovered():
+		bg = fore.Alpha(0.10)
+	}
+	b.Background(bg)
+	b.Children(func() { ui.Icon(c, iconMiniCaption).Size(13, 13) })
+	if b.Clicked() {
+		a.enterMiniMode()
+	}
 }
 
 // enterMiniMode switches directly from the full main window to the floating
@@ -75,9 +106,9 @@ func miniSmokeColor(tint, fallback ui.Color, dark bool) ui.Color {
 	return tint
 }
 
-// miniProgressBar draws an interactive, seekable progress bar with Sonora's
-// luminous comet head & rising bass-reactive smoke trail.
-func (a *app) miniProgressBar(c *ui.Context, trackCol, fillCol, smokeCol ui.Color, height, restThick, hotThick float32) ui.Element {
+// miniProgressBar draws an interactive, seekable progress bar synchronized with
+// the user's chosen ProgressStyle (aurora, waveform, pulse, stardust, smoke, or classic).
+func (a *app) miniProgressBar(c *ui.Context, trackCol, fillCol, tintCol, accentCol ui.Color, dark bool, height, restThick, hotThick float32) ui.Element {
 	pl := a.pl
 	st := &a.mini.scrub
 	dur := pl.Duration().Seconds()
@@ -116,12 +147,14 @@ func (a *app) miniProgressBar(c *ui.Context, trackCol, fillCol, smokeCol ui.Colo
 	}
 	knob = s.AnimateTo("mini-knob", knob, ui.Snappy)
 
-	smoking := float32(0)
-	if !c.Preferences().ReduceMotion && pl.Playing() && !pl.Loading() && !scrubbing && dur > 0 {
-		smoking = 1
+	style := a.settings.effectiveProgressStyle()
+	animating := float32(0)
+	if progressStyleAnimates(style) && !c.Preferences().ReduceMotion && pl.Playing() && !pl.Loading() && !scrubbing && dur > 0 {
+		animating = 1
 	}
-	smoking = s.AnimateTo("mini-smoke", smoking, ui.Animation{Duration: 550 * time.Millisecond})
+	animating = s.AnimateTo("mini-smoke", animating, ui.Animation{Duration: 500 * time.Millisecond})
 	white := ui.RGB(255, 255, 255)
+	_, c2 := vibrantProgressColors(tintCol, accentCol, style, dark)
 
 	s.Draw(func(p *ui.Painter, r ui.Rect) {
 		at := st.v
@@ -132,44 +165,21 @@ func (a *app) miniProgressBar(c *ui.Context, trackCol, fillCol, smokeCol ui.Colo
 		if dur > 0 {
 			frac = float32(min(1, max(0, at/dur)))
 		}
-		y := r.Y + (r.H-thick)/2
 		head, cy := r.X+r.W*frac, r.Y+r.H/2
-		rail := ui.Rect{X: r.X, Y: y, W: r.W, H: thick}
-		radius := thick / 2
-		p.Fill(rail, trackCol, radius)
-		if frac > 0 {
-			played := ui.Rect{X: r.X, Y: y, W: max(thick, head-r.X), H: thick}
-			if smoking > 0.01 {
-				p.FillGradient(played, ui.LinearGradient{
-					Angle: 90,
-					Oklab: true,
-					From:  fillCol.Mix(smokeCol, smoking).Alpha(0.38),
-					To:    fillCol.Mix(smokeCol, 0.88*smoking),
-				}, radius)
-				lv, live := pl.Levels()
-				st.level.step(p.Now(), lv, live)
-				bass := st.level.group(0, 6)
-				drawSmoke(p, head, cy, p.Now(), bass, smokeCol, smoking*0.80)
-				glow := 7 + 6*bass
-				p.Shadow(ui.Rect{X: head, Y: cy}, 0, 0, 0, glow, 1.8+1.8*bass, smokeCol.Alpha(0.92*smoking))
-				core := thick * (1.15 + 0.25*bass)
-				p.Fill(ui.Rect{X: head - core/2, Y: cy - core/2, W: core, H: core}, white.Mix(smokeCol, 0.16).Alpha(smoking), core/2)
-			} else {
-				p.FillGradient(played, ui.LinearGradient{
-					Angle: 90,
-					Oklab: true,
-					From:  fillCol.Alpha(0.75),
-					To:    smokeCol,
-				}, radius)
-			}
+		bass := float32(0)
+		if animating > 0.01 {
+			lv, live := pl.Levels()
+			st.level.step(p.Now(), lv, live)
+			bass = st.level.group(0, 6)
 		}
+		drawProgressEffect(p, r, frac, thick, animating, bass, p.Now(), style, trackCol, fillCol, tintCol, accentCol, nil, dark)
 		if knob > 0.01 {
 			k := 9 * knob
 			p.Shadow(ui.Rect{X: head - k/2, Y: cy - k/2, W: k, H: k}, k/2, 0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.28))
-			p.Fill(ui.Rect{X: head - k/2, Y: cy - k/2, W: k, H: k}, white.Mix(smokeCol, 0.20), k/2)
+			p.Fill(ui.Rect{X: head - k/2, Y: cy - k/2, W: k, H: k}, white.Mix(c2, 0.20), k/2)
 		}
 		switch {
-		case smoking > 0.01 && (pl.Playing() || smoking < 1):
+		case animating > 0.01 && (pl.Playing() || animating < 1):
 			p.After(time.Second / 30)
 		case pl.Playing() && !scrubbing && dur > 0:
 			perPixel := dur / float64(max(1, r.W*p.Scale()))
@@ -402,6 +412,7 @@ func (a *app) miniMenu(menu *ui.Menu) {
 	if menu.Item("封面卡片").Checked(style == miniStyleCard).Chosen() {
 		a.setMiniStyle(miniStyleCard)
 	}
+	menu.Submenu("进度条样式", a.progressStyleMenu)
 	menu.Separator()
 	if menu.Item("始终置顶").Checked(a.settings.MiniAlwaysOnTop).Chosen() {
 		a.toggleMiniAlwaysOnTop()
@@ -549,8 +560,8 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 						}
 					})
 
-					// Slim interactive comet/smoke progress bar.
-					a.miniProgressBar(c.Key("mini-bar-scrub"), trackBG, fillCol, smokeCol, 9, 2.5, 4.5).
+					// Slim interactive progress bar synced with main player style.
+					a.miniProgressBar(c.Key("mini-bar-scrub"), trackBG, fillCol, tint, pal.accent, pal.dark, 11, 2.8, 4.5).
 						WidthPercent(100)
 				})
 
@@ -741,8 +752,8 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 						}
 					})
 
-					// Row 2: Slim comet + smoke interactive progress bar.
-					a.miniProgressBar(c.Key("mini-card-scrub"), trackBG, fillCol, smokeCol, 12, 3, 5).
+					// Row 2: Interactive progress bar synced with main player style.
+					a.miniProgressBar(c.Key("mini-card-scrub"), trackBG, fillCol, tint, pal.accent, pal.dark, 12, 3, 5).
 						WidthPercent(100)
 
 					// Row 3: Evenly spaced borderless Apple Music transport controls.

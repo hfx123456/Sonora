@@ -572,7 +572,7 @@ func (a *app) pageTop(c *ui.Context) {
 			edge.Opacity(edgeShown(edge, a.underTop))
 		}
 	})
-	a.titlebarMiniButton(c, a.pal.muted)
+	a.titlebarMiniButton(c, false)
 	if len(a.history) > 0 || len(a.forward) > 0 {
 		if a.glassEnabled() {
 			ui.Row(c).Absolute().Top(max(6, (topBar(c)-34)/2)).Left(20).Height(34).Gap(8).AlignItems(ui.Center).Children(func() {

@@ -38,6 +38,9 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 		st.v = pl.Position().Seconds()
 	}
 	s := ui.SliderBase(c, &st.v, 0, max(dur, 1)).Height(height).FocusRing(false).Label("播放进度").Cursor(ui.CursorPointer)
+	if smoke.A > 0 {
+		s.ContextMenu(a.progressStyleMenu)
+	}
 	// The press and its release come to the bar wherever the pointer is,
 	// and go on to the slider, which follows the pointer.
 	s.HandleInput(func(ev ui.InputEvent) bool {
@@ -82,12 +85,24 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 		knob = 1
 	}
 	knob = s.AnimateTo("knob", knob, ui.Snappy)
-	// The smoke settles away as the music pauses, and while dragging.
-	smoking := float32(0)
-	if smoke.A > 0 && a.settings.Smoke && pl.Playing() && !pl.Loading() && !scrubbing {
-		smoking = 1
+	// Effect style is shared across main player bar, Now Playing, and Mini Player.
+	style := progressStyleClassic
+	if smoke.A > 0 {
+		style = a.settings.effectiveProgressStyle()
 	}
-	smoking = s.AnimateTo("smoke", smoking, ui.Animation{Duration: 600 * time.Millisecond})
+	animating := float32(0)
+	if smoke.A > 0 && progressStyleAnimates(style) && !c.Preferences().ReduceMotion && pl.Playing() && !pl.Loading() && !scrubbing && dur > 0 {
+		animating = 1
+	}
+	animating = s.AnimateTo("smoke", animating, ui.Animation{Duration: 550 * time.Millisecond})
+	tintCol := smoke
+	if cur := pl.Current(); cur != nil && cur.Album.PicURL != "" && smoke.A > 0 {
+		if t := a.coverTint(cur.Album.PicURL, 120); t != (ui.Color{}) {
+			tintCol = t
+		}
+	}
+	dark := a.pal.dark || surface != nil
+	accentCol := a.pal.accent
 	s.Draw(func(p *ui.Painter, r ui.Rect) {
 		at := st.v
 		if !scrubbing {
@@ -97,46 +112,22 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 		if dur > 0 {
 			frac = float32(min(1, max(0, at/dur)))
 		}
-		y := r.Y + (r.H-thick)/2
-		head, cy := r.X+r.W*frac, r.Y+r.H/2
-		rail := ui.Rect{X: r.X, Y: y, W: r.W, H: thick}
-		radius := thick / 2
-		if surface == nil {
-			p.Fill(rail, track, radius)
-		} else {
-			surface.PaintMaterial(p, rail, [4]float32{radius, radius, radius, radius})
-			p.Stroke(rail, white.Alpha(.20), radius, 1)
-		}
-		played := ui.Rect{X: r.X, Y: y, W: max(thick, head-r.X), H: thick}
-		switch {
-		case smoking > 0.01:
-			// A streak of light, brightest at the head.
-			p.FillGradient(played, ui.LinearGradient{Angle: 90, Oklab: true,
-				From: fill.Mix(smoke, smoking).Alpha(0.3), To: fill.Mix(smoke, 0.8*smoking)}, thick/2)
+		head := r.X + r.W*frac
+		bass := float32(0)
+		if animating > 0.01 {
 			lv, live := pl.Levels()
 			st.level.step(p.Now(), lv, live)
-			bass := st.level.group(0, 6)
-			drawSmoke(p, head, cy, p.Now(), bass, smoke, smoking)
-			// The glow of the head, swelling with the bass, and its core.
-			glow := 9 + 8*bass
-			p.Shadow(ui.Rect{X: head, Y: cy}, 0, 0, 0, glow, 2.5+2.5*bass, smoke.Alpha(0.95*smoking))
-			core := thick * (1 + 0.25*bass)
-			p.Fill(ui.Rect{X: head - core/2, Y: cy - core/2, W: core, H: core}, white.Mix(smoke, 0.15).Alpha(smoking), core/2)
-		case surface != nil:
-			p.FillGradient(played, ui.LinearGradient{Angle: 180, From: white.Alpha(.88), To: fill.Alpha(.66)}, radius)
-		default:
-			p.Fill(played, fill, radius)
+			bass = st.level.group(0, 6)
 		}
+		drawProgressEffect(p, r, frac, thick, animating, bass, p.Now(), style, track, fill, tintCol, accentCol, surface, dark)
 		if knob > 0.01 {
 			k := 12 * knob
 			p.Shadow(ui.Rect{X: head - k/2, Y: r.Y + (r.H-k)/2, W: k, H: k}, k/2, 0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.3))
 			p.Fill(ui.Rect{X: head - k/2, Y: r.Y + (r.H-k)/2, W: k, H: k}, fill, k/2)
 		}
 		switch {
-		case smoking > 0.01 && (pl.Playing() || smoking < 1):
-			// The smoke drifts slowly, under a point a frame at 30 frames
-			// a second, which show it smooth for a quarter of what a 120 Hz
-			// display would draw.
+		case animating > 0.01 && (pl.Playing() || animating < 1):
+			// Smooth 30fps live motion while playing.
 			p.After(time.Second / 30)
 		case pl.Playing() && !scrubbing && dur > 0:
 			// Again when the fill has moved a pixel of the screen, which
@@ -508,6 +499,7 @@ func (a *app) playerBar(c *ui.Context) {
 			}
 			a.connectButton(c)
 			a.volumeButton(c, p.text.Alpha(0.75))
+			a.progressStyleButton(c)
 			a.fusionButton(c)
 		})
 	})

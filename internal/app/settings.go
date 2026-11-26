@@ -140,9 +140,10 @@ type settings struct {
 	// PlaylistTrackCovers shows per-row album thumbnails in playlists, Liked
 	// Songs, and Local/Cloud music lists.
 	PlaylistTrackCovers bool `json:"playlistTrackCovers"`
-	// Smoke makes the progress bars comets trailing smoke as music plays,
-	// for a few percent of a core: the listener turns it on.
-	Smoke bool `json:"smoke"`
+	// Smoke is kept for legacy settings compatibility; ProgressStyle selects
+	// the synchronized progress bar effect across main player & mini player.
+	Smoke         bool   `json:"smoke"`
+	ProgressStyle string `json:"progressStyle,omitempty"`
 	// LyricsStage shows lyrics on the stage, Folia's style, in Now
 	// Playing, rather than scrolling.
 	LyricsStage bool `json:"lyricsStage"`
@@ -210,6 +211,7 @@ func defaultSettings() settings {
 		GlassStrength:       0.7,
 		StartupAnimation:    true,
 		PlaylistTrackCovers: true,
+		ProgressStyle:       progressStyleAurora,
 		Volume:              0.8,
 		CacheMB:             1024,
 		MVLyrics:            true,

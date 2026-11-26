@@ -147,15 +147,9 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *spotify.Track, art *artwork, acc
 			})
 			tabs := ui.Row(c.Key("tabs")).Gap(6)
 			reveal(tabs, pointerIn).Children(func() { a.paneTabs(c) })
-			right := float32(14)
-			if c.TitleBar().Right > 0 {
-				right = c.TitleBar().Right + 6
-			}
-			mini := ui.Row(c.Key("np-mini-reveal")).Absolute().Top(0).Right(right).Height(topBar(c)).AlignItems(ui.Center)
+			mini := ui.Box(c.Key("np-mini-reveal")).Absolute().Top(0).Left(0).Right(0).Height(topBar(c)).PassThrough()
 			reveal(mini, pointerIn).Children(func() {
-				if iconButton(c.Key("np-mini-mode-switch"), iconMiniPlayer, 15, white.Alpha(0.7), "切换迷你模式").Tooltip("切换迷你模式").Clicked() {
-					a.enterMiniMode()
-				}
+				a.titlebarMiniButton(c, true)
 			})
 		})
 		if a.npPane == paneStage {
