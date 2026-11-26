@@ -17,8 +17,8 @@ const (
 
 // splashState drives the transparent, frameless, borderless cold-start splash:
 // musical notes drift down from above over the desktop, gather into the
-// borderless Sonora icon with gentle ripples, and smoothly fade in the live
-// Sonora home window underneath.
+// borderless Sonora icon, and smoothly fade in the live Sonora home window
+// underneath.
 type splashState struct {
 	win         *mygo.Window
 	startedAt   time.Time
@@ -271,25 +271,6 @@ var splashAfterglowNotes = []splashRisingSpark{
 	{start: 2.12, dur: 0.84, startX: 4, driftX: -14, startY: -18, riseY: -88, size: 18, color: "#34D399"},
 }
 
-// drawSplashCircleRipple paints a delicate circular sonic wave ring over the
-// transparent desktop.
-func drawSplashCircleRipple(pt *ui.Painter, cx, cy, t, start, dur, r0, r1, stroke0 float32, color ui.Color, masterAlpha float32) {
-	p := splashProgress(t, start, start+dur)
-	if p <= 0 || p >= 1 {
-		return
-	}
-	e := splashEaseOutCubic(p)
-	fadeIn := splashEaseOutCubic(splashProgress(p, 0, 0.16))
-	fadeOut := 1 - splashEaseInOutCubic(splashProgress(p, 0.20, 1.0))
-	alpha := fadeIn * fadeOut * masterAlpha
-	if alpha <= 0.005 {
-		return
-	}
-	rad := splashLerp(r0, r1, e)
-	sw := splashLerp(stroke0, 0.7, e)
-	pt.Stroke(ui.Rect{X: cx - rad, Y: cy - rad, W: rad * 2, H: rad * 2}, color.Alpha(alpha), rad, sw)
-}
-
 // drawMiniNote draws a clean vector single (♪) or beamed (♫) musical note
 // centered at (cx, cy) with overall height `size`.
 func drawMiniNote(pt *ui.Painter, cx, cy, size float32, beamed bool, col ui.Color) {
@@ -350,8 +331,8 @@ func drawMiniNote(pt *ui.Painter, cx, cy, size float32, beamed bool, col ui.Colo
 }
 
 // drawSplashScene renders the entire 3-second borderless launch choreography:
-// falling notes -> circular ripples -> borderless Sonora icon -> airy dissolve
-// as the live main window fades in smoothly behind it.
+// falling notes -> borderless Sonora icon -> airy dissolve as the live main
+// window fades in smoothly behind it.
 func drawSplashScene(pt *ui.Painter, r ui.Rect, t float32, pal palette) {
 	if r.W <= 0 || r.H <= 0 {
 		return
@@ -391,13 +372,9 @@ func drawSplashScene(pt *ui.Painter, r ui.Rect, t float32, pal palette) {
 		}, 0)
 	}
 
-	// 2. Falling musical notes from the sky + landing water-drop ripples.
+	// 2. Falling musical notes from the sky.
 	for _, n := range splashNotes {
 		p := splashProgress(t, n.start, n.start+n.dur)
-		landTime := n.start + n.dur*0.78
-		// Small delicate ripple when each note lands near the center.
-		drawSplashCircleRipple(pt, cx+n.endX, cy+n.endY, t, landTime, 0.72, 10, 74, 1.8, ui.Hex(n.color).Alpha(0.42), 1)
-
 		if p <= 0 || p >= 1 {
 			continue
 		}
@@ -421,13 +398,7 @@ func drawSplashScene(pt *ui.Painter, r ui.Rect, t float32, pal palette) {
 		drawMiniNote(pt, x, y, n.size*sc, n.beamed, ui.Hex(n.color).Alpha(alpha))
 	}
 
-	// 3. Large circular sonic ripples radiating from the assembled hero note.
-	if heroMaster > 0.01 {
-		drawSplashCircleRipple(pt, cx, cy, t, 0.92, 1.10, 48, 178, 2.4, ui.Hex("#18C964").Alpha(0.50), heroMaster)
-		drawSplashCircleRipple(pt, cx, cy, t, 1.18, 1.12, 54, 198, 2.0, ui.Hex("#0EA5E9").Alpha(0.42), heroMaster)
-	}
-
-	// 4. Borderless Sonora hero icon (no white square!) floating & dancing in center.
+	// 3. Borderless Sonora hero icon (no white square!) floating & dancing in center.
 	if heroMaster > 0.01 && t >= 0.50 {
 		const baseSize float32 = 160
 		// Gentle floating bob while dancing, then lifts and expands slightly as it dissolves.

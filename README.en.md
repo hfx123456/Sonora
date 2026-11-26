@@ -95,7 +95,7 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 
 - **Compact Bar ↔ Split Cover Card**: Toggle the floating desktop Mini Player anytime from the bottom-right player bar button or **Settings → Mini Player**. Switch in one click between the slim **Compact Bar** (`360 × 56`, minimal centered title & comet progress bar at rest, crossfading in-place to full transport controls on hover) and the **Split Cover Card** (`232 × 324`, unobstructed full artwork on top + dedicated control deck below with Like heart, scrubbable progress bar, and transport controls).
 - **Auto-Synced Light & Dark Mode + Comet Smoke Progress**: Automatically mirrors Sonora's Light/Dark appearance without extra toggles. Both layouts feature a draggable comet progress bar with bass-reactive smoke wisps and remember their dragged desktop position.
-- **Borderless Falling-Notes Launch Animation**: Cold launches float vector musical notes and circular sonic ripples directly over the desktop before assembling the borderless Sonora emblem and smoothly fading in the main window (toggleable in **Settings → Appearance → Startup Animation**, and automatically skipped when system Reduce Motion is enabled).
+- **Borderless Falling-Notes Launch Animation**: Cold launches float vector musical notes directly over the desktop before assembling the borderless Sonora emblem and smoothly fading in the main window (toggleable in **Settings → Appearance → Startup Animation**, and automatically skipped when system Reduce Motion is enabled).
 
 <table>
   <tr>
