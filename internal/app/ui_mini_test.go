@@ -226,21 +226,15 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 		t.Fatal("clicking card close button did not close mini player")
 	}
 
-	// 3. Main player bar quick-toggle button opens & closes mini player in one click.
+	// 3. Main window top-right titlebar button switches directly into mini mode.
+	a.settings.MiniPlayer = false
 	tm := ui.NewTester(a.view, 1180, 720)
 	tm.Frame()
-	if err := tm.Click("迷你播放器"); err != nil {
-		t.Fatalf("player bar mini toggle missing: %v", err)
+	if err := tm.Click("切换迷你模式"); err != nil {
+		t.Fatalf("titlebar mini mode switch button missing: %v", err)
 	}
 	tm.Frame()
 	if !a.settings.MiniPlayer {
-		t.Fatal("clicking player bar mini toggle did not enable mini player")
-	}
-	if err := tm.Click("迷你播放器"); err != nil {
-		t.Fatalf("second click failed: %v", err)
-	}
-	tm.Frame()
-	if a.settings.MiniPlayer {
-		t.Fatal("clicking player bar mini toggle again did not disable mini player")
+		t.Fatal("clicking titlebar mini mode switch did not enter mini mode")
 	}
 }

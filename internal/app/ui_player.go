@@ -508,7 +508,6 @@ func (a *app) playerBar(c *ui.Context) {
 			}
 			a.connectButton(c)
 			a.volumeButton(c, p.text.Alpha(0.75))
-			a.miniPlayerButton(c)
 			a.fusionButton(c)
 		})
 	})

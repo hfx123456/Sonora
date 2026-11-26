@@ -35,17 +35,27 @@ type miniState struct {
 	scrub     scrubState
 }
 
-// miniPlayerButton renders the quick-toggle Mini Player button in the main
-// window's bottom player bar so the user can open/close it in one click.
-func (a *app) miniPlayerButton(c *ui.Context) {
-	col := a.pal.muted
-	tip := "打开迷你播放器"
-	if a.settings.MiniPlayer {
-		col = a.pal.accent
-		tip = "关闭迷你播放器"
+// titlebarMiniButton renders the top-right window-mode button beside the native
+// minimize/maximize/close controls to switch directly from the main window into
+// the floating mini player.
+func (a *app) titlebarMiniButton(c *ui.Context, color ui.Color) {
+	right := float32(14)
+	if c.TitleBar().Right > 0 {
+		right = c.TitleBar().Right + 6
 	}
-	if iconButton(c.Key("mini-player-toggle"), iconMiniPlayer, 16, col, "迷你播放器").Tooltip(tip).Clicked() {
-		a.setMiniPlayerEnabled(!a.settings.MiniPlayer)
+	ui.Row(c).Absolute().Top(0).Right(right).Height(topBar(c)).AlignItems(ui.Center).Children(func() {
+		if iconButton(c.Key("mini-mode-switch"), iconMiniPlayer, 15, color, "切换迷你模式").Tooltip("切换迷你模式").Clicked() {
+			a.enterMiniMode()
+		}
+	})
+}
+
+// enterMiniMode switches directly from the full main window to the floating
+// mini player: opens the mini window and hides the main window.
+func (a *app) enterMiniMode() {
+	a.setMiniPlayerEnabled(true)
+	if a.win != nil {
+		a.win.Hide()
 	}
 }
 
@@ -488,11 +498,11 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 
 		body.Children(func() {
 			ui.Row(c).Fill().AlignItems(ui.Center).Padding(0, 8, 0, 8).Gap(10).DragWindow().Children(func() {
-				// Left: 40×40 crisp rounded album artwork (click opens Sonora main window).
+				// Left: 40×40 crisp rounded album artwork (click restores Sonora main window).
 				artBtn := ui.ButtonBase(c.Key("mini-cover")).Size(40, 40).Shrink(0).Radius(8).
-					Label("打开主窗口").Tooltip("点击打开 Sonora 主窗口")
+					Label("打开主窗口").Tooltip("点击返回 Sonora 主窗口")
 				if artBtn.Clicked() {
-					a.showMain()
+					a.restoreMainFromMini()
 				}
 				artBtn.Children(func() {
 					if cur != nil && cur.Album.PicURL != "" {
