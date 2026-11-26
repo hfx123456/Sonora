@@ -8,7 +8,7 @@ English | **[简体中文](README.md)**
 
 <p align="center">
   Native Spotify desktop client &amp; personal Cloud Music Disk built with <b>Go + MyGo</b> (based on <a href="https://github.com/margbug01/MySpotify">MySpotify</a>)<br>
-  <b>6 Cloud Drives · Word-by-Word Bilingual Lyrics · Draggable Dynamic Island · Dual-Style Liquid Glass Mini Player · Flow Backdrop · Windows &amp; macOS</b>
+  <b>6 Cloud Drives · Word-by-Word Bilingual Lyrics · Draggable Dynamic Island · Apple Music Mini Player · 6 Synced Progress Effects · Flow Backdrop · Windows &amp; macOS</b>
 </p>
 
 <p align="center">
@@ -91,16 +91,24 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 
 ---
 
-## 5. Apple Music-Style Mini Player (Light & Dark Modes) & Borderless Launch Animation
+## 5. Apple Music-Style Mini Player, 6 Synced Progress Effects & Launch Animation
 
-- **Compact Bar ↔ Split Cover Card**: Toggle the floating desktop Mini Player anytime from the bottom-right player bar button or **Settings → Mini Player**. Switch in one click between the slim **Compact Bar** (`360 × 56`, minimal centered title & comet progress bar at rest, crossfading in-place to full transport controls on hover) and the **Split Cover Card** (`232 × 324`, unobstructed full artwork on top + dedicated control deck below with Like heart, scrubbable progress bar, and transport controls).
-- **Auto-Synced Light & Dark Mode + Comet Smoke Progress**: Automatically mirrors Sonora's Light/Dark appearance without extra toggles. Both layouts feature a draggable comet progress bar with bass-reactive smoke wisps and remember their dragged desktop position.
+- **One-Click Main Window ↔ Mini Mode**: Click the native-styled **Switch to Mini Mode** button in the top-right title bar (aligned seamlessly beside minimize/maximize/close on Windows, and in Now Playing) to hide the main window and enter the floating Mini Player; click `⤢` (or the cover) to jump straight back to the main window. Right-click or use Settings to switch between **Compact Bar** (`360 × 56`, minimal centered title & animated progress at rest, crossfading in-place to full transport controls on hover) and **Split Cover Card** (`232 × 324`, unobstructed rounded artwork you can drag anywhere + dedicated control deck below with Like heart and transport). Automatically syncs with the app's Light/Dark appearance and remembers its desktop position.
+- **6 Synchronized Progress Bar Effects**: Click the ✨ **Progress Style** button in the bottom player bar, right-click the progress bar or Mini Player, or open **Settings → Appearance → Progress Style** to switch live across the **main player bar, Now Playing, Stage, and Mini Player** (with vibrant fallback palettes so monochrome covers never turn muddy grey):
+  - **Shimmer Aurora** (default): Smooth dual-tone gradient rail with a soft drifting light sweep;
+  - **Mini Waveform**: Micro equalizer waveform bars whose playhead bars bounce live with the music;
+  - **Liquid Pulse Bead**: Dual-tone rail with a luminous breathing crystal bead hugging the playhead;
+  - **Stardust Sparkles**: Crisp 2px sparkling stardust particles drifting cleanly above the playhead;
+  - Plus **Comet Smoke** and **Classic Minimal**.
 - **Borderless Falling-Notes Launch Animation**: Cold launches float vector musical notes directly over the desktop before assembling the borderless Sonora emblem and smoothly fading in the main window (toggleable in **Settings → Appearance → Startup Animation**, and automatically skipped when system Reduce Motion is enabled).
 
 <table>
   <tr>
-    <td width="58%" align="center"><img src="docs/screenshots/mini-player-bar.png" alt="Liquid Glass horizontal bar mini player with comet smoke progress"><br><b>Classic Horizontal Bar</b>: Seamless Liquid Glass over blurred cover art with seekable comet smoke progress.</td>
-    <td width="42%" align="center"><img src="docs/screenshots/mini-player-card.png" alt="Square artwork cover card mini player with floating Liquid Glass controls"><br><b>Square Cover Card</b>: Pure album art at rest with a frosted Liquid Glass control capsule on hover.</td>
+    <td width="58%" align="center"><img src="docs/screenshots/mini-player-bar.png" alt="Apple Music-style Compact Bar Mini Player in Light and Dark mode"><br><b>Apple Music Compact Bar (Light / Dark)</b>: Minimal at rest, in-place controls on hover, auto-synced with app appearance.</td>
+    <td width="42%" align="center"><img src="docs/screenshots/mini-player-card.png" alt="Apple Music-style Split Cover Card Mini Player in Dark mode"><br><b>Split Cover Card (Dark Mode)</b>: Unobstructed draggable rounded artwork on top with dedicated control deck below.</td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/screenshots/progress-styles.png" alt="4 new synchronized progress bar effects rendered by Sonora: Shimmer Aurora, Mini Waveform, Liquid Pulse Bead, Stardust Sparkles"><br><b>4 New Synced Progress Bar Effects (Native Go Renders)</b>: Shimmer Aurora · Mini Waveform · Liquid Pulse Bead · Stardust Sparkles.</td>
   </tr>
 </table>
 
@@ -109,8 +117,8 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 ## Install, Isolation & Build
 
 1. Download from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**:
-   - **Windows**: Run `sonora-setup-1.0.12-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.12-windows-amd64.zip`.
-   - **macOS**: Download `sonora-1.0.12.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
+   - **Windows**: Run `sonora-setup-1.0.18-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.18-windows-amd64.zip`.
+   - **macOS**: Download `sonora-1.0.18.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
    Pure Go native binary (~20 MB) with built-in multi-source lyrics—no `.NET` runtime or extra setup needed.
 2. **Isolated from upstream MySpotify**: Uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), migrating existing settings on first launch without altering the legacy folder.
 
