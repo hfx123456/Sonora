@@ -992,21 +992,21 @@ func (a *app) sidebarSectionHeader(c *ui.Context, section, title string, count i
 			tip = "展开" + title
 			rot = -90
 		}
-		// PaddingLeft=7.5 + iconDown's ~2.5px internal glyph inset aligns the
+		// PaddingLeft=7 + iconDown's ~3px internal glyph inset aligns the
 		// chevron's left stroke cleanly on x=10 with nav icons and covers below.
-		b := ui.ButtonBase(c.Key("toggle")).Grow(1).Shrink(1).MinWidth(0).Height(26).Padding(0, 6, 0, 7.5).Gap(6).Radius(8).
+		b := ui.ButtonBase(c.Key("toggle")).Grow(1).Shrink(1).MinWidth(0).Height(30).Padding(0, 6, 0, 7).Gap(7).Radius(8).
 			AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(title).Tooltip(tip)
-		fg := p.faint
+		fg := p.muted
 		if b.Hovered() {
 			b.Background(p.hover)
 			fg = p.text
 		}
 		b.Children(func() {
-			ui.Icon(c.Key("chev"), iconDown).Size(11, 11).TextColor(fg).Shrink(0).
+			ui.Icon(c.Key("chev"), iconDown).Size(13, 13).TextColor(fg).Shrink(0).
 				AnimatePose(ui.Pose{Rotate: rot}, ui.Snappy)
-			ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(fg).SingleLine().Shrink(1).MinWidth(0)
+			ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(fg).SingleLine().Shrink(1).MinWidth(0)
 			if collapsed && count > 0 {
-				ui.Textf(c, "%d", count).FontSize(11).FontFeatures("tnum").TextColor(p.faint).Shrink(0)
+				ui.Textf(c, "%d", count).FontSize(12).FontFeatures("tnum").TextColor(p.faint).Shrink(0)
 			}
 		})
 		if b.Clicked() {
@@ -1045,55 +1045,43 @@ func (a *app) pinnedPlaylistSection(c *ui.Context, prevHadItems bool) (shown, ex
 
 // myPlaylists lists the listener's playlists in the sidebar: those they
 // made, if mine, with a button to make one and a menu to rename them.
+// Pinned playlists also remain listed here so the full library never has gaps.
 func (a *app) myPlaylists(c *ui.Context, section, title string, lists []spotify.Playlist, mine, prevHadItems bool) (shown, expanded bool) {
 	if len(lists) == 0 {
-		return false, false
-	}
-	visible := make([]*spotify.Playlist, 0, len(lists))
-	for i := range lists {
-		if !a.isPlaylistPinned(lists[i].ID) {
-			visible = append(visible, &lists[i])
-		}
-	}
-	if len(visible) == 0 && !mine {
 		return false, false
 	}
 	var trailing func()
 	if mine {
 		trailing = func() {
 			p := a.pal
-			// 24x24 button with MarginRight(4) centers "+" at right-16, matching
+			// 26x26 button with MarginRight(3) centers "+" at right-16, matching
 			// the trailing pin icon on pinned playlist rows.
-			add := ui.ButtonBase(c.Key("new")).Size(24, 24).Margin(0, 4, 0, 0).Shrink(0).Center().Radius(7).
+			add := ui.ButtonBase(c.Key("new")).Size(26, 26).Margin(0, 3, 0, 0).Shrink(0).Center().Radius(7).
 				FocusRing(false).Label("新建歌单").Tooltip("新建歌单")
-			fg := p.faint
+			fg := p.muted
 			if add.Hovered() {
 				add.Background(p.hover)
 				fg = p.text
 			}
-			add.Children(func() { ui.Icon(c, iconPlus).Size(13, 13).TextColor(fg) })
+			add.Children(func() { ui.Icon(c, iconPlus).Size(14, 14).TextColor(fg) })
 			if add.Clicked() {
 				a.newPlaylist(nil)
 			}
 		}
 	}
-	if a.sidebarSectionHeader(c, section, title, len(visible), prevHadItems, trailing) {
+	if a.sidebarSectionHeader(c, section, title, len(lists), prevHadItems, trailing) {
 		return true, false
-	}
-	if len(visible) == 0 {
-		ui.Text(c, "全部歌单已置顶").FontSize(12).TextColor(a.pal.faint).Margin(2, 10, 2, 10)
-		return true, true
 	}
 	if a.settings.MyPlaylistGrid {
 		ui.Grid(c.Key(title + "-grid")).Columns(2).Gap(6).Children(func() {
-			for _, pl := range visible {
-				a.myPlaylist(c, pl, mine, true, false, -1, 0)
+			for i := range lists {
+				a.myPlaylist(c, &lists[i], mine, true, false, -1, 0)
 			}
 		})
 		return true, true
 	}
-	for _, pl := range visible {
-		a.myPlaylist(c, pl, mine, false, false, -1, 0)
+	for i := range lists {
+		a.myPlaylist(c, &lists[i], mine, false, false, -1, 0)
 	}
 	return true, true
 }
@@ -1144,18 +1132,20 @@ func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid, pinned
 		}
 	})
 	b.ContextMenu(func(m *ui.Menu) {
-		if pinned {
+		if pinned || a.isPlaylistPinned(pl.ID) {
 			if m.Item("取消置顶").Chosen() {
 				a.togglePlaylistPinned(pl.ID)
 			}
-			if pinIdx > 0 {
-				if m.Item("上移").Chosen() {
-					a.movePinnedPlaylist(pl.ID, -1)
+			if pinned {
+				if pinIdx > 0 {
+					if m.Item("上移").Chosen() {
+						a.movePinnedPlaylist(pl.ID, -1)
+					}
 				}
-			}
-			if pinIdx >= 0 && pinIdx < pinCount-1 {
-				if m.Item("下移").Chosen() {
-					a.movePinnedPlaylist(pl.ID, 1)
+				if pinIdx >= 0 && pinIdx < pinCount-1 {
+					if m.Item("下移").Chosen() {
+						a.movePinnedPlaylist(pl.ID, 1)
+					}
 				}
 			}
 		} else {

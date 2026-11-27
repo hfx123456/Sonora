@@ -152,38 +152,38 @@ func TestSidebarPinnedPlaylistsSectionAboveMine(t *testing.T) {
 		t.Fatalf("after 上移 飙升榜.Y=%v should be above 睡前.Y=%v", b1.Y, b2.Y)
 	}
 
-	// Collapsing "置顶歌单" hides pinned items too.
-	if err := tt.Click("置顶歌单"); err != nil {
+	// Collapsing "置顶歌单" while "我的歌单" is expanded proves pinned playlists
+	// STILL stay listed inside "我的歌单" / "我的收藏" (not removed from them).
+	if err := tt.Click("我的歌单"); err != nil { // re-expand 我的歌单
+		t.Fatal(err)
+	}
+	if err := tt.Click("置顶歌单"); err != nil { // collapse 置顶歌单
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if _, ok := tt.Find("睡前"); ok {
-		t.Fatal("睡前 should hide when 置顶歌单 is collapsed")
+	mineHdr, _ = tt.Find("我的歌单")
+	keptInMine, okKept := tt.Find("睡前")
+	if !okKept || keptInMine.Y <= mineHdr.Y {
+		t.Fatalf("pinned 睡前 disappeared from 我的歌单: found=%v y=%v mineHdr.Y=%v", okKept, keptInMine.Y, mineHdr.Y)
 	}
-	if err := tt.Click("置顶歌单"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-
-	// Unpinning from "置顶歌单" restores playlist back under "我的歌单".
-	if err := tt.Click("我的歌单"); err != nil { // re-expand
-		t.Fatal(err)
-	}
-	tt.Frame()
+	// Right-clicking the copy inside "我的歌单" offers "取消置顶" (not duplicate "置顶歌单").
 	if err := tt.RightClick("睡前"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tt.ChooseMenuItem("取消置顶"); err != nil {
-		t.Fatalf("unpin 睡前: %v (menu=%q)", err, tt.Menu())
+		t.Fatalf("unpin 睡前 from 我的歌单: %v (menu=%q)", err, tt.Menu())
 	}
 	tt.Frame()
 	if a.isPlaylistPinned(pl11) {
 		t.Fatal("睡前 remained pinned after 取消置顶")
 	}
-	mineHdr, _ = tt.Find("我的歌单")
-	unpinnedSleep, _ := tt.Find("睡前")
-	if unpinnedSleep.Y <= mineHdr.Y {
-		t.Fatalf("unpinned 睡前.Y=%v should move back below 我的歌单.Y=%v", unpinnedSleep.Y, mineHdr.Y)
+	// Re-expand "置顶歌单" (飙升榜 is still pinned).
+	if err := tt.Click("置顶歌单"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if _, ok := tt.Find("飙升榜"); !ok {
+		t.Fatal("飙升榜 missing after re-expanding 置顶歌单")
 	}
 }
 
