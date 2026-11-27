@@ -34,7 +34,6 @@ type miniState struct {
 	placing   bool
 	saveTimer *time.Timer
 	scrub     scrubState
-	morph     miniMorphState
 }
 
 // titlebarMiniButton renders the top-right window-mode button beside the native
@@ -86,33 +85,19 @@ func (a *app) titlebarMiniButton(c *ui.Context, darkOnOverlay bool) {
 }
 
 // enterMiniMode switches directly from the full main window to the floating
-// mini player with a zero-hitch GPU shrink-to-mini morph animation.
+// mini player: opens the mini window immediately and hides the main window.
 func (a *app) enterMiniMode() {
 	if a.splash.win != nil && !a.splash.done {
 		a.finishSplash()
 	}
-	if !a.canAnimateMiniMorph() {
-		was := a.settings.MiniPlayer
-		a.setMiniPlayerEnabled(true)
-		if was {
-			a.syncMiniPlayer()
-		}
-		if a.win != nil && a.settings.MiniPlayer {
-			a.win.Hide()
-		}
-		return
+	was := a.settings.MiniPlayer
+	a.setMiniPlayerEnabled(true)
+	if was {
+		a.syncMiniPlayer()
 	}
-	if a.mini.morph.active() {
-		return
+	if a.win != nil && a.settings.MiniPlayer {
+		a.win.Hide()
 	}
-	a.settings.MiniPlayer = true
-	style := a.settings.effectiveMiniStyle()
-	miniRect := miniBounds(style, a.settings.MiniPosition, a.settings.MiniPositionSet, mygo.Screen.Displays(), mygo.Screen.PrimaryDisplay())
-	mainRect := a.mainWindowMorphBounds()
-	// Ensure mini window exists (hidden) before flight starts; zero disk I/O
-	// and zero CapturePage CPU stalls on click.
-	a.ensureMiniWindow(miniRect, style)
-	a.startMiniMorph(miniMorphToMini, mainRect, insetRect(miniRect, miniShadowPad), miniRect, style)
 }
 
 // miniSmokeColor ensures the comet progress bar & smoke stay luminous and
@@ -389,29 +374,17 @@ func (a *app) setMiniPlayerEnabled(on bool) {
 		a.keepMiniPosition()
 	}
 	a.settings.MiniPlayer = on
-	a.settings.save()
 	a.syncMiniPlayer()
 	a.redraw()
+	if !on {
+		go a.settings.save()
+	}
 }
 
-// restoreMainFromMini switches back from mini mode to the normal main window
-// with a zero-hitch GPU expand-to-main morph animation.
+// restoreMainFromMini switches back from mini mode to the normal main window.
 func (a *app) restoreMainFromMini() {
-	if !a.canAnimateMiniMorph() || a.mini.win == nil {
-		a.setMiniPlayerEnabled(false)
-		a.showMain()
-		return
-	}
-	if a.mini.morph.active() {
-		return
-	}
-	a.keepMiniPosition()
-	miniWinRect := a.mini.win.Bounds()
-	style := a.settings.effectiveMiniStyle()
-	mainRect := a.mainWindowMorphBounds()
-	a.settings.MiniPlayer = false
-	go a.settings.save()
-	a.startMiniMorph(miniMorphToMain, insetRect(miniWinRect, miniShadowPad), mainRect, miniWinRect, style)
+	a.setMiniPlayerEnabled(false)
+	a.showMain()
 }
 
 // closeMiniWindow handles closing the frameless mini window consistently
@@ -478,7 +451,6 @@ func (a *app) keepMiniPosition() {
 }
 
 func (a *app) closeMiniPlayer() {
-	a.cancelMiniMorph()
 	a.keepMiniPosition()
 	if w := a.mini.win; w != nil {
 		a.mini.win = nil

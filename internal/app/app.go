@@ -357,7 +357,6 @@ func readsTraditional(langs []string) bool {
 var shotHook func(a *app)
 
 func (a *app) showMain() {
-	a.cancelMiniMorph()
 	if a.settings.MiniPlayer {
 		a.setMiniPlayerEnabled(false)
 	}
@@ -366,7 +365,6 @@ func (a *app) showMain() {
 		return
 	}
 	if a.win != nil {
-		a.win.SetOpacity(1)
 		a.win.Show()
 		if a.win.IsMinimized() {
 			a.win.Restore()
