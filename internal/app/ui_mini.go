@@ -84,8 +84,15 @@ func (a *app) titlebarMiniButton(c *ui.Context, darkOnOverlay bool) {
 // enterMiniMode switches directly from the full main window to the floating
 // mini player: opens the mini window and hides the main window.
 func (a *app) enterMiniMode() {
+	if a.splash.win != nil && !a.splash.done {
+		a.finishSplash()
+	}
+	was := a.settings.MiniPlayer
 	a.setMiniPlayerEnabled(true)
-	if a.win != nil {
+	if was {
+		a.syncMiniPlayer()
+	}
+	if a.win != nil && a.settings.MiniPlayer {
 		a.win.Hide()
 	}
 }
@@ -112,7 +119,7 @@ func (a *app) miniProgressBar(c *ui.Context, trackCol, fillCol, tintCol, accentC
 	pl := a.pl
 	st := &a.mini.scrub
 	dur := pl.Duration().Seconds()
-	if !st.active {
+	if !st.active && !st.held {
 		st.v = pl.Position().Seconds()
 	}
 	if dur <= 0 {
@@ -121,20 +128,36 @@ func (a *app) miniProgressBar(c *ui.Context, trackCol, fillCol, tintCol, accentC
 	maxV := max(dur, 1)
 	s := ui.SliderBase(c, &st.v, 0, maxV).Height(height).Disabled(dur <= 0).
 		Step(1).FocusRing(false).Label("迷你播放进度").Cursor(ui.CursorPointer)
-	pressed := s.Pressed()
+	s.HandleInput(func(ev ui.InputEvent) bool {
+		if ev.Button != 0 || dur <= 0 {
+			return false
+		}
+		switch ev.Kind {
+		case ui.InputPointerDown:
+			st.held, st.trackURI = true, trackURIOf(pl.Current())
+		case ui.InputPointerUp:
+			st.held = false
+			if ev.Canceled {
+				st.active, st.trackURI = false, ""
+			}
+		}
+		return false
+	})
+	pressed := st.held
+	curURI := trackURIOf(pl.Current())
 	switch {
-	case pressed && !st.active:
-		st.active, st.track = true, pl.Current()
-	case !pressed && st.active:
+	case pressed:
+		st.active = true
+	case st.active:
 		st.active = false
-		if st.track != nil && st.track == pl.Current() {
+		if st.trackURI != "" && st.trackURI == curURI {
 			pl.Seek(secs(min(st.v, max(0, dur-1))))
 		}
-		st.track = nil
+		st.trackURI = ""
 	case s.Changed():
 		pl.Seek(secs(min(st.v, max(0, dur-1))))
 	}
-	scrubbing := pressed && st.track == pl.Current()
+	scrubbing := pressed && st.trackURI != "" && st.trackURI == curURI
 	hot := s.Hovered() || scrubbing
 	thick := restThick
 	if hot {
@@ -261,13 +284,17 @@ func miniNearestDisplay(bounds mygo.Rectangle, displays []mygo.Display, primary 
 	return best
 }
 
+func (a *app) miniSplashActive() bool {
+	return (a.splash.win != nil || !a.splash.startedAt.IsZero()) && !a.splash.done
+}
+
 // syncMiniPlayer creates, updates, repositions, or hides the floating mini
 // player window according to the user's current settings.
 func (a *app) syncMiniPlayer() {
 	if a.win == nil || a.quitting || shotHook != nil {
 		return
 	}
-	if !a.settings.MiniPlayer {
+	if !a.settings.MiniPlayer || a.miniSplashActive() {
 		if a.mini.win != nil {
 			a.keepMiniPosition()
 			a.mini.win.Hide()
@@ -308,10 +335,11 @@ func (a *app) syncMiniPlayer() {
 			Content:       ui.View(a.miniView),
 		})
 		w.OnClose(func(e *mygo.CloseEvent) {
-			if !a.quitting {
-				e.PreventDefault()
-				a.setMiniPlayerEnabled(false)
+			if a.quitting {
+				return
 			}
+			e.PreventDefault()
+			a.closeMiniWindow()
 		})
 		w.OnMove(a.onMiniMove)
 		mygo.Screen.OnDisplaysChanged(func() {
@@ -334,6 +362,9 @@ func (a *app) setMiniPlayerEnabled(on bool) {
 	if a.settings.MiniPlayer == on {
 		return
 	}
+	if !on {
+		a.keepMiniPosition()
+	}
 	a.settings.MiniPlayer = on
 	a.settings.save()
 	a.syncMiniPlayer()
@@ -344,6 +375,19 @@ func (a *app) setMiniPlayerEnabled(on bool) {
 func (a *app) restoreMainFromMini() {
 	a.setMiniPlayerEnabled(false)
 	a.showMain()
+}
+
+// closeMiniWindow handles closing the frameless mini window consistently
+// whether triggered via OS close, UI close buttons, or the context menu.
+func (a *app) closeMiniWindow() {
+	switch {
+	case a.settings.QuitOnClose:
+		mygo.App.Quit()
+	case runtime.GOOS != "darwin" && a.tray == nil:
+		a.restoreMainFromMini()
+	default:
+		a.setMiniPlayerEnabled(false)
+	}
 }
 
 func (a *app) setMiniStyle(style string) {
@@ -422,7 +466,7 @@ func (a *app) miniMenu(menu *ui.Menu) {
 		a.showMain()
 	}
 	if menu.Item("关闭迷你播放器").Chosen() {
-		a.setMiniPlayerEnabled(false)
+		a.closeMiniWindow()
 	}
 }
 
@@ -649,7 +693,7 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 					closeAlpha := float32(0.45) + 0.55*hoverAlpha
 					if miniActionBtn(c.Key("mini-close"), iconX, 11.5, 22, pal.muted, pal.text, pal.hover, "关闭迷你播放器").
 						Opacity(closeAlpha).Clicked() {
-						a.setMiniPlayerEnabled(false)
+						a.closeMiniWindow()
 					}
 				})
 			})
@@ -789,7 +833,7 @@ func (a *app) miniCardView(c *ui.Context, pal palette) {
 							a.restoreMainFromMini()
 						}
 						if miniActionBtn(c.Key("card-close"), iconX, 11.5, 22, white.Alpha(0.86), white, white.Alpha(0.18), "关闭迷你播放器").Clicked() {
-							a.setMiniPlayerEnabled(false)
+							a.closeMiniWindow()
 						}
 					})
 				}

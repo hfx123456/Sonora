@@ -3,8 +3,26 @@ package localmusic
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"time"
 )
+
+func scaleDuration(num, den uint64) time.Duration {
+	if den == 0 || num == 0 {
+		return 0
+	}
+	secs := num / den
+	rem := num % den
+	const maxSecs = uint64(math.MaxInt64) / uint64(time.Second)
+	if secs >= maxSecs {
+		return time.Duration(math.MaxInt64)
+	}
+	ns := secs*uint64(time.Second) + (rem*uint64(time.Second))/den
+	if ns > uint64(math.MaxInt64) {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(ns)
+}
 
 type readAtSeeker interface {
 	io.Reader
@@ -21,7 +39,7 @@ func duration(file readAtSeeker, size int64, ext string) time.Duration {
 		packed := binary.BigEndian.Uint64(header[18:26])
 		rate, samples := packed>>44, packed&((1<<36)-1)
 		if rate > 0 {
-			return time.Duration(samples) * time.Second / time.Duration(rate)
+			return scaleDuration(samples, rate)
 		}
 	}
 	if string(header[:4]) == "RIFF" && string(header[8:12]) == "WAVE" {
@@ -39,8 +57,8 @@ func duration(file readAtSeeker, size int64, ext string) time.Duration {
 				}
 				rate = binary.LittleEndian.Uint32(data[8:12])
 			}
-			if string(chunk[:4]) == "data" && rate > 0 {
-				return time.Duration(length) * time.Second / time.Duration(rate)
+			if string(chunk[:4]) == "data" && rate > 0 && length > 0 {
+				return scaleDuration(uint64(length), uint64(rate))
 			}
 			offset += 8 + length + length%2
 		}
@@ -48,7 +66,7 @@ func duration(file readAtSeeker, size int64, ext string) time.Duration {
 	if string(header[4:8]) == "ftyp" {
 		return mp4Duration(file, 0, size, 0)
 	}
-	if ext != "" && ext != ".mp3" {
+	if ext != "" && ext != ".mp3" && ext != ".audio" {
 		return 0
 	}
 	return mp3Duration(file, size, header)
@@ -150,8 +168,8 @@ func mp3Duration(file readAtSeeker, size int64, header []byte) time.Duration {
 		}
 		for _, pos := range []int{index + 4 + crc + side, index + 4 + side} {
 			if pos+12 <= len(data) && (string(data[pos:pos+4]) == "Xing" || string(data[pos:pos+4]) == "Info") && binary.BigEndian.Uint32(data[pos+4:pos+8])&1 != 0 {
-				frames := int64(binary.BigEndian.Uint32(data[pos+8 : pos+12]))
-				return time.Duration(frames*samples) * time.Second / time.Duration(rate)
+				frames := uint64(binary.BigEndian.Uint32(data[pos+8 : pos+12]))
+				return scaleDuration(frames*uint64(samples), uint64(rate))
 			}
 		}
 		padding := int((bits >> 9) & 1)
@@ -166,7 +184,7 @@ func mp3Duration(file readAtSeeker, size int64, header []byte) time.Duration {
 		if remaining <= 0 {
 			return 0
 		}
-		return time.Duration(remaining*8) * time.Second / time.Duration(bitrate*1000)
+		return scaleDuration(uint64(remaining)*8, uint64(bitrate)*1000)
 	}
 	return 0
 }

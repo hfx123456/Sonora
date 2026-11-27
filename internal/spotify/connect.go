@@ -2,6 +2,7 @@ package spotify
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"encoding/base64"
@@ -9,14 +10,51 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 )
+
+const ConnectClientVersion = "harmony:4.62.0"
+
+func ConnectPlatformIdentifier() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "web_player windows 10;chrome 141.0.0.0;desktop"
+	case "darwin":
+		return "web_player osx 14.0;chrome 141.0.0.0;desktop"
+	default:
+		return "web_player linux;chrome 141.0.0.0;desktop"
+	}
+}
+
+type ConnectPlaybackStats struct {
+	MSTotalEst         int64  `json:"ms_total_est"`
+	MSMetadataDuration int64  `json:"ms_metadata_duration"`
+	StartOffsetMS      int64  `json:"start_offset_ms"`
+	StartBitrate       int    `json:"start_bitrate,omitempty"`
+	AudioStartBitrate  int    `json:"audio_start_bitrate,omitempty"`
+	KeySystem          string `json:"key_system,omitempty"`
+	LocalTimeMS        int64  `json:"local_time_ms"`
+}
+
+type ConnectStateReport struct {
+	StateRef         any
+	Position         int64
+	Duration         int64
+	Paused           bool
+	PreviousPosition *int64
+	Bitrate          int
+	Format           int
+	DebugSource      string
+	PlaybackStats    *ConnectPlaybackStats
+}
 
 type ConnectEvent struct {
 	Kind string
@@ -25,15 +63,17 @@ type ConnectEvent struct {
 }
 
 type Connect struct {
-	ID     string
-	Name   string
-	ctx    context.Context
-	cancel context.CancelFunc
-	emit   func(ConnectEvent)
-	mu     sync.Mutex
-	wg     sync.WaitGroup
-	seq    int64
-	host   string
+	ID        string
+	Name      string
+	ctx       context.Context
+	cancel    context.CancelFunc
+	emit      func(ConnectEvent)
+	mu        sync.Mutex
+	wg        sync.WaitGroup
+	seq       int64
+	lastState *ConnectStateReport
+	lastID    Identity
+	host      string
 }
 
 func NewConnect(id, name string, emit func(ConnectEvent)) *Connect {
@@ -74,19 +114,30 @@ func (c *Connect) requestWithIdentity(ctx context.Context, id Identity, method, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
+	var reqBody io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reqBody = bytes.NewReader(raw)
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, method, "https://"+c.host+path, bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(reqCtx, method, "https://"+c.host+path, reqBody)
 	if err != nil {
 		return nil, errors.New("Connect: 请求地址无效")
 	}
 	req.Header.Set("Authorization", "Bearer "+id.Token)
 	req.Header.Set("client-token", id.ClientToken)
-	req.Header.Set("Content-Type", "application/json")
+	if id.Token != "" && !id.Anonymous {
+		c.mu.Lock()
+		c.lastID = id
+		c.mu.Unlock()
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Origin", "https://open.spotify.com")
 	req.Header.Set("Referer", "https://open.spotify.com/")
@@ -191,10 +242,22 @@ func (c *Connect) session(receiver bool) error {
 		}
 		cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
 		defer stop()
+		// Use the latest in-memory identity without triggering an interactive
+		// renewal (which can deadlock against the UI thread on quit or race with SignOut).
+		cleanupID := CachedIdentity()
+		if cleanupID.Token == "" {
+			c.mu.Lock()
+			cleanupID = c.lastID
+			c.mu.Unlock()
+		}
+		if cleanupID.Token == "" {
+			cleanupID = id
+		}
 		if receiver {
-			_, _ = c.requestWithIdentity(cleanup, id, http.MethodDelete, "/track-playback/v1/devices/"+c.ID, "", map[string]any{"debug_source": "deregister"}, false)
+			deregBody := c.deregisterBody()
+			_, _ = c.requestWithIdentity(cleanup, cleanupID, http.MethodDelete, "/track-playback/v1/devices/"+c.ID, "", deregBody, false)
 		} else {
-			_, _ = c.requestWithIdentity(cleanup, id, http.MethodDelete, "/connect-state/v1/devices/"+c.ID+"-observer", connection, nil, false)
+			_, _ = c.requestWithIdentity(cleanup, cleanupID, http.MethodDelete, "/connect-state/v1/devices/"+c.ID+"-observer", connection, nil, false)
 		}
 	}()
 	for {
@@ -291,12 +354,10 @@ func decodeConnectPayload(raw json.RawMessage) (json.RawMessage, error) {
 }
 
 func (c *Connect) registerReceiver(ctx context.Context, connection string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	body := map[string]any{
-		"device": map[string]any{"brand": "spotify", "device_id": c.ID, "device_type": "computer", "model": "web_player", "name": c.Name, "metadata": map[string]any{}, "is_group": false, "platform_identifier": "web_player windows 10;chrome 141.0.0.0;desktop",
+		"device": map[string]any{"brand": "spotify", "device_id": c.ID, "device_type": "computer", "model": "web_player", "name": c.Name, "metadata": map[string]any{}, "is_group": false, "platform_identifier": ConnectPlatformIdentifier(),
 			"capabilities": map[string]any{"change_volume": true, "enable_play_token": true, "supports_file_media_type": true, "play_token_lost_behavior": "pause", "disable_connect": false, "audio_podcasts": true, "video_playback": false, "manifest_formats": []string{"file_ids_mp4", "file_ids_mp4_dual"}}},
-		"outro_endcontent_snooping": false, "connection_id": connection, "client_version": "harmony:4.62.0", "volume": 52428,
+		"outro_endcontent_snooping": false, "connection_id": connection, "client_version": ConnectClientVersion, "volume": 52428,
 	}
 	raw, err := c.request(ctx, http.MethodPost, "/track-playback/v1/devices", "", body)
 	if err != nil {
@@ -308,7 +369,10 @@ func (c *Connect) registerReceiver(ctx context.Context, connection string) error
 	if err = json.Unmarshal(raw, &result); err != nil {
 		return err
 	}
+	c.mu.Lock()
 	c.seq = result.Seq
+	c.lastState = nil
+	c.mu.Unlock()
 	return nil
 }
 
@@ -349,20 +413,129 @@ func (e *ConnectError) Error() string {
 	return s
 }
 
-func (c *Connect) Report(ref any, position, duration int64, paused bool) error {
+func (c *Connect) deregisterBody() map[string]any {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.seq++
+	seq := c.seq
+	last := c.lastState
+	c.lastState = nil
+	c.mu.Unlock()
+	body := map[string]any{
+		"seq_num":      seq,
+		"debug_source": "deregister",
+	}
+	if last != nil {
+		body["state_ref"] = last.StateRef
+		body["sub_state"] = connectSubState(*last)
+		if last.PreviousPosition != nil {
+			body["previous_position"] = *last.PreviousPosition
+		}
+	}
+	return body
+}
+
+func connectSubState(report ConnectStateReport) map[string]any {
 	speed := 1
-	if paused {
+	if report.Paused {
 		speed = 0
 	}
-	body := map[string]any{"seq_num": c.seq, "state_ref": ref, "sub_state": map[string]any{"position": position, "duration": duration, "playback_speed": speed, "media_type": "AUDIO"}, "debug_source": "vinyl"}
+	sub := map[string]any{
+		"position":       report.Position,
+		"duration":       report.Duration,
+		"playback_speed": speed,
+		"media_type":     "AUDIO",
+	}
+	if report.Bitrate > 0 {
+		sub["bitrate"] = report.Bitrate
+	}
+	if report.Format > 0 {
+		sub["format"] = report.Format
+	}
+	return sub
+}
+
+func (c *Connect) UpdateLastPosition(posMs, durMs int64, paused bool) {
+	c.mu.Lock()
+	if c.lastState != nil {
+		c.lastState.Position = posMs
+		if durMs > 0 {
+			c.lastState.Duration = durMs
+		}
+		c.lastState.Paused = paused
+		c.lastState.PreviousPosition = nil
+		if m, ok := c.lastState.StateRef.(map[string]any); ok {
+			refCopy := make(map[string]any, len(m))
+			for k, v := range m {
+				refCopy[k] = v
+			}
+			refCopy["paused"] = paused
+			c.lastState.StateRef = refCopy
+		}
+	}
+	c.mu.Unlock()
+}
+
+func (c *Connect) ReportState(report ConnectStateReport) error {
+	c.mu.Lock()
+	c.seq++
+	seq := c.seq
+	if report.StateRef != nil && report.DebugSource != "track_data_finalized" {
+		copied := report
+		if m, ok := report.StateRef.(map[string]any); ok {
+			refCopy := make(map[string]any, len(m))
+			for k, v := range m {
+				refCopy[k] = v
+			}
+			copied.StateRef = refCopy
+		}
+		copied.PreviousPosition = nil
+		copied.PlaybackStats = nil
+		c.lastState = &copied
+	} else if report.StateRef == nil {
+		c.lastState = nil
+	}
+	c.mu.Unlock()
+
+	body := map[string]any{
+		"seq_num":      seq,
+		"state_ref":    report.StateRef,
+		"sub_state":    connectSubState(report),
+		"debug_source": cmp.Or(report.DebugSource, "progress"),
+	}
+	if report.PreviousPosition != nil {
+		body["previous_position"] = *report.PreviousPosition
+	}
+	if report.PlaybackStats != nil {
+		body["playback_stats"] = report.PlaybackStats
+	}
 	raw, err := c.request(c.ctx, http.MethodPut, "/track-playback/v1/devices/"+c.ID+"/state", "", body)
 	if err == nil && len(raw) > 0 {
+		var meta struct {
+			EndSong  json.RawMessage   `json:"endsong"`
+			EndSongs []json.RawMessage `json:"endsongs"`
+		}
+		if json.Unmarshal(raw, &meta) == nil {
+			n := len(meta.EndSongs)
+			if n == 0 && len(meta.EndSong) > 0 && string(meta.EndSong) != "null" {
+				n = 1
+			}
+			if n > 0 {
+				log.Printf("connect: spotify emitted %d endsong(s)", n)
+			}
+		}
 		c.notify("report", raw, nil)
 	}
 	return err
+}
+
+func (c *Connect) Report(ref any, position, duration int64, paused bool) error {
+	return c.ReportState(ConnectStateReport{
+		StateRef:    ref,
+		Position:    position,
+		Duration:    duration,
+		Paused:      paused,
+		DebugSource: "progress",
+	})
 }
 
 func (c *Connect) Reject(machine ConnectMachine, ref *ConnectRef, current any, position, duration int64, paused bool) error {
@@ -370,13 +543,14 @@ func (c *Connect) Reject(machine ConnectMachine, ref *ConnectRef, current any, p
 		return errors.New("Connect: 无效冲突状态")
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.seq++
+	seq := c.seq
+	c.mu.Unlock()
 	speed := 1
 	if paused {
 		speed = 0
 	}
-	body := map[string]any{"seq_nums": []int64{c.seq}, "state_ref": current, "sub_state": map[string]any{"position": position, "duration": duration, "playback_speed": speed, "media_type": "AUDIO"}, "rejected_state_refs": []any{map[string]any{"state_machine_id": machine.ID, "state_id": machine.States[ref.Index].ID, "paused": ref.Paused}}, "debug_source": "state_conflict"}
+	body := map[string]any{"seq_nums": []int64{seq}, "state_ref": current, "sub_state": map[string]any{"position": position, "duration": duration, "playback_speed": speed, "media_type": "AUDIO"}, "rejected_state_refs": []any{map[string]any{"state_machine_id": machine.ID, "state_id": machine.States[ref.Index].ID, "paused": ref.Paused}}, "debug_source": "state_conflict"}
 	raw, err := c.request(c.ctx, http.MethodPost, "/track-playback/v1/devices/"+c.ID+"/state_conflict", "", body)
 	if err != nil {
 		return err

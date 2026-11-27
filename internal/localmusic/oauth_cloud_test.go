@@ -19,6 +19,32 @@ import (
 	"vinyl/internal/spotify"
 )
 
+// Cached tracks from before per-source URLs must keep the account recorded in the index.
+func TestCachedOAuthTracksKeepTheirOwnSource(t *testing.T) {
+	first := CloudSource{ID: "first", Type: CloudTypeOneDrive}
+	second := CloudSource{ID: "second", Type: CloudTypeOneDrive}
+	index := &cloudIndexCache{Entries: map[string]cloudIndexEntry{}}
+	for _, source := range []CloudSource{first, second} {
+		audio := oauthVirtualURL(source.Type, "", source.ID+"-song")
+		lrc := oauthVirtualURL(source.Type, "", source.ID+"-lyrics")
+		index.Entries[audio] = cloudIndexEntry{SourceID: source.ID, Track: spotify.Track{
+			ID: source.ID, CloudURL: audio, CloudLyricsURL: lrc,
+		}}
+	}
+	cachePath := filepath.Join(t.TempDir(), "index.json")
+	saveCloudIndex(cachePath, index)
+	tracks := LoadCachedCloud(cachePath, []CloudSource{first, second})
+	if len(tracks) != 2 {
+		t.Fatalf("cached cloud tracks: %d", len(tracks))
+	}
+	for _, track := range tracks {
+		if track.CloudURL != "onedrive://"+track.ID+"/"+track.ID+"-song" ||
+			track.CloudLyricsURL != "onedrive://"+track.ID+"/"+track.ID+"-lyrics" {
+			t.Errorf("track %s lost its source: %s, %s", track.ID, track.CloudURL, track.CloudLyricsURL)
+		}
+	}
+}
+
 // OneDrive OAuth PKCE flow exchanges code for refresh_token, scans nested folders
 // via Range without full downloads, loads companion LRC, and uploads files.
 func TestOneDriveOAuthScanRangeLyricsAndUpload(t *testing.T) {
@@ -119,7 +145,16 @@ func TestOneDriveOAuthScanRangeLyricsAndUpload(t *testing.T) {
 			return err
 		}
 		q := u.Query()
-		cb := q.Get("redirect_uri") + "?code=test-code&state=" + url.QueryEscape(q.Get("state"))
+		redirect := q.Get("redirect_uri")
+		// Browser requests other than the valid callback must leave authorization pending.
+		for _, path := range []string{"/apple-touch-icon.png", "/?state=unrelated"} {
+			resp, err := http.Get(redirect + path)
+			if err != nil {
+				return err
+			}
+			resp.Body.Close()
+		}
+		cb := redirect + "?code=test-code&state=" + url.QueryEscape(q.Get("state"))
 		go func() {
 			resp, err := http.Get(cb)
 			if err == nil {

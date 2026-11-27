@@ -333,7 +333,7 @@ func Decorate(list []Track) ([]Track, error) {
 	for i, t := range out {
 		if d, ok := found[t.URI()]; ok && t.Unnamed() {
 			// It says nothing of playability: Spotify queued it to play.
-			d.UID, d.Unplayable = t.UID, false
+			d.UID, d.LinkedFrom, d.Unplayable = t.UID, t.LinkedFrom, false
 			out[i] = d
 		}
 	}

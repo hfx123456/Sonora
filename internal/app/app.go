@@ -106,6 +106,7 @@ type app struct {
 	foundAlbums, foundLists, foundShows []spotify.Playlist // the albums, playlists and podcasts a search found
 
 	daily       []spotify.Track
+	dailyURI    string
 	dailySpin   spinState // the record on the daily card
 	dailyBars   barState  // the bars on its play button
 	charts      []spotify.Playlist
@@ -132,11 +133,12 @@ type app struct {
 	arErr      map[string]string
 	loadingRel map[string]bool // an artist's releases of a kind, all asked for
 
-	tracks    map[string]*spotify.TrackPage
-	loadingTr map[string]bool
-	trErr     map[string]string
+	tracks            map[string]*spotify.TrackPage
+	loadingTr         map[string]bool
+	trErr             map[string]string
 	barCredits        map[string][]spotify.Credit
 	barCreditsLoading map[string]bool
+	barCreditsRetry   map[string]time.Time
 
 	cats            []spotify.Category               // the tiles of the browse page
 	catPages        map[string]*spotify.CategoryPage // by URI
@@ -156,6 +158,7 @@ type app struct {
 	results           []spotify.Track
 	found             []spotify.ArtistCard // the artists matching the search
 	searching         bool
+	searchGen         uint64
 	searchErr         string
 	searchBox         ui.Handle
 	playlistSearchBox ui.Handle
@@ -202,6 +205,7 @@ type app struct {
 	// the way it showed before full screen, which leaving it goes back to.
 	mvMode, mvFrom int
 	mvMadeFull     bool      // the window went full screen for the video, to leave with it
+	mvEnteredFull  bool      // full screen entry already handled for the current mvFullScreen mode
 	mvShown        bool      // the video filled Now Playing in the last frame
 	mvMoved        bool      // the pointer moved over the video since the last frame
 	mvMovedAt      time.Time // when the pointer last moved over the video
@@ -222,61 +226,63 @@ type app struct {
 	localSearchBox  ui.Handle
 	cloudOffline    bool
 
-	cloudFormOpen     bool
-	cloudFormTab      int // 0: WebDAV, 1: OneDrive, 2: Google Drive, 3: Baidu, 4: Quark, 5: 115
-	cloudFormAdvanced bool
-	cloudFormName     string
-	cloudFormURL      string
-	cloudFormFolder   string
-	cloudFormUser     string
-	cloudFormPass     string
-	cloudFormClientID string
-	cloudFormSecret   string
-	cloudFormTesting  bool
-	cloudFormAuthing  bool
-	cloudFormErr      string
-	cloudFormOK       string
-	cloudLoginWin      *mygo.Window
-	cloudLoginGen      int
+	cloudFormOpen        bool
+	cloudFormTab         int // 0: WebDAV, 1: OneDrive, 2: Google Drive, 3: Baidu, 4: Quark, 5: 115
+	cloudFormAdvanced    bool
+	cloudFormName        string
+	cloudFormURL         string
+	cloudFormFolder      string
+	cloudFormUser        string
+	cloudFormPass        string
+	cloudFormClientID    string
+	cloudFormSecret      string
+	cloudFormTesting     bool
+	cloudFormAuthing     bool
+	cloudOAuthCancel     func()
+	cloudFormErr         string
+	cloudFormOK          string
+	cloudLoginWin        *mygo.Window
+	cloudLoginGen        int
 	cloudBrowseID        string
 	cloudBrowsePath      string
 	cloudBrowseSelected  string
 	cloudBrowseClickPath string
 	cloudBrowseClickAt   time.Time
 	cloudBrowseDirs      []localmusic.CloudFolder
-	cloudBrowseLoading bool
-	cloudBrowseErr     string
-	cloudBrowseGen     int
-	cloudUploading     bool
-	cloudSyncing        bool
-	cloudSyncDone       int
-	cloudSyncSucceeded  int
-	cloudSyncFailed     int
-	cloudSyncLastFailed int
-	cloudSyncTotal      int
-	cloudSyncCancel     func()
-	proxyText       string          // the proxy as typed in the settings, till it is set
-	proxyErr        string          // why what was typed cannot be set
-	proxyTyping     bool            // the proxy's field had the focus last frame
-	recording       string          // the action whose global shortcut the settings wait for
-	recFocused      bool            // and its button has had the focus since
-	recSeen         bool            // whether the recording button was built this frame
-	hotkeyErr       map[string]bool // the actions whose shortcut the system would not take
-	cacheUsed       int64           // the bytes the cache of tracks takes, -1 until measured
-	cacheMeasureGen int             // guards stale async cache size measurements
-	upd             updates         // a newer version, looked for and installed
+	cloudBrowseLoading   bool
+	cloudBrowseErr       string
+	cloudBrowseGen       int
+	cloudUploading       bool
+	cloudSyncing         bool
+	cloudSyncDone        int
+	cloudSyncSucceeded   int
+	cloudSyncFailed      int
+	cloudSyncLastFailed  int
+	cloudSyncTotal       int
+	cloudSyncCancel      func()
+	cloudSyncGen         uint64
+	proxyText            string          // the proxy as typed in the settings, till it is set
+	proxyErr             string          // why what was typed cannot be set
+	proxyTyping          bool            // the proxy's field had the focus last frame
+	recording            string          // the action whose global shortcut the settings wait for
+	recFocused           bool            // and its button has had the focus since
+	recSeen              bool            // whether the recording button was built this frame
+	hotkeyErr            map[string]bool // the actions whose shortcut the system would not take
+	cacheUsed            int64           // the bytes the cache of tracks takes, -1 until measured
+	cacheMeasureGen      int             // guards stale async cache size measurements
+	upd                  updates         // a newer version, looked for and installed
 
-	restored       bool   // playback picked up where it was left
-	accountGen     int    // signed in or out how many times: a sign-in asked before is no one's
-	accountSession uint32 // 1 while an account session may exist; prevents guest requests from spawning hidden WebViews
+	restored        bool        // playback picked up where it was left
+	accountGen      int         // signed in or out how many times: a sign-in asked before is no one's
+	accountSession  uint32      // 1 while an account session may exist; prevents guest requests from spawning hidden WebViews
 	savedSession    string      // the session as last kept
 	sessionDue      bool        // a save of the session is due
 	sessionTrack    string      // the track the session was last kept of
 	sessionGen      int         // incremented on clearSession to drop pending saves
 	fusionSaveTimer *time.Timer // debounces settings.save during floating window drag
-	homeFile       string // where what the home page shows is kept, "" to keep none
-	splash         splashState
-	mini           miniState
+	homeFile        string      // where what the home page shows is kept, "" to keep none
+	splash          splashState
+	mini            miniState
 }
 
 // playbackChanged follows what the player did to what plays.
@@ -290,6 +296,7 @@ func (a *app) playbackChanged() {
 		a.saveSession()
 	}
 	a.keepSession()
+	a.connectPlaybackChanged()
 	a.reportConnect()
 	a.ensureFusion(false)
 	a.syncFusionVisibility()
@@ -350,6 +357,9 @@ func readsTraditional(langs []string) bool {
 var shotHook func(a *app)
 
 func (a *app) showMain() {
+	if a.settings.MiniPlayer {
+		a.setMiniPlayerEnabled(false)
+	}
 	if a.splash.win != nil {
 		a.finishSplash()
 		return
@@ -494,11 +504,10 @@ func Run() error {
 		// shows as it did before.
 		a.win.OnLeaveFullScreen(func() {
 			a.post(func() {
-				if a.mvMadeFull {
-					a.mvMadeFull = false
-					if a.mvMode == mvFullScreen {
-						a.mvMode = a.mvFrom
-					}
+				a.mvMadeFull = false
+				a.mvEnteredFull = false
+				if a.mvMode == mvFullScreen {
+					a.mvMode = a.mvFrom
 				}
 			})
 		})
@@ -540,9 +549,6 @@ func Run() error {
 			a.fusion.manualShow = false
 			a.syncFusionVisibility()
 		}
-		if a.settings.MiniPlayer && shotHook == nil {
-			a.syncMiniPlayer()
-		}
 		if shotHook != nil {
 			shotHook(a)
 		}
@@ -564,6 +570,7 @@ func Run() error {
 	})
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
 		a.quitting = true
+		a.cancelCloudOAuth()
 		if a.splash.guard != nil {
 			a.splash.guard.Stop()
 			a.splash.guard = nil

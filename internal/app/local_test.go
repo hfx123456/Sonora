@@ -301,6 +301,10 @@ func TestCloudSourceFormAddAndFilter(t *testing.T) {
 	if len(filtered) != 1 || !filtered[0].Cloud() {
 		t.Fatalf("expected only cloud track, got %+v", filtered)
 	}
+	a.playLocalMatch(filtered[0])
+	if queue := a.pl.Queue(); len(queue) != 1 || !queue[0].Cloud() {
+		t.Fatalf("matched track queued songs outside the cloud scope: %+v", queue)
+	}
 }
 
 // With NM_FRAMES set, saves screenshots of the Cloud Music Disk setup/folder picker and playlist track covers.

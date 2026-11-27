@@ -135,14 +135,21 @@ func (a *app) syncFullScreen(npOpen bool) {
 	if !want && a.mvMode == mvFullScreen {
 		a.mvMode = a.mvFrom
 	}
-	if a.win == nil || want == a.mvMadeFull {
+	if a.win == nil {
 		return
 	}
 	if !want {
-		a.mvMadeFull = false
-		a.win.SetFullScreen(false)
+		a.mvEnteredFull = false
+		if a.mvMadeFull {
+			a.mvMadeFull = false
+			a.win.SetFullScreen(false)
+		}
 		return
 	}
+	if a.mvEnteredFull {
+		return
+	}
+	a.mvEnteredFull = true
 	if !a.win.IsFullScreen() {
 		a.mvMadeFull = true
 		a.win.SetFullScreen(true)

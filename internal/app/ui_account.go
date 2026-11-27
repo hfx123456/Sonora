@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -25,16 +26,54 @@ import (
 // spotify, again whenever that runs out; shown, it is where the listener
 // signs in. Closed in between, its page gives back the memory it took.
 type signin struct {
-	win      *mygo.Window
-	qtID     uint64
-	qtCancel context.CancelFunc
-	cookies  string
-	shown    bool // the window shows, for the listener to sign in
-	gen      int  // counts the times it showed, to stop the wait of one closed
+	win           *mygo.Window
+	qtID          uint64
+	qtCancel      context.CancelFunc
+	renewCancel   context.CancelFunc
+	renewCancelID uint64
+	cookies       string
+	shown         bool // the window shows, for the listener to sign in
+	gen           int  // counts the times it showed, to stop the wait of one closed
 }
 
 // captureMu lets one capture use the window at a time.
 var captureMu sync.Mutex
+
+// renewCancelMu guards signin.renewCancel / renewCancelID across goroutines
+// without putting a sync.Mutex value inside app.
+var renewCancelMu sync.Mutex
+
+// pendingCookieClear ensures an explicit sign-out clears browser cookies
+// strictly before any immediately subsequent login window opens, without
+// wiping a new sign-in's cookies if the background sign-out goroutine runs late.
+var pendingCookieClear atomic.Bool
+
+func (a *app) setRenewCancel(cancel context.CancelFunc) uint64 {
+	renewCancelMu.Lock()
+	defer renewCancelMu.Unlock()
+	a.signin.renewCancelID++
+	id := a.signin.renewCancelID
+	a.signin.renewCancel = cancel
+	return id
+}
+
+func (a *app) clearRenewCancel(id uint64) {
+	renewCancelMu.Lock()
+	if a.signin.renewCancelID == id {
+		a.signin.renewCancel = nil
+	}
+	renewCancelMu.Unlock()
+}
+
+func (a *app) cancelRenew() {
+	renewCancelMu.Lock()
+	cancel := a.signin.renewCancel
+	a.signin.renewCancel = nil
+	renewCancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
 
 // boot signs in as the listener last did, if the web player still is, then
 // loads the home page.
@@ -46,22 +85,27 @@ func (a *app) boot() {
 	// anonymous visitor has, instead of waiting for someone to sign in.
 	spotify.RenewGuest = spotify.AnonymousIdentity
 	gen := a.accountGen
+	epoch := accountEpoch()
 	go func() {
 		// Nobody ever signed in: there is nothing to renew, and loading
 		// the web player would only take ten seconds to say so. The
 		// visitor's pages show at once instead.
-		if !hasAccountCookies() {
-			a.setAccountSession(false)
-			a.post(func() {
-				if a.profile == nil {
-					a.signedIn(nil)
+		kept := hasAccountCookies()
+		a.post(func() {
+			if gen != a.accountGen || a.quitting || accountEpoch() != epoch {
+				return
+			}
+			if !kept {
+				a.signedIn(nil)
+				return
+			}
+			a.setAccountSession(true)
+			askAccount(a, func(prof *spotify.Profile, err error) {
+				if accountEpoch() == epoch {
+					a.tookSignIn(gen, 0, prof, err)
 				}
 			})
-			return
-		}
-		a.setAccountSession(true)
-		prof, err := keptAccount()
-		a.post(func() { a.tookSignIn(gen, 0, prof, err) })
+		})
 	}()
 }
 
@@ -122,20 +166,36 @@ func (a *app) tookSignIn(gen, try int, prof *spotify.Profile, err error) {
 	}
 	wait := min(signInFirst<<min(try, 8), signInLast)
 	log.Printf("sign in: %v; again in %v", err, wait)
+	wasSession := a.hasAccountSession()
+	epoch := accountEpoch()
 	if try == 0 {
 		if a.profile != nil {
 			a.homeLoading = false
 		} else {
-			// Nothing was kept to show: the visitor's pages, meanwhile.
+			// Nothing was kept to show: show visitor pages without leaving
+			// accountSession=true during the offline wait (which would force
+			// guest browsing into account renewal / hidden WebView timeouts).
 			a.signedIn(nil)
 			gen = a.accountGen
+			epoch = accountEpoch()
 		}
+	} else if a.profile == nil {
+		// Retry failed while still offline in visitor mode: keep guest
+		// browsing cleanly signed out until the next backoff attempt.
+		a.setAccountSession(false)
 	}
 	signInAfter(a, wait, func() {
-		if gen != a.accountGen || a.quitting {
+		if gen != a.accountGen || a.quitting || accountEpoch() != epoch {
 			return
 		}
-		askAccount(a, func(prof *spotify.Profile, err error) { a.tookSignIn(gen, try+1, prof, err) })
+		if wasSession && a.profile == nil {
+			a.setAccountSession(true)
+		}
+		askAccount(a, func(prof *spotify.Profile, err error) {
+			if accountEpoch() == epoch {
+				a.tookSignIn(gen, try+1, prof, err)
+			}
+		})
 	})
 }
 
@@ -156,6 +216,9 @@ func (a *app) signinWindow(url string) *mygo.Window {
 		if s.win == w {
 			s.win, s.shown = nil, false
 			s.gen++
+			if a.profile == nil && a.homeLoading && !a.quitting {
+				a.signedIn(nil)
+			}
 		}
 	})
 	s.win = w
@@ -164,6 +227,7 @@ func (a *app) signinWindow(url string) *mygo.Window {
 
 // closeSignin closes the web player's window, on the main thread.
 func (a *app) closeSignin() {
+	a.cancelRenew()
 	if cancel := a.signin.qtCancel; cancel != nil {
 		a.signin.qtCancel, a.signin.qtID, a.signin.shown = nil, 0, false
 		cancel()
@@ -222,26 +286,28 @@ func (a *app) renewWebViewIdentity() (spotify.Identity, error) {
 		return spotify.Identity{}, spotify.ErrSignedOut
 	}
 	if qtweb.Enabled() {
-		return a.renewQtIdentity()
+		return a.renewQtIdentityFull()
 	}
 	epoch := accountEpoch()
 	kept := loadAccountCookies()
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	cancelID := a.setRenewCancel(cancel)
+	defer a.clearRenewCancel(cancelID)
 	captureMu.Lock()
 	defer captureMu.Unlock()
-	if accountEpoch() != epoch || !a.hasAccountSession() {
+	if ctx.Err() != nil || accountEpoch() != epoch || !a.hasAccountSession() {
 		return spotify.Identity{}, spotify.ErrSignedOut
 	}
 	var w *mygo.Window
 	mygo.RunOnMain(func() {
-		if accountEpoch() == epoch && a.hasAccountSession() && !a.quitting {
+		if ctx.Err() == nil && accountEpoch() == epoch && a.hasAccountSession() && !a.quitting {
 			w = a.signinWindow(spotify.WebPlayerURL)
 		}
 	})
 	if w == nil {
 		return spotify.Identity{}, spotify.ErrSignedOut
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
 	id, err := capture(ctx, w.Page(), false)
 	cookies := ""
 	switch {
@@ -314,15 +380,21 @@ func (a *app) openLogin() {
 		a.openQtLogin()
 		return
 	}
+	a.closeSignin()
 	s := &a.signin
 	s.gen++
 	gen := s.gen
 	s.shown = true
-	epoch := accountEpoch()
+	epoch := bumpAccountEpoch()
 	go func() {
 		id, cookies, ok := func() (spotify.Identity, string, bool) {
 			captureMu.Lock()
 			defer captureMu.Unlock()
+			if pendingCookieClear.Swap(false) {
+				if err := mygo.Cookies.Clear(); err != nil {
+					log.Printf("sign out: %v", err)
+				}
+			}
 			var w *mygo.Window
 			mygo.RunOnMain(func() {
 				if gen == s.gen && !a.quitting {
@@ -400,6 +472,9 @@ func (a *app) signedIn(prof *spotify.Profile) {
 		prof.Email = a.profile.Email
 	}
 	a.accountGen++
+	a.loadingAr = map[string]bool{}
+	a.loadingRel = map[string]bool{}
+	a.radioStarting = ""
 	a.mineGen++
 	a.mineLoading, a.mineAgain = false, false
 	a.mineChecked = time.Time{}
@@ -409,11 +484,13 @@ func (a *app) signedIn(prof *spotify.Profile) {
 	}
 	a.liked, a.liking = nil, nil
 	a.loadingPl = map[string]bool{}
+	a.playlistSync.active = ""
 	a.plThenPlay, a.plRefreshAgain = nil, nil
 	if !same {
+		a.homeFacet = ""
 		a.homeShelves = nil
 		a.mine, a.saved, a.followed = nil, nil, nil
-		a.homeSections, a.homeShortcuts, a.daily = nil, nil, nil
+		a.homeSections, a.homeShortcuts, a.daily, a.dailyURI = nil, nil, nil, ""
 		a.facets, a.sectionAll = nil, nil
 		a.loading, a.loadErr = nil, nil
 		a.artists = map[string]*spotify.ArtistPage{}
@@ -562,6 +639,7 @@ func (a *app) signOut() {
 		a.pl.Clear()
 	}
 	a.clearSession()
+	pendingCookieClear.Store(true)
 	forgetAccountCookies()
 	// Forgets the guest too, so that browsing goes on as a new one rather
 	// than as whoever was here before.
@@ -569,13 +647,16 @@ func (a *app) signOut() {
 	a.signedIn(nil)
 	go func() {
 		if qtweb.Enabled() {
-			if err := clearQtAccount(); err != nil {
+			if err := clearQtAccountPending(); err != nil {
 				log.Printf("sign out: %v", err)
 			}
 			return
 		}
 		captureMu.Lock()
 		defer captureMu.Unlock()
+		if !pendingCookieClear.Swap(false) {
+			return
+		}
 		if err := mygo.Cookies.Clear(); err != nil {
 			log.Printf("sign out: %v", err)
 		}

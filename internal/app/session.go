@@ -112,6 +112,9 @@ func (a *app) restoreSession() {
 	}
 	a.savedSession = string(b)
 	a.pl.Restore(s)
+	if a.connect != nil && s.ContextURI != "" {
+		a.connect.contextURI = s.ContextURI
+	}
 	if a.settings.PlaybackModesSaved {
 		a.pl.SetShuffleMode(player.ShuffleMode(a.settings.ShuffleMode))
 		a.pl.SetRepeatMode(player.RepeatMode(a.settings.RepeatMode))
@@ -144,6 +147,7 @@ type homeSnapshot struct {
 	Shortcuts []spotify.HomeItem
 	Charts    []spotify.Playlist
 	Daily     []spotify.Track
+	DailyURI  string
 	Mine      []spotify.Playlist
 	Saved     []spotify.Playlist
 	Followed  []spotify.ArtistCard
@@ -159,7 +163,7 @@ func (a *app) keepHome() {
 		os.Remove(a.homeFile)
 		return
 	}
-	b, err := json.Marshal(homeSnapshot{a.profile, a.homeSections, a.homeShortcuts, a.charts, a.daily, a.mine, a.saved, a.followed})
+	b, err := json.Marshal(homeSnapshot{a.profile, a.homeSections, a.homeShortcuts, a.charts, a.daily, a.dailyURI, a.mine, a.saved, a.followed})
 	if err != nil {
 		return
 	}
@@ -180,6 +184,6 @@ func (a *app) restoreHome() {
 	}
 	a.profile = s.Profile
 	a.homeSections, a.homeShortcuts = s.Sections, s.Shortcuts
-	a.charts, a.daily = s.Charts, s.Daily
+	a.charts, a.daily, a.dailyURI = s.Charts, s.Daily, s.DailyURI
 	a.mine, a.saved, a.followed = s.Mine, s.Saved, s.Followed
 }

@@ -29,7 +29,9 @@ type Media struct {
 	// File is a file that plays as it is, with no manifest and no licence:
 	// a podcast episode's audio where its podcast keeps it, or a WebDAV
 	// cloud track. With it, there is no Manifest.
-	File string
+	File   string
+	FileID string
+	Format int
 	// Headers are optional HTTP headers sent when fetching File from its
 	// origin (e.g. WebDAV Basic auth); never forwarded across host redirects.
 	Headers map[string]string
@@ -76,6 +78,11 @@ func (n *looseInt) UnmarshalJSON(b []byte) error {
 	}
 	var s string
 	if json.Unmarshal(b, &s) == nil {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			*n = 0
+			return nil
+		}
 		v, err := strconv.Atoi(s)
 		*n = looseInt(v)
 		return err
@@ -100,7 +107,7 @@ func ResolveMedia(uri string) (*Media, error) {
 	for _, f := range asked {
 		query += "&manifestFileFormat=" + f
 	}
-	raw, err := spGet("/track-playback/v1/media/"+uri+"?"+strings.TrimPrefix(query, "&"), "application/json")
+	raw, err := spGet("/track-playback/v1/media/"+url.PathEscape(uri)+"?"+strings.TrimPrefix(query, "&"), "application/json")
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +145,13 @@ func ResolveMedia(uri string) (*Media, error) {
 	if !ok || len(files) == 0 {
 		return nil, fmt.Errorf("track-playback: no MP4 files for %s", uri)
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].Bitrate < files[j].Bitrate })
+	sort.Slice(files, func(i, j int) bool {
+		bi, bj := files[i].Bitrate, files[j].Bitrate
+		if (bi <= 0) != (bj <= 0) {
+			return bi > 0
+		}
+		return bi < bj
+	})
 	f := files[0]
 	if _, err := hex.DecodeString(f.FileID); err != nil || f.FileID == "" {
 		return nil, fmt.Errorf("track-playback: bad file ID %q", f.FileID)
@@ -151,6 +164,8 @@ func ResolveMedia(uri string) (*Media, error) {
 		Manifest: adaptManifest(string(manifest), f.FileID),
 		Duration: time.Duration(entry.Item.Metadata.Duration) * time.Millisecond,
 		Bitrate:  int(f.Bitrate),
+		FileID:   f.FileID,
+		Format:   int(f.Format),
 		Video:    videoOf(entry, body.Media),
 	}, nil
 }

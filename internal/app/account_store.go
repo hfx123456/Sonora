@@ -42,10 +42,17 @@ func defaultAccountCookiePath() (string, error) {
 	return filepath.Join(dir, "account-cookies"), nil
 }
 
-// accountEpoch is the count of sign-outs so far, for saveAccountCookies.
+// accountEpoch is the count of sign-ins and sign-outs so far, for saveAccountCookies.
 func accountEpoch() int {
 	cookieMu.Lock()
 	defer cookieMu.Unlock()
+	return cookieEpoch
+}
+
+func bumpAccountEpoch() int {
+	cookieMu.Lock()
+	defer cookieMu.Unlock()
+	cookieEpoch++
 	return cookieEpoch
 }
 
@@ -132,6 +139,9 @@ func dropAccountCookies(stale string) {
 // reads, so that p is either what it was or b: never half of it, and never
 // left readable by others from before.
 func writeAtomic(p string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
 	f, err := os.CreateTemp(filepath.Dir(p), ".account-cookies-*")
 	if err != nil {
 		return err

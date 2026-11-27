@@ -25,9 +25,53 @@ import (
 // one of their own.
 var keychainService = "dev.hfx123456.sonora"
 
-func unsealLegacyVinyl([]byte) ([]byte, error) { return nil, errUnreadable }
+const (
+	keychainAccount       = "account-cookies"
+	legacyKeychainService = "dev.margbug.vinyl"
+)
 
-const keychainAccount = "account-cookies"
+var (
+	legacyKeyMu     sync.Mutex
+	legacyCookieKey []byte
+)
+
+func unsealLegacyVinyl(b []byte) ([]byte, error) {
+	legacyKeyMu.Lock()
+	key := legacyCookieKey
+	if key == nil {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			chain := filepath.Join(home, "Library", "Keychains", "login.keychain-db")
+			out, err := exec.Command("/usr/bin/security", "find-generic-password", "-s", legacyKeychainService, "-a", keychainAccount, "-w", chain).Output()
+			if err == nil {
+				if decoded, decErr := hex.DecodeString(strings.TrimSpace(string(out))); decErr == nil && len(decoded) == 32 {
+					key = decoded
+					legacyCookieKey = key
+				}
+			}
+		}
+	}
+	legacyKeyMu.Unlock()
+	if key == nil {
+		return nil, errUnreadable
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, errUnreadable
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, errUnreadable
+	}
+	if len(b) < gcm.NonceSize()+gcm.Overhead() {
+		return nil, errUnreadable
+	}
+	out, err := gcm.Open(nil, b[:gcm.NonceSize()], b[gcm.NonceSize():], nil)
+	if err != nil {
+		return nil, errUnreadable
+	}
+	return out, nil
+}
 
 var (
 	keyMu     sync.Mutex

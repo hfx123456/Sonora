@@ -18,7 +18,7 @@ import (
 func testConnectApp(t *testing.T) *app {
 	t.Helper()
 	a := newTestApp()
-	a.connect = &connectState{client: spotify.NewConnect("local", "Vinyl", nil), observer: true, receiver: true, jobs: make(chan func() error, 32), reports: make(chan func() error, 1), done: make(chan struct{})}
+	a.connect = &connectState{client: spotify.NewConnect("local", "Vinyl", nil), observer: true, receiver: true, jobs: make(chan func() error, 32), reports: make(chan func() error, 16), done: make(chan struct{}), tracker: newPlaybackTracker(connectNow())}
 	t.Cleanup(a.connect.client.Close)
 	a.pl.Control = a.connectControl
 	a.pl.Cue([]spotify.Track{{ID: "one", Name: "One", Duration: 200000}})
@@ -231,11 +231,11 @@ func TestConnectReportAnsweredAfterTheSongEnded(t *testing.T) {
 	}
 
 	var reported any
-	connectReport = func(_ *spotify.Connect, ref any, _, _ int64, _ bool) error {
-		reported = ref
+	connectReport = func(_ *spotify.Connect, report spotify.ConnectStateReport) error {
+		reported = report.StateRef
 		return nil
 	}
-	defer func() { connectReport = (*spotify.Connect).Report }()
+	defer func() { connectReport = (*spotify.Connect).ReportState }()
 	a.reportConnect()
 	if err := (<-a.connect.reports)(); err != nil {
 		t.Fatal(err)
@@ -253,10 +253,10 @@ func TestConnectReportTurnedDown(t *testing.T) {
 	json.Unmarshal([]byte(`{"state_machine_id":"m","states":[{"state_id":"s1","track":0}],"tracks":[{"metadata":{"uri":"spotify:track:one"}}]}`), &a.connect.machine)
 	a.connect.ref = &spotify.ConnectRef{Index: 0}
 
-	connectReport = func(*spotify.Connect, any, int64, int64, bool) error {
+	connectReport = func(*spotify.Connect, spotify.ConnectStateReport) error {
 		return &spotify.ConnectError{Status: http.StatusBadRequest}
 	}
-	defer func() { connectReport = (*spotify.Connect).Report }()
+	defer func() { connectReport = (*spotify.Connect).ReportState }()
 	a.reportConnect()
 	if err := (<-a.connect.reports)(); err != nil {
 		t.Errorf("the worker would toast: %v", err)

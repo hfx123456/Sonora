@@ -66,6 +66,12 @@ func (c *Cache) serve(rw http.ResponseWriter, source, rg string) bool {
 	if c == nil {
 		return false
 	}
+	c.mu.Lock()
+	limit := c.limit
+	c.mu.Unlock()
+	if limit <= 0 {
+		return false
+	}
 	path := c.file(source, rg)
 	f, err := os.Open(path)
 	if err != nil {
@@ -152,8 +158,8 @@ func (k *keeping) done(ok bool) {
 	}
 	tmp := k.f.Name()
 	info, err := k.f.Stat()
-	k.f.Close()
-	if !ok || k.failed || k.n != k.want || err != nil || os.Rename(tmp, k.path) != nil {
+	closeErr := k.f.Close()
+	if !ok || k.failed || k.n != k.want || err != nil || closeErr != nil || os.Rename(tmp, k.path) != nil {
 		os.Remove(tmp)
 		return
 	}

@@ -2,7 +2,6 @@ package fusion
 
 import (
 	"encoding/xml"
-	"html"
 	"io"
 	"math"
 	"regexp"
@@ -514,13 +513,16 @@ func parseTTML(raw string) []parsedLine {
 	var curPText strings.Builder
 	var curInlineTrans strings.Builder
 
-	var inSpan bool
+	type ttmlSpanFrame struct {
+		start, end   int64
+		hasTime      bool
+		hadChildSpan bool
+		text         strings.Builder
+	}
+	var spanStack []*ttmlSpanFrame
 	var inlineTransDepth int
 	var inlineTransKeep bool
 	var skipSpanDepth int
-	var curSpanStart, curSpanEnd int64
-	var curSpanHasTime bool
-	var curSpanText strings.Builder
 
 	getAttr := func(attrs []xml.Attr, names ...string) string {
 		for _, a := range attrs {
@@ -559,6 +561,7 @@ func parseTTML(raw string) []parsedLine {
 				curPKey = getAttr(t.Attr, "key")
 				curPText.Reset()
 				curInlineTrans.Reset()
+				spanStack = spanStack[:0]
 				inlineTransDepth = 0
 				inlineTransKeep = false
 				skipSpanDepth = 0
@@ -588,28 +591,33 @@ func parseTTML(raw string) []parsedLine {
 						lang := strings.ToLower(getAttr(t.Attr, "lang"))
 						inlineTransDepth = 1
 						inlineTransKeep = lang == "" || strings.HasPrefix(lang, "zh")
-						inSpan = false
 						continue
 					}
 					if role == "x-roman" {
 						skipSpanDepth = 1
-						inSpan = false
 						continue
 					}
-					inSpan = true
-					curSpanText.Reset()
-					curSpanHasTime = false
+					if n := len(spanStack); n > 0 {
+						parent := spanStack[n-1]
+						parent.hadChildSpan = true
+						if parent.text.Len() > 0 {
+							curPText.WriteString(parent.text.String())
+							parent.text.Reset()
+						}
+					}
+					frame := &ttmlSpanFrame{}
 					if b := getAttr(t.Attr, "begin"); b != "" {
 						if ms, ok := parseTTMLTime(b); ok {
-							curSpanStart = ms
-							curSpanHasTime = true
+							frame.start = ms
+							frame.hasTime = true
 						}
 					}
 					if e := getAttr(t.Attr, "end"); e != "" {
 						if ms, ok := parseTTMLTime(e); ok {
-							curSpanEnd = ms
+							frame.end = ms
 						}
 					}
+					spanStack = append(spanStack, frame)
 				}
 			}
 		case xml.CharData:
@@ -622,8 +630,8 @@ func parseTTML(raw string) []parsedLine {
 				}
 			} else if skipSpanDepth > 0 {
 				// Ignore romanization spans so they do not pollute original lyrics.
-			} else if inSpan {
-				curSpanText.WriteString(s)
+			} else if n := len(spanStack); n > 0 {
+				spanStack[n-1].text.WriteString(s)
 			} else if inP {
 				curPText.WriteString(s)
 			}
@@ -635,7 +643,7 @@ func parseTTML(raw string) []parsedLine {
 				curTransKey = ""
 			case "text":
 				if inZhTrans && curTransKey != "" {
-					if val := strings.TrimSpace(html.UnescapeString(curTransText.String())); val != "" {
+					if val := strings.TrimSpace(curTransText.String()); val != "" {
 						translations[curTransKey] = val
 					}
 					curTransKey = ""
@@ -648,27 +656,33 @@ func parseTTML(raw string) []parsedLine {
 					}
 				} else if skipSpanDepth > 0 {
 					skipSpanDepth--
-				} else if inSpan {
-					wt := html.UnescapeString(curSpanText.String())
+				} else if n := len(spanStack); n > 0 {
+					frame := spanStack[n-1]
+					spanStack = spanStack[:n-1]
+					wt := frame.text.String()
 					curPText.WriteString(wt)
-					if curSpanHasTime && wt != "" {
-						if curSpanEnd <= curSpanStart {
-							curSpanEnd = curSpanStart + 1
+					if !frame.hadChildSpan && frame.hasTime && wt != "" {
+						end := frame.end
+						if end <= frame.start {
+							end = frame.start + 1
 						}
-						curP.words = append(curP.words, parsedWord{text: wt, start: curSpanStart, end: curSpanEnd})
+						curP.words = append(curP.words, parsedWord{text: wt, start: frame.start, end: end})
 					}
-					inSpan = false
 				}
 			case "p":
 				if inP {
-					curP.text = strings.TrimSpace(html.UnescapeString(curPText.String()))
+					for _, frame := range spanStack {
+						curPText.WriteString(frame.text.String())
+					}
+					spanStack = spanStack[:0]
+					curP.text = strings.TrimSpace(curPText.String())
 					if curPKey != "" {
 						if tr, ok := translations[curPKey]; ok {
 							curP.translation = tr
 						}
 					}
 					if curP.translation == "" && curInlineTrans.Len() > 0 {
-						curP.translation = strings.TrimSpace(html.UnescapeString(curInlineTrans.String()))
+						curP.translation = strings.TrimSpace(curInlineTrans.String())
 					}
 					if curP.text != "" {
 						out = append(out, curP)
@@ -685,9 +699,14 @@ func parseTTML(raw string) []parsedLine {
 	return out
 }
 
-func parseTTMLTime(s string) (int64, bool) {
+func parseTTMLTime(s string) (ms int64, ok bool) {
+	defer func() {
+		if ms < 0 || ms >= math.MaxInt64/int64(time.Millisecond) {
+			ms, ok = 0, false
+		}
+	}()
 	s = strings.TrimSpace(s)
-	if s == "" {
+	if s == "" || strings.Contains(s, "-") {
 		return 0, false
 	}
 	if strings.HasSuffix(s, "ms") {

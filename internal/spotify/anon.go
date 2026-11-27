@@ -35,7 +35,14 @@ func AnonymousIdentity() (Identity, error) {
 
 // serverTimeOf reads Spotify's clock.
 func serverTimeOf() (time.Time, error) {
-	req, err := http.NewRequest(http.MethodGet, serverTimeURL, nil)
+	return serverTimeOfWithContext(context.Background())
+}
+
+func serverTimeOfWithContext(ctx context.Context) (time.Time, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverTimeURL, nil)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -76,6 +83,13 @@ const clientTokenWait = 10 * time.Second
 // clientToken asks for this device's client token, as the web player does:
 // naming its build, its client ID and what it runs on.
 func clientToken(clientID string) (string, error) {
+	return clientTokenWithContext(context.Background(), clientID)
+}
+
+func clientTokenWithContext(parent context.Context, clientID string) (string, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
 	payload := map[string]any{"client_data": map[string]any{
 		"client_version": clientVersion,
 		"client_id":      clientID,
@@ -94,7 +108,7 @@ func clientToken(clientID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), clientTokenWait)
+	ctx, cancel := context.WithTimeout(parent, clientTokenWait)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, clientTokenURL, bytes.NewReader(body))
 	if err != nil {

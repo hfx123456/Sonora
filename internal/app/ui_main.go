@@ -54,7 +54,7 @@ func (a *app) view(c *ui.Context) {
 	}
 	root := ui.Box(c).Fill()
 	if !c.Focused(a.searchBox) && !c.Focused(a.localSearchBox) && !c.Focused(a.playlistSearchBox) &&
-		!a.naming.open && !a.proxyTyping && a.recording == "" {
+		!a.naming.open && !a.cloudFormOpen && !a.proxyTyping && a.recording == "" {
 		// Space plays and pauses wherever the focus is, as in Music. On
 		// the container around everything, it comes before a button the
 		// pointer focused, which would take Space as a click; on the
@@ -690,8 +690,10 @@ func (a *app) loadHome() {
 		}()
 		home, err1 := homeFeed("")
 		var daily []spotify.Track
+		var dailyURI string
 		dailyOK := err1 == nil
 		if dailyOK && home.Daily != "" {
+			dailyURI = home.Daily
 			if pl, err := spotify.PlaylistDetail(home.Daily); err == nil {
 				daily = pl.Tracks
 			} else {
@@ -716,6 +718,7 @@ func (a *app) loadHome() {
 			}
 			if dailyOK {
 				a.daily = daily
+				a.dailyURI = dailyURI
 			}
 			if err1 != nil && err2 != nil {
 				log.Printf("home: %v; charts: %v", err1, err2)
@@ -876,6 +879,8 @@ func (a *app) search(q string) {
 
 // runSearch loads the results of q, wherever the listener is.
 func (a *app) runSearch(q string) {
+	a.searchGen++
+	gen, account := a.searchGen, a.accountGen
 	a.searched, a.searching, a.searchErr, a.results, a.found = q, true, "", nil, nil
 	a.foundAlbums, a.foundLists, a.foundShows = nil, nil, nil
 	go func() {
@@ -887,7 +892,7 @@ func (a *app) runSearch(q string) {
 		res, err := spotify.Search(q, 60)
 		wg.Wait()
 		a.post(func() {
-			if q != a.searched {
+			if gen != a.searchGen || account != a.accountGen || a.quitting {
 				return
 			}
 			a.searching = false

@@ -16,10 +16,14 @@ let cur = null, volume = 1;
 const ks = typeof location === 'undefined' ? null : /[?&]ks=([^&]*)/.exec(location.search);
 const keySystem = ks ? decodeURIComponent(ks[1]) : 'com.widevine.alpha';
 const videoPage = typeof location !== 'undefined' && /[?&]video=1(&|$)/.test(location.search);
-const send = (gen, type, t, msg, seq) => fetch('/event', {
+const send = (gen, type, t, msg, seq, seekSeq) => fetch('/event', {
   method: 'POST',
-  body: JSON.stringify({ gen, type, t: t || 0, msg: msg || '', seq: seq || 0 }),
+  body: JSON.stringify({ gen, type, t: t || 0, msg: msg || '', seq: seq || 0, seekSeq: seekSeq || 0 }),
 }).catch(() => {});
+const sendOrdered = (track, type, t, msg, seq, seekSeq) => {
+  const body = JSON.stringify({ gen: track.gen, type, t: t || 0, msg: msg || '', seq: seq || 0, seekSeq: seekSeq || 0 });
+  track.eventChain = track.eventChain.then(() => fetch('/event', { method: 'POST', body })).catch(() => {});
+};
 
 // rest stops loading what plays once it has been paused half a minute; wake
 // loads again, from where it is, what that stopped.
@@ -157,7 +161,7 @@ window.vinyl = {
     });
     // tries counts the recoveries, four at most; want is whether to play;
     // asked is how many times Vinyl had asked to play or pause.
-    const t = { gen, a, hls, seek: null, tries: 0, want: false, asked: 0, eventSeq: 0, endSeq: 0, ending: false, lastTime: 0, still: 0, heard: false, recovering: false, retryTimer: null };
+    const t = { gen, a, hls, seek: null, seekSeq: 0, tries: 0, want: false, asked: 0, eventSeq: 0, endSeq: 0, eventChain: Promise.resolve(), ending: false, lastTime: 0, still: 0, heard: false, recovering: false, retryTimer: null };
     const finish = (reason) => {
       if (cur !== t || t.ending) return;
       t.ending = true;
@@ -229,9 +233,9 @@ window.vinyl = {
         t.want = false;
         t.still = 0;
         rest(t);
-        return send(gen, 'system-pause', a.currentTime, '', t.asked);
+        return sendOrdered(t, 'system-pause', a.currentTime, '', t.asked, t.seekSeq);
       }
-      send(gen, n, a.currentTime, '', ++t.eventSeq);
+      sendOrdered(t, n, a.currentTime, '', ++t.eventSeq, t.seekSeq);
     });
     // And plays it again for them, where a long pause may have stopped
     // loading it.
@@ -239,11 +243,11 @@ window.vinyl = {
       if (cur !== t || t.want || a.paused) return;
       t.want = true;
       wake(t);
-      send(gen, 'system-play', a.currentTime, '', t.asked);
+      sendOrdered(t, 'system-play', a.currentTime, '', t.asked, t.seekSeq);
     });
     a.addEventListener('ended', () => finish('media ended'));
     a.addEventListener('seeking', () => { t.still = 0; t.heard = false; });
-    a.addEventListener('timeupdate', () => { if (!t.recovering && t.seek == null) send(gen, 'time', a.currentTime, '', ++t.eventSeq); });
+    a.addEventListener('timeupdate', () => { if (!t.recovering && t.seek == null) send(gen, 'time', a.currentTime, '', ++t.eventSeq, t.seekSeq); });
     a.addEventListener('error', () => fail({ type: Hls.ErrorTypes.MEDIA_ERROR, details: '', msg: 'media ' + (a.error ? a.error.code + ' ' + a.error.message : '') }));
     a.addEventListener('loadedmetadata', () => {
       t.recovering = false;
@@ -273,11 +277,12 @@ window.vinyl = {
     t.a.pause();
     rest(t);
   },
-  seek(gen, t) {
+  seek(gen, t, seekSeq) {
     if (!cur || cur.gen !== gen) return;
     cur.ending = false;
     cur.still = 0;
     cur.heard = false;
+    if (seekSeq) cur.seekSeq = seekSeq;
     clearTimeout(cur.endTimer);
     if (cur.a.readyState >= 1) cur.a.currentTime = t; else cur.seek = t;
   },

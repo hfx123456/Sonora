@@ -3,6 +3,8 @@ package spotify
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -38,15 +40,19 @@ var (
 // A file that is a music video's has its own lane; audio is what is asked
 // for, as a song's file always is.
 func Mirrors(fileID string) ([]string, error) {
-	key := strings.ToLower(fileID)
+	key := strings.ToLower(strings.TrimSpace(fileID))
+	if key == "" {
+		return nil, fmt.Errorf("mirrors: empty file ID")
+	}
 	mirrorMu.Lock()
 	if e, ok := mirrors[key]; ok && time.Since(e.at) < mirrorTTL {
+		out := slices.Clone(e.urls)
 		mirrorMu.Unlock()
-		return e.urls, nil
+		return out, nil
 	}
 	mirrorMu.Unlock()
 
-	path := "/storage-resolve/v2/files/audio/interactive/10/" + key +
+	path := "/storage-resolve/v2/files/audio/interactive/10/" + url.PathEscape(key) +
 		"?version=10000000&product=9&platform=39&alt=json"
 	raw, err := spGet(path, "application/json")
 	if err != nil {
@@ -63,7 +69,7 @@ func Mirrors(fileID string) ([]string, error) {
 		return nil, fmt.Errorf("mirrors: none for %s", key)
 	}
 	mirrorMu.Lock()
-	mirrors[key] = mirrorEntry{urls: v.URLs, at: time.Now()}
+	mirrors[key] = mirrorEntry{urls: slices.Clone(v.URLs), at: time.Now()}
 	// A few a day is all the app ever asks for; a session's worth is plenty.
 	if len(mirrors) > 64 {
 		for k, e := range mirrors {
@@ -71,9 +77,19 @@ func Mirrors(fileID string) ([]string, error) {
 				delete(mirrors, k)
 			}
 		}
+		for len(mirrors) > 64 {
+			var oldestKey string
+			var oldestAt time.Time
+			for k, e := range mirrors {
+				if oldestKey == "" || e.at.Before(oldestAt) {
+					oldestKey, oldestAt = k, e.at
+				}
+			}
+			delete(mirrors, oldestKey)
+		}
 	}
 	mirrorMu.Unlock()
-	return v.URLs, nil
+	return slices.Clone(v.URLs), nil
 }
 
 // FileIDOf returns the file a CDN URL serves: its last path part, which is

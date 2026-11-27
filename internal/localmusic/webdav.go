@@ -75,16 +75,57 @@ func (s CloudSource) authHeader() string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(s.Username+":"+s.Password))
 }
 
-// cloudAuthEntry keeps the normalized URL prefix and Basic auth header in memory.
+// cloudAuthEntry keeps the normalized URL scope and Basic auth header in memory.
 type cloudAuthEntry struct {
-	prefix string
-	host   string
-	auth   string
+	scheme     string
+	host       string
+	pathPrefix string
+	auth       string
 }
 
 var cloudAuth struct {
 	sync.RWMutex
 	entries []cloudAuthEntry
+}
+
+func normalizeWebDAVPath(p string) string {
+	if p == "" {
+		p = "/"
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	clean := path.Clean(p)
+	if !strings.HasPrefix(clean, "/") {
+		clean = "/" + clean
+	}
+	return clean
+}
+
+func withinWebDAVScope(targetPath, rootPath string) bool {
+	target := normalizeWebDAVPath(targetPath)
+	root := normalizeWebDAVPath(rootPath)
+	if root == "/" {
+		return true
+	}
+	return target == root || strings.HasPrefix(target, root+"/")
+}
+
+type webdavScopeCtxKey struct{}
+
+func withWebDAVScope(ctx context.Context, scope *url.URL) context.Context {
+	if scope == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, webdavScopeCtxKey{}, scope)
+}
+
+func isVirtualCloudURI(raw string) bool {
+	return strings.HasPrefix(raw, "baidu://") ||
+		strings.HasPrefix(raw, "quark://") ||
+		strings.HasPrefix(raw, "p115://") ||
+		strings.HasPrefix(raw, "onedrive://") ||
+		strings.HasPrefix(raw, "gdrive://")
 }
 
 var cloudHTTPClient = &http.Client{
@@ -100,8 +141,26 @@ var cloudHTTPClient = &http.Client{
 		if len(via) >= 8 {
 			return errors.New("too many redirects")
 		}
-		if len(via) > 0 && !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
-			req.Header.Del("Authorization")
+		if len(via) > 0 && via[0].URL != nil && req.URL != nil {
+			orig := via[0].URL
+			sameScheme := strings.EqualFold(req.URL.Scheme, orig.Scheme)
+			sameHost := strings.EqualFold(req.URL.Host, orig.Host)
+			if !sameScheme || !sameHost {
+				req.Header.Del("Authorization")
+				req.Header.Del("Cookie")
+			}
+			if scope, ok := req.Context().Value(webdavScopeCtxKey{}).(*url.URL); ok && scope != nil {
+				inScope := strings.EqualFold(req.URL.Scheme, scope.Scheme) &&
+					strings.EqualFold(req.URL.Host, scope.Host) &&
+					withinWebDAVScope(req.URL.Path, scope.Path)
+				if !inScope {
+					req.Header.Del("Authorization")
+					req.Header.Del("Cookie")
+					if req.Method == "PROPFIND" || via[0].Method == "PROPFIND" {
+						return errors.New("refused out-of-scope WebDAV redirect")
+					}
+				}
+			}
 		}
 		return nil
 	},
@@ -129,14 +188,15 @@ func SetCloudSources(sources []CloudSource) {
 			continue
 		}
 		entries = append(entries, cloudAuthEntry{
-			prefix: strings.TrimRight(norm, "/"),
-			host:   strings.ToLower(u.Host),
-			auth:   s.authHeader(),
+			scheme:     strings.ToLower(u.Scheme),
+			host:       strings.ToLower(u.Host),
+			pathPrefix: normalizeWebDAVPath(u.Path),
+			auth:       s.authHeader(),
 		})
 	}
-	// Longest prefix first so nested mounts match their most specific credential.
+	// Longest mount path first so nested mounts match their most specific credential.
 	slices.SortFunc(entries, func(a, b cloudAuthEntry) int {
-		return cmp.Compare(len(b.prefix), len(a.prefix))
+		return cmp.Compare(len(b.pathPrefix), len(a.pathPrefix))
 	})
 	cloudAuth.Lock()
 	cloudAuth.entries = entries
@@ -146,8 +206,8 @@ func SetCloudSources(sources []CloudSource) {
 }
 
 // ResolveCloudMedia turns a track's CloudURL (which may be a direct HTTPS URL
-// or a virtual baidu:// / quark:// / p115:// URI) into a streamable HTTP Range
-// URL plus any required request headers.
+// or a virtual baidu:// / quark:// / p115:// / onedrive:// / gdrive:// URI)
+// into a streamable HTTP Range URL plus any required request headers.
 func ResolveCloudMedia(ctx context.Context, cloudURL string) (string, map[string]string, error) {
 	if strings.HasPrefix(cloudURL, "baidu://") {
 		return resolveBaiduStream(ctx, cloudURL)
@@ -157,6 +217,12 @@ func ResolveCloudMedia(ctx context.Context, cloudURL string) (string, map[string
 	}
 	if strings.HasPrefix(cloudURL, "p115://") {
 		return resolve115Stream(ctx, cloudURL)
+	}
+	if strings.HasPrefix(cloudURL, "onedrive://") {
+		return resolveOneDriveStream(ctx, cloudURL)
+	}
+	if strings.HasPrefix(cloudURL, "gdrive://") {
+		return resolveGoogleDriveStream(ctx, cloudURL)
 	}
 	return cloudURL, CloudHeadersForURL(cloudURL), nil
 }
@@ -170,20 +236,13 @@ func CloudHeadersForURL(rawURL string) map[string]string {
 	if err != nil {
 		return nil
 	}
-	host := strings.ToLower(u.Host)
 	cloudAuth.RLock()
 	defer cloudAuth.RUnlock()
 	for _, e := range cloudAuth.entries {
-		if e.auth == "" {
-			continue
-		}
-		if strings.HasPrefix(rawURL, e.prefix+"/") || rawURL == e.prefix {
-			return map[string]string{"Authorization": e.auth}
-		}
-	}
-	// Fallback: match by host if URL encoding differs slightly.
-	for _, e := range cloudAuth.entries {
-		if e.auth != "" && e.host == host {
+		if strings.EqualFold(u.Scheme, e.scheme) && strings.EqualFold(u.Host, e.host) && withinWebDAVScope(u.Path, e.pathPrefix) {
+			if e.auth == "" {
+				return nil
+			}
 			return map[string]string{"Authorization": e.auth}
 		}
 	}
@@ -354,14 +413,16 @@ func LoadCachedCloud(cachePath string, active []CloudSource) []spotify.Track {
 	if len(active) == 0 {
 		return nil
 	}
+	cloudIndexMu.Lock()
 	idx := loadCloudIndex(cachePath)
+	cloudIndexMu.Unlock()
 	if len(idx.Entries) == 0 {
 		return nil
 	}
-	activeIDs := make(map[string]bool, len(active))
+	activeSources := make(map[string]CloudSource, len(active))
 	for _, s := range active {
 		if s.ID != "" {
-			activeIDs[s.ID] = true
+			activeSources[s.ID] = s
 		}
 	}
 	tracks := make([]spotify.Track, 0, len(idx.Entries))
@@ -369,10 +430,14 @@ func LoadCachedCloud(cachePath string, active []CloudSource) []spotify.Track {
 		if e.Track.ID == "" || e.Track.CloudURL == "" {
 			continue
 		}
-		if e.SourceID == "" || !activeIDs[e.SourceID] {
+		source, ok := activeSources[e.SourceID]
+		if !ok {
 			continue
 		}
-		tracks = append(tracks, e.Track)
+		track := e.Track
+		track.CloudURL = cachedOAuthURL(track.CloudURL, source)
+		track.CloudLyricsURL = cachedOAuthURL(track.CloudLyricsURL, source)
+		tracks = append(tracks, track)
 	}
 	slices.SortFunc(tracks, func(a, b spotify.Track) int {
 		if a.Unplayable != b.Unplayable {
@@ -561,9 +626,28 @@ func CachedCloudAudio(trackID string) string {
 	return p
 }
 
-// OnCloudTrackEnriched is called after a cloud track is cached locally and its
-// full ID3/FLAC/M4A metadata and embedded cover art are extracted from disk.
-var OnCloudTrackEnriched func(track spotify.Track)
+var (
+	cloudCallbackMu      sync.RWMutex
+	onCloudTrackEnriched func(track spotify.Track)
+)
+
+// SetCloudCallbacks registers callback hooks invoked asynchronously by cloud
+// OAuth refresh and local caching workers.
+func SetCloudCallbacks(onTokenRefresh func(sourceID, newRefreshToken string), onTrackEnriched func(track spotify.Track)) {
+	cloudCallbackMu.Lock()
+	onCloudTokenRefresh = onTokenRefresh
+	onCloudTrackEnriched = onTrackEnriched
+	cloudCallbackMu.Unlock()
+}
+
+func notifyCloudTrackEnriched(track spotify.Track) {
+	cloudCallbackMu.RLock()
+	cb := onCloudTrackEnriched
+	cloudCallbackMu.RUnlock()
+	if cb != nil {
+		cb(track)
+	}
+}
 
 func enrichCloudTrackFromFile(track spotify.Track, localFile, coverDir, cachePath string) spotify.Track {
 	parsed, err := Read(localFile, coverDir)
@@ -701,9 +785,7 @@ func CacheCloudAudioAsync(track spotify.Track, streamURL string, headers map[str
 		cloudAudioCacheMu.RUnlock()
 		baseDir := filepath.Dir(dir)
 		enriched := enrichCloudTrackFromFile(track, dst, filepath.Join(baseDir, "local-covers"), filepath.Join(baseDir, "cloud-index.json"))
-		if cb := OnCloudTrackEnriched; cb != nil {
-			cb(enriched)
-		}
+		notifyCloudTrackEnriched(enriched)
 	}()
 }
 
@@ -798,13 +880,17 @@ func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath s
 		return nil, nil
 	}
 	SetCloudSources(sources)
+	cloudIndexMu.Lock()
 	index := loadCloudIndex(cachePath)
+	cloudIndexMu.Unlock()
 
 	var files []davFile
 	var warnings []string
 	seenURLs := map[string]bool{}
 	succeededSources := map[string]bool{}
 	failedSources := map[string]CloudSource{}
+	partialSources := map[string]CloudSource{}
+	updatedEntries := map[string]cloudIndexEntry{}
 
 	for _, src := range sources {
 		var found []davFile
@@ -831,10 +917,12 @@ func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath s
 		files = append(files, found...)
 		warnings = append(warnings, warns...)
 		if src.ID != "" {
-			if len(warns) == 0 {
+			if len(warns) == 0 && ctx.Err() == nil {
 				succeededSources[src.ID] = true
 			} else if len(found) == 0 {
 				failedSources[src.ID] = src
+			} else {
+				partialSources[src.ID] = src
 			}
 		}
 	}
@@ -906,14 +994,16 @@ func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath s
 					tracks[i] = t
 					okFlags[i] = true
 
-					indexMu.Lock()
-					index.Entries[f.URL] = cloudIndexEntry{
+					entry := cloudIndexEntry{
 						SourceID:     f.Source.ID,
 						ETag:         f.ETag,
 						LastModified: f.LastModified,
 						Size:         f.Size,
 						Track:        t,
 					}
+					indexMu.Lock()
+					index.Entries[f.URL] = entry
+					updatedEntries[f.URL] = entry
 					indexDirty = true
 					indexMu.Unlock()
 				}
@@ -926,12 +1016,22 @@ func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath s
 	for i, ok := range okFlags {
 		if ok {
 			result = append(result, tracks[i])
+			continue
+		}
+		// If metadata probing stopped early due to timeout/cancel, fall back to
+		// any existing cached track so the scanned source does not lose items.
+		if cached, hit := index.Entries[files[i].URL]; hit && cached.Track.ID != "" {
+			t := cached.Track
+			t.CloudURL = cachedOAuthURL(t.CloudURL, files[i].Source)
+			t.CloudLyricsURL = cachedOAuthURL(t.CloudLyricsURL, files[i].Source)
+			t.CloudSource = cmp.Or(files[i].Source.Name, files[i].Source.URL)
+			result = append(result, t)
 		}
 	}
 
-	// Preserve offline cached tracks for sources whose refresh failed so users
-	// keep access to their downloaded cloud music when disconnected.
-	if len(failedSources) > 0 && len(index.Entries) > 0 {
+	// Preserve offline cached tracks for sources whose refresh failed (or timed
+	// out partway through) so users keep access to their downloaded library.
+	if (len(failedSources) > 0 || len(partialSources) > 0) && len(index.Entries) > 0 {
 		restoredBySource := map[string]bool{}
 		for _, e := range index.Entries {
 			if e.Track.ID == "" || e.Track.CloudURL == "" {
@@ -939,12 +1039,22 @@ func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath s
 			}
 			src, failed := failedSources[e.SourceID]
 			if !failed {
+				src, failed = partialSources[e.SourceID]
+			}
+			if !failed {
 				continue
 			}
 			t := e.Track
+			t.CloudURL = cachedOAuthURL(t.CloudURL, src)
+			t.CloudLyricsURL = cachedOAuthURL(t.CloudLyricsURL, src)
+			if seenURLs[t.CloudURL] {
+				continue
+			}
 			t.CloudSource = cmp.Or(src.Name, src.URL)
 			result = append(result, t)
-			restoredBySource[e.SourceID] = true
+			if _, fullFail := failedSources[e.SourceID]; fullFail {
+				restoredBySource[e.SourceID] = true
+			}
 		}
 		for _, src := range sources {
 			if restoredBySource[src.ID] {
@@ -954,26 +1064,54 @@ func ScanCloud(ctx context.Context, sources []CloudSource, coverDir, cachePath s
 	}
 
 	// Prune cache entries from removed cloud sources, and remove entries deleted
-	// from sources that succeeded cleanly (including now-empty directories).
+	// from sources that succeeded completely (never on cancellation/timeout).
 	activeIDs := make(map[string]bool, len(sources))
 	for _, s := range sources {
 		if s.ID != "" {
 			activeIDs[s.ID] = true
 		}
 	}
-	for k, e := range index.Entries {
-		if e.SourceID == "" || !activeIDs[e.SourceID] {
-			delete(index.Entries, k)
-			indexDirty = true
-			continue
-		}
-		if succeededSources[e.SourceID] && !seenURLs[k] {
-			delete(index.Entries, k)
-			indexDirty = true
+	shouldPrune := ctx.Err() == nil
+	needSave := indexDirty
+	if !needSave {
+		for k, e := range index.Entries {
+			if e.SourceID == "" || !activeIDs[e.SourceID] || (shouldPrune && succeededSources[e.SourceID] && !seenURLs[k]) {
+				needSave = true
+				break
+			}
 		}
 	}
-	if indexDirty {
-		saveCloudIndex(cachePath, index)
+	if needSave {
+		cloudIndexMu.Lock()
+		merged := loadCloudIndex(cachePath)
+		for k, e := range updatedEntries {
+			// Never let a fast-batch unprobed scan overwrite richer metadata
+			// written concurrently by an audio cache download.
+			if prev, ok := merged.Entries[k]; ok && prev.SourceID == e.SourceID && prev.Size == e.Size && prev.Track.Duration > 0 && e.Track.Duration == 0 {
+				e.Track.Duration = prev.Track.Duration
+				if len(e.Track.Artists) == 0 && len(prev.Track.Artists) > 0 {
+					e.Track.Artists = prev.Track.Artists
+				}
+				if e.Track.Album.Name == "" && prev.Track.Album.Name != "" {
+					e.Track.Album.Name = prev.Track.Album.Name
+				}
+				if e.Track.Album.PicURL == "" && prev.Track.Album.PicURL != "" {
+					e.Track.Album.PicURL = prev.Track.Album.PicURL
+				}
+			}
+			merged.Entries[k] = e
+		}
+		for k, e := range merged.Entries {
+			if e.SourceID == "" || !activeIDs[e.SourceID] {
+				delete(merged.Entries, k)
+				continue
+			}
+			if shouldPrune && succeededSources[e.SourceID] && !seenURLs[k] {
+				delete(merged.Entries, k)
+			}
+		}
+		saveCloudIndex(cachePath, merged)
+		cloudIndexMu.Unlock()
 	}
 	slices.SortFunc(result, func(a, b spotify.Track) int {
 		if a.Unplayable != b.Unplayable {
@@ -1020,6 +1158,7 @@ const (
 )
 
 func walkWebDAV(ctx context.Context, src CloudSource, rootURL string, seenFiles map[string]bool) ([]davFile, []string) {
+	scope, _ := url.Parse(ensureTrailingSlash(rootURL))
 	type dirItem struct {
 		url   string
 		depth int
@@ -1042,7 +1181,7 @@ func walkWebDAV(ctx context.Context, src CloudSource, rootURL string, seenFiles 
 		}
 		visitedDirs[normCur] = true
 
-		entries, err := propfindDir(ctx, src, cur.url)
+		entries, err := propfindDir(ctx, src, cur.url, scope)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("云盘「%s」目录读取失败：%v", cmp.Or(src.Name, src.URL), err))
 			continue
@@ -1093,6 +1232,11 @@ func walkWebDAV(ctx context.Context, src CloudSource, rootURL string, seenFiles 
 			}
 		}
 	}
+	if ctx.Err() != nil {
+		warnings = append(warnings, fmt.Sprintf("云盘「%s」扫描超时或已取消", cmp.Or(src.Name, src.URL)))
+	} else if len(queue) > 0 || len(files) >= maxCloudFiles {
+		warnings = append(warnings, fmt.Sprintf("云盘「%s」目录或曲目数量已达上限，部分文件未扫描", cmp.Or(src.Name, src.URL)))
+	}
 	return files, warnings
 }
 
@@ -1105,8 +1249,8 @@ type davEntry struct {
 	lastModified string
 }
 
-func propfindDir(ctx context.Context, src CloudSource, dirURL string) ([]davEntry, error) {
-	req, err := http.NewRequestWithContext(ctx, "PROPFIND", dirURL, strings.NewReader(propfindBody))
+func propfindDir(ctx context.Context, src CloudSource, dirURL string, scope *url.URL) ([]davEntry, error) {
+	req, err := http.NewRequestWithContext(withWebDAVScope(ctx, scope), "PROPFIND", dirURL, strings.NewReader(propfindBody))
 	if err != nil {
 		return nil, err
 	}
@@ -1144,6 +1288,14 @@ func propfindDir(ctx context.Context, src CloudSource, dirURL string) ([]davEntr
 		}
 		resolved := base.ResolveReference(ref)
 		resolved.Fragment = ""
+		if scope != nil {
+			if !strings.EqualFold(resolved.Scheme, scope.Scheme) || !strings.EqualFold(resolved.Host, scope.Host) {
+				continue
+			}
+			if !withinWebDAVScope(resolved.Path, scope.Path) {
+				continue
+			}
+		}
 
 		var prop davProp
 		foundOK := false
@@ -1162,9 +1314,6 @@ func propfindDir(ctx context.Context, src CloudSource, dirURL string) ([]davEntr
 		size, _ := strconv.ParseInt(strings.TrimSpace(prop.ContentLength), 10, 64)
 		cleanPath := strings.TrimSuffix(resolved.Path, "/")
 		name := path.Base(cleanPath)
-		if unescaped, err := url.PathUnescape(name); err == nil {
-			name = unescaped
-		}
 		out = append(out, davEntry{
 			url:          resolved.String(),
 			name:         name,
@@ -1193,13 +1342,8 @@ func normalizeDirKey(raw string) string {
 	if err != nil {
 		return strings.TrimRight(raw, "/")
 	}
-	p, err := url.PathUnescape(u.Path)
-	if err != nil {
-		p = u.Path
-	}
-	u.Path = strings.TrimRight(p, "/")
-	u.RawPath = ""
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + u.Path
+	p := strings.TrimRight(u.Path, "/")
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + p
 }
 
 func readCloudTrack(ctx context.Context, f davFile, coverDir string) (spotify.Track, error) {
@@ -1233,7 +1377,7 @@ func readCloudTrack(ctx context.Context, f davFile, coverDir string) (spotify.Tr
 	if f.Size > 0 && !f.SkipRange {
 		dlURL := cmp.Or(f.DownloadURL, f.URL)
 		hdrs := f.Headers
-		if dlURL == f.URL && (strings.HasPrefix(dlURL, "baidu://") || strings.HasPrefix(dlURL, "quark://") || strings.HasPrefix(dlURL, "p115://")) {
+		if dlURL == f.URL && isVirtualCloudURI(dlURL) {
 			if resolved, rh, err := ResolveCloudMedia(ctx, dlURL); err == nil && resolved != "" {
 				dlURL, hdrs = resolved, rh
 			}
@@ -1283,11 +1427,23 @@ func downloadCloudCover(ctx context.Context, coverURL, auth, coverDir string) (s
 	if _, err := os.Stat(cover); err == nil {
 		return cover, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, coverURL, nil)
+	targetURL := coverURL
+	var hdrs map[string]string
+	if isVirtualCloudURI(coverURL) {
+		var err error
+		targetURL, hdrs, err = ResolveCloudMedia(ctx, coverURL)
+		if err != nil || targetURL == "" {
+			return "", cmp.Or(err, errors.New("invalid cloud cover url"))
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return "", err
 	}
-	if auth != "" {
+	for k, v := range hdrs {
+		req.Header.Set(k, v)
+	}
+	if auth != "" && req.Header.Get("Authorization") == "" {
 		req.Header.Set("Authorization", auth)
 	}
 	res, err := cloudHTTPClient.Do(req)
@@ -1311,7 +1467,7 @@ func downloadCloudCover(ctx context.Context, coverURL, auth, coverDir string) (s
 func cloudLyrics(audioURL, lyricsURL string) string {
 	lrcURL := strings.TrimSpace(lyricsURL)
 	if lrcURL == "" {
-		if strings.HasPrefix(audioURL, "baidu://") || strings.HasPrefix(audioURL, "quark://") || strings.HasPrefix(audioURL, "p115://") {
+		if isVirtualCloudURI(audioURL) {
 			return ""
 		}
 		u, err := url.Parse(audioURL)
@@ -1564,9 +1720,13 @@ func (r *webdavRangeReader) fetchChunk(chunkIdx int64) error {
 	defer res.Body.Close()
 
 	if res.StatusCode == http.StatusPartialContent {
-		data, err := io.ReadAll(io.LimitReader(res.Body, span+1))
+		want := end - start + 1
+		data, err := io.ReadAll(io.LimitReader(res.Body, want+1))
 		if err != nil {
 			return err
+		}
+		if int64(len(data)) > want {
+			return fmt.Errorf("range response exceeds requested %d bytes", want)
 		}
 		r.storeChunks(start, data)
 		return nil

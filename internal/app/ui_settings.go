@@ -219,12 +219,17 @@ func (a *app) settingsPage(c *ui.Context) {
 		})
 
 		group("迷你播放器", func() {
-			row("显示迷你播放器", "在桌面角落显示 Apple Music 风格悬浮播控窗，支持自由拖动与右键快捷切换", func() {
-				if ui.Switch(c.Key("mini-player"), &s.MiniPlayer).Label("显示迷你播放器").Changed() {
-					a.changed()
+			row("进入迷你模式", "收起主窗口并切入桌面悬浮迷你小窗（也可直接点击窗口右上角图标一键切换）", func() {
+				miniOn := s.MiniPlayer
+				if ui.Switch(c.Key("mini-player"), &miniOn).Label("进入迷你模式").Changed() {
+					if miniOn {
+						a.enterMiniMode()
+					} else {
+						a.setMiniPlayerEnabled(false)
+					}
 				}
 			})
-			row("迷你播放器样式", "紧凑长条平时极简、悬停切换播控；封面卡片采用上图下文分体布局，自动同步应用浅色/黑夜外观", func() {
+			row("迷你播放器样式", "紧凑长条平时极简、悬停切换播控；封面卡片采用渐变融底一体布局，自动同步应用浅色/黑夜外观", func() {
 				i := 0
 				if s.effectiveMiniStyle() == miniStyleCard {
 					i = 1
@@ -239,7 +244,7 @@ func (a *app) settingsPage(c *ui.Context) {
 				}
 			})
 			row("始终置顶", "开启后迷你播放器始终悬浮在其他窗口上方", func() {
-				if ui.Switch(c.Key("mini-top"), &s.MiniAlwaysOnTop).Label("始终置顶").Disabled(!s.MiniPlayer).Changed() {
+				if ui.Switch(c.Key("mini-top"), &s.MiniAlwaysOnTop).Label("始终置顶").Changed() {
 					a.changed()
 				}
 			})

@@ -292,14 +292,15 @@ func stageNextFrame(c *ui.Context, lines []lyrics.Line, cur int, pos time.Durati
 func (a *app) stageLine(c *ui.Context, lines []lyrics.Line, idx int, pos time.Duration, f, w, h, fade float32, accent ui.Color) {
 	l := &lines[idx]
 	words := stageLineWords(lines, idx)
-	seed := float64(l.At / time.Millisecond)
+	seed := l.At / time.Millisecond
 	shapes := stageShapes(c, l.At, words, f)
 	trWords := stageTranslationWords(lines, idx, words)
 	tf := min(44, max(24, f*0.68))
 	trShapes := stageShapes(c, l.At+37*time.Millisecond, trWords, tf)
 	// Where the line sits: to one side or the middle, a little up or down.
-	justify := []ui.Align{ui.Start, ui.Center, ui.End}[int(seed)%3]
-	lift := []float32{-0.14, 0, 0.12}[int(seed*2)%3] * h
+	variant := int((seed%3 + 3) % 3)
+	justify := []ui.Align{ui.Start, ui.Center, ui.End}[variant]
+	lift := []float32{-0.14, 0, 0.12}[(variant*2)%3] * h
 
 	ui.Row(c.Key(l.At)).Absolute().Top(0).Left(0).Right(0).Bottom(0).Padding(0, w*0.1).
 		Justify(justify).AlignItems(ui.Center).Translate(0, lift).

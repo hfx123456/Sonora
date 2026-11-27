@@ -57,6 +57,9 @@ func (a *app) npState(c *ui.Context) (open, settled bool) {
 // hid it at once. Its pose moves it in frames that only paint, building
 // nothing.
 func (a *app) nowPlayingLayer(c *ui.Context, open, settled bool) {
+	if !open {
+		a.npScrub = scrubState{}
+	}
 	layer := ui.Box(c.Key("now-playing-layer")).Absolute().Top(0).Left(0).Right(0).Bottom(0)
 	genie := !a.pl.VideoOn()
 	pose := ui.Pose{Y: 60, Fade: 1}
@@ -497,7 +500,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 					})
 				})
 				if line.Clicked() {
-					pl.Seek(l.At)
+					pl.Seek(max(0, l.At+pl.VideoLead()))
 				}
 				if on {
 					active = line

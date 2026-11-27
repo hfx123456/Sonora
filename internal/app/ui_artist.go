@@ -35,9 +35,13 @@ func (a *app) loadArtist(uri string) {
 	}
 	a.loadingAr[uri] = true
 	delete(a.arErr, uri)
+	gen := a.accountGen
 	go func() {
 		pg, err := spotify.ArtistDetail(uri)
 		a.post(func() {
+			if gen != a.accountGen || a.quitting {
+				return
+			}
 			delete(a.loadingAr, uri)
 			if err != nil {
 				log.Printf("artist %s: %v", uri, err)
@@ -58,9 +62,13 @@ func (a *app) loadReleases(pg *spotify.ArtistPage, kind spotify.ReleaseKind) {
 	}
 	a.loadingRel[key] = true
 	uri, name := pg.ID, pg.Name
+	gen := a.accountGen
 	go func() {
 		all, err := spotify.ArtistReleases(uri, name, kind)
 		a.post(func() {
+			if gen != a.accountGen || a.quitting {
+				return
+			}
 			delete(a.loadingRel, key)
 			pg := a.artists[uri]
 			if err != nil || pg == nil {

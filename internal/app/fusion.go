@@ -165,7 +165,7 @@ func (a *app) ensureFusion(refresh bool) {
 			cached := lyrics.LoadCached(player.LyricsCacheDir, copyTrack.URI())
 			if fusionCacheUsable(cached) {
 				a.post(func() {
-					a.receiveFusion(key, generation, fusion.Result{Lines: cached.Lines, Source: cached.Source}, nil)
+					a.receiveFusionWith(key, generation, fusion.Result{Lines: cached.Lines, Source: cached.Source}, nil, false)
 				})
 				return
 			}
@@ -179,7 +179,7 @@ func (a *app) ensureFusion(refresh bool) {
 			input.Raw = localmusic.Lyrics(copyTrack)
 		}
 		result, err := fetchFusionWithTranslationFallback(ctx, filepath.Join(dir, "fusion"), copyTrack, input, refresh)
-		a.post(func() { a.receiveFusion(key, generation, result, err) })
+		a.post(func() { a.receiveFusionWith(key, generation, result, err, refresh) })
 	}()
 }
 
@@ -196,6 +196,10 @@ func fetchFusionWithTranslationFallback(ctx context.Context, cacheDir string, tr
 }
 
 func (a *app) receiveFusion(key string, generation int, result fusion.Result, err error) {
+	a.receiveFusionWith(key, generation, result, err, false)
+}
+
+func (a *app) receiveFusionWith(key string, generation int, result fusion.Result, err error, force bool) {
 	state := &a.fusion
 	if generation != state.generation || key != state.key || key != fusionTrackKey(a.pl.Current()) {
 		return
@@ -209,10 +213,16 @@ func (a *app) receiveFusion(key string, generation int, result fusion.Result, er
 		}
 	}
 	rawLines := append([]lyrics.Line(nil), result.Lines...)
-	if len(rawLines) > 0 && !a.pl.Current().Local() && result.Source != "播放器歌词" && (fusionChinese(rawLines) || hasFusionTranslation(rawLines)) {
-		lyrics.SaveCached(player.LyricsCacheDir, a.pl.Current().URI(), result.Source, rawLines)
+	if len(rawLines) > 0 && !a.pl.Current().Local() && result.Source != "播放器歌词" {
+		if force {
+			lyrics.SaveCachedForce(player.LyricsCacheDir, a.pl.Current().URI(), result.Source, rawLines)
+		} else if fusionChinese(rawLines) || hasFusionTranslation(rawLines) {
+			lyrics.SaveCached(player.LyricsCacheDir, a.pl.Current().URI(), result.Source, rawLines)
+		}
 	}
-	if cur, loaded := a.pl.Lyrics(); shouldSyncFusionLyricsToPlayer(cur, loaded, result.Source, rawLines) {
+	if force && len(rawLines) > 0 && result.Source != "播放器歌词" {
+		a.pl.AdoptLyrics(a.pl.Current().URI(), rawLines)
+	} else if cur, loaded := a.pl.Lyrics(); shouldSyncFusionLyricsToPlayer(cur, loaded, result.Source, rawLines) {
 		if !loaded && !fusionChinese(rawLines) && !hasFusionTranslation(rawLines) {
 			a.pl.UseFallbackLyrics(a.pl.Current().URI(), rawLines)
 		} else {
@@ -499,7 +509,7 @@ func (a *app) importFusion() {
 			go func() {
 				defer cancel()
 				result, err := fetchFusion(ctx, filepath.Join(dir, "fusion"), fusion.Request{Raw: strings.TrimPrefix(string(data), "\ufeff"), ParseOnly: true}, false)
-				a.post(func() { a.receiveFusion(key, generation, result, err) })
+				a.post(func() { a.receiveFusionWith(key, generation, result, err, true) })
 			}()
 		})
 	}()

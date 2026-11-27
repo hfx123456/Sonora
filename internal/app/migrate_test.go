@@ -1,10 +1,33 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// A failed attempt to re-encrypt a legacy cloud credential must retain its ciphertext.
+func TestMigrateCloudSecretKeepsCiphertextOnSealFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	original := []byte(`{"cloudSources":[{"id":"legacy","sealedPass":"b2xk"}]}`)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("keystore unavailable")
+	fail := func([]byte) ([]byte, error) { return nil, failure }
+	openLegacy := func(ciphertext []byte) ([]byte, error) {
+		if string(ciphertext) != "old" {
+			t.Fatalf("unexpected legacy ciphertext: %q", ciphertext)
+		}
+		return []byte("test credential"), nil
+	}
+	migrateCloudSecrets(path, fail, openLegacy, fail)
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(original) {
+		t.Fatalf("settings changed after failed encryption: %s, %v", got, err)
+	}
+}
 
 // First launch under Sonora migrates settings, caches and session files from
 // an existing Vinyl profile once without modifying the legacy Vinyl files.

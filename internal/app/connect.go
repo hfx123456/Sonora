@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -38,9 +39,12 @@ type connectState struct {
 	jobs        chan func() error
 	reports     chan func() error
 	done        chan struct{}
-	playJob     latestConnectJob
-	reportJob   latestConnectJob
-	playVersion atomic.Uint64
+	playJob        latestConnectJob
+	reportJob      latestConnectJob
+	playVersion    atomic.Uint64
+	contextURI     string
+	tracker        *playbackTracker
+	lastProgressAt time.Time
 	// pendingPlay is the locally selected URI awaiting a server state.
 	// Earlier selections must not restart or replace the current audio.
 	pendingPlay string
@@ -145,8 +149,8 @@ func (a *app) connectOptions(o spotify.ConnectOptions) {
 // connectCommand is (*spotify.Connect).Command; tests swap it.
 var connectCommand = (*spotify.Connect).Command
 
-// connectReport is (*spotify.Connect).Report; tests swap it.
-var connectReport = (*spotify.Connect).Report
+// connectReport is (*spotify.Connect).ReportState; tests swap it.
+var connectReport = (*spotify.Connect).ReportState
 
 func (a *app) stopConnect() {
 	a.stopConnectWait(0)
@@ -161,11 +165,57 @@ func (a *app) stopConnectWait(wait time.Duration) {
 	if state.timer != nil {
 		state.timer.Stop()
 	}
+	var finalTSV *spotify.TrackStreamVerification
+	presetID := spotify.CachedIdentity()
+	if state.tracker != nil && state.tracker.isActive() && !a.pl.IsRemote() {
+		posMs := int64(-1)
+		durMs := int64(0)
+		if cur := a.pl.Current(); cur != nil && cur.URI() == state.tracker.currentURI() {
+			posMs = a.pl.Position().Milliseconds()
+			durMs = a.pl.Duration().Milliseconds()
+			if durMs > 0 {
+				posMs = min(posMs, durMs)
+			}
+		}
+		paused := !a.pl.Playing()
+		if state.client != nil && posMs >= 0 {
+			state.client.UpdateLastPosition(posMs, durMs, paused)
+		}
+		_, finalTSV = state.tracker.finalize(posMs, paused, "", connectNow())
+	}
 	close(state.done)
 	closed := make(chan struct{})
 	go func() {
 		defer close(closed)
-		state.client.Close()
+		var wg sync.WaitGroup
+		if state.client != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				state.client.Close()
+			}()
+		}
+		if finalTSV != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				var err error
+				if presetID.Token != "" && !presetID.Anonymous {
+					err = sendTrackStreamVerificationWithID(ctx, *finalTSV, presetID)
+				} else {
+					err = sendTrackStreamVerification(ctx, *finalTSV)
+				}
+				if err != nil {
+					log.Printf("melody: final tsv: %v", err)
+				}
+			}()
+		}
+		if state.tracker != nil {
+			state.tracker.tsvWG.Wait()
+		}
+		wg.Wait()
 	}()
 	a.pl.Control = nil
 	if a.pl.IsRemote() {
@@ -189,7 +239,13 @@ func (a *app) startConnect() {
 	}
 	hostname, _ := os.Hostname()
 	sum := sha256.Sum256([]byte("Sonora/" + a.profile.UserID + "/" + hostname))
-	state := &connectState{user: a.profile.UserID, jobs: make(chan func() error, 32), reports: make(chan func() error, 1), done: make(chan struct{})}
+	state := &connectState{
+		user:    a.profile.UserID,
+		jobs:    make(chan func() error, 32),
+		reports: make(chan func() error, 16),
+		done:    make(chan struct{}),
+		tracker: newPlaybackTracker(connectNow()),
+	}
 	state.client = spotify.NewConnect(hex.EncodeToString(sum[:20]), appName+" · "+hostname, func(event spotify.ConnectEvent) {
 		a.post(func() {
 			if a.connect == state {
@@ -198,8 +254,9 @@ func (a *app) startConnect() {
 		})
 	})
 	a.connect = state
-	for _, track := range a.pl.Queue() {
-		state.local = state.local || track.Local()
+	state.contextURI = a.pl.ContextURI()
+	if cur := a.pl.Current(); cur != nil && cur.Local() {
+		state.local = true
 	}
 	a.pl.Control = a.connectControl
 	go a.runConnectJobs(state, state.jobs)
@@ -283,59 +340,101 @@ func (a *app) here(fn func()) {
 }
 
 func (a *app) connectTick(state *connectState) {
-	state.timer = time.AfterFunc(5*time.Second, func() {
+	state.timer = time.AfterFunc(1*time.Second, func() {
 		a.post(func() {
 			if a.connect != state || a.quitting {
 				return
 			}
+			now := connectNow()
+			var milestone string
+			if state.tracker != nil && !state.local && !a.pl.IsRemote() {
+				posMs := a.pl.Position().Milliseconds()
+				durMs := a.pl.Duration().Milliseconds()
+				bitrate, format, _ := a.pl.MediaInfo()
+				playing := a.pl.Playing() && !a.pl.Loading() && a.pl.Ready()
+				milestone = state.tracker.update(playing, posMs, durMs, bitrate, format, now)
+			}
 			a.sendLocalConnectPlay()
-			a.reportConnect()
+			if milestone != "" {
+				if a.reportConnectWith(milestone, nil) {
+					state.tracker.confirmMilestone(milestone)
+					state.lastProgressAt = now
+				}
+			} else if now.Sub(state.lastProgressAt) >= progressReportInterval {
+				if a.reportConnectWith("progress", nil) {
+					state.lastProgressAt = now
+				}
+			}
 			a.connectTick(state)
 		})
 	})
 }
 
 func (a *app) reportConnect() {
+	a.reportConnectWith("progress", nil)
+}
+
+func (a *app) reportConnectWith(debugSource string, previousPos *int64) bool {
 	state := a.connect
 	if state != nil && !state.local {
-		for _, track := range a.pl.Queue() {
-			if track.Local() {
-				state.local, state.ref = true, nil
-				break
-			}
+		if cur := a.pl.Current(); cur != nil && cur.Local() {
+			state.local, state.ref = true, nil
 		}
 	}
-	if state == nil || state.local || state.applying || !state.receiver || state.ref == nil || a.pl.IsRemote() || a.pl.Loading() {
-		return
+	allowLoading := debugSource == "before_track_load"
+	if state == nil || state.local || state.applying || !state.receiver || state.ref == nil || a.pl.IsRemote() || (a.pl.Loading() && !allowLoading) {
+		return false
 	}
 	index := state.ref.Index
 	if index < 0 || index >= len(state.machine.States) {
-		return
+		return false
 	}
 	paused := !a.pl.Playing()
 	state.ref.Paused = paused
 	sent := state.machine.States[index].ID
 	ref := map[string]any{"state_machine_id": state.machine.ID, "state_id": sent, "paused": paused}
 	pos, duration := a.pl.Position().Milliseconds(), a.pl.Duration().Milliseconds()
+	if duration == 0 {
+		if cur := a.pl.Current(); cur != nil {
+			duration = cur.Length().Milliseconds()
+		}
+	}
 	if duration > 0 {
 		// The page's clock runs a little past the end of the song.
 		pos = min(pos, duration)
 	}
+	bitrate, format, _ := a.pl.MediaInfo()
+	var prevCopy *int64
+	if previousPos != nil {
+		v := *previousPos
+		prevCopy = &v
+	}
+	report := spotify.ConnectStateReport{
+		StateRef:         ref,
+		Position:         pos,
+		Duration:         duration,
+		Paused:           paused,
+		PreviousPosition: prevCopy,
+		Bitrate:          bitrate,
+		Format:           format,
+		DebugSource:      debugSource,
+	}
 	version := state.playVersion.Load()
-	queueLatestConnect(&state.reportJob, func(job func() error) bool {
+	priority := debugSource != "" && debugSource != "progress"
+	return queueLatestConnectPriority(&state.reportJob, func(job func() error) bool {
 		select {
 		case state.reports <- job:
 			return true
 		default:
 			return false
 		}
-	}, func() error {
+	}, priority, func() error {
 		if version != state.playVersion.Load() {
 			return nil
 		}
 		// Nothing the listener did: what goes wrong goes to the log, not to a
 		// toast that would come back every five seconds.
-		err := connectReport(state.client, ref, pos, duration, paused)
+		err := connectReport(state.client, report)
 		if err != nil {
 			log.Printf("connect: %v (state %s, %d of %d ms)", err, sent, pos, duration)
 		}
@@ -428,6 +527,14 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 			a.connectOptions(cluster.Player.Options)
 		}
 		if cluster.Active != "" && cluster.Active != state.client.ID {
+			if !a.pl.IsRemote() && state.tracker != nil {
+				// Another device already took playback ownership; skip sending
+				// a doomed track_data_finalized PUT on our revoked state_ref
+				// while still emitting TrackStreamVerification.
+				a.finalizePlaybackWith("", false)
+				state.tracker.clearPrevEndPos()
+			}
+			state.contextURI = ""
 			state.pendingPlay = ""
 			state.localQueue = false
 			state.playVersion.Add(1)
@@ -473,10 +580,16 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 					index = next.Index
 					track, err = response.Machine.Track(index)
 				}
-				if err == nil && a.pl.Current() != nil && track.URI() == a.pl.Current().URI() {
+				if err == nil && a.pl.Current() != nil && (track.URI() == a.pl.Current().URI() || (track.LinkedFrom != "" && "spotify:track:"+track.LinkedFrom == a.pl.Current().URI())) {
 					state.err = ""
 					state.machine = response.Machine
 					state.ref.Index = index
+					if state.tracker != nil && index >= 0 && index < len(state.machine.States) {
+						posMs, durMs := a.pl.Position().Milliseconds(), a.pl.Duration().Milliseconds()
+						bitrate, format, _ := a.pl.MediaInfo()
+						playing := a.pl.Playing() && !a.pl.Loading() && a.pl.Ready()
+						state.tracker.bind(track.URI(), track.LinkedFrom, state.machine.ID, state.machine.States[index].ID, posMs, durMs, bitrate, format, playing, connectNow(), false)
+					}
 					a.connectQueue(index)
 				}
 				break
@@ -513,16 +626,38 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 				localRepeat := a.pl.Repeat()
 				opts := state.machine.Attributes.Options
 				if localShuffle != player.ShuffleOff && !state.shuffle.on {
-					opts.Shuffle = nil
+					on := true
+					opts.Shuffle = &on
 				}
 				if localRepeat != player.RepeatOff && !state.repeat.on {
-					opts.RepeatContext, opts.RepeatTrack = nil, nil
+					all, one := localRepeat == player.RepeatAll, localRepeat == player.RepeatOne
+					opts.RepeatContext, opts.RepeatTrack = &all, &one
 				}
 				a.connectOptions(opts)
-				a.reportConnect()
+				if state.tracker != nil {
+					stateID := ""
+					if ref.Index >= 0 && ref.Index < len(state.machine.States) {
+						stateID = state.machine.States[ref.Index].ID
+					}
+					posMs, durMs := a.pl.Position().Milliseconds(), a.pl.Duration().Milliseconds()
+					if durMs == 0 {
+						durMs = track.Length().Milliseconds()
+					}
+					bitrate, format, _ := a.pl.MediaInfo()
+					playing := a.pl.Playing() && !a.pl.Loading() && a.pl.Ready()
+					prevPos := state.tracker.bind(track.URI(), track.LinkedFrom, state.machine.ID, stateID, posMs, durMs, bitrate, format, playing, connectNow(), true)
+					a.reportConnectWith("before_track_load", prevPos)
+				} else {
+					a.reportConnect()
+				}
 				return
 			}
 			if command.Ref == nil {
+				a.finalizePlaybackWith("", false)
+				if state.tracker != nil {
+					state.tracker.clearPrevEndPos()
+				}
+				state.contextURI = ""
 				state.playVersion.Add(1)
 				state.localQueue = false
 				state.ref = nil
@@ -558,6 +693,11 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 				state.applying = false
 			}
 		case "log_out":
+			a.finalizePlaybackWith("", false)
+			if state.tracker != nil {
+				state.tracker.clearPrevEndPos()
+			}
+			state.contextURI = ""
 			state.pendingPlay = ""
 			state.localQueue = false
 			state.playVersion.Add(1)
@@ -570,14 +710,31 @@ func (a *app) connectEvent(event spotify.ConnectEvent) {
 }
 
 func (a *app) applyConnect(ref *spotify.ConnectRef, seek *int64) {
+	a.applyConnectWith(ref, seek, false)
+}
+
+func (a *app) applyConnectWith(ref *spotify.ConnectRef, seek *int64, forceRestart bool) {
 	state := a.connect
 	track, err := state.machine.Track(ref.Index)
 	if err != nil {
+		a.finalizePlaybackWith("", false)
+		if state.tracker != nil {
+			state.tracker.clearPrevEndPos()
+		}
 		state.err = err.Error()
 		a.toast = state.err
 		state.ref = nil
 		a.pl.StopConnect()
 		return
+	}
+	nextStateID := ""
+	if ref.Index >= 0 && ref.Index < len(state.machine.States) {
+		nextStateID = state.machine.States[ref.Index].ID
+	}
+	sameState := !forceRestart && state.tracker != nil && state.tracker.matchesState(state.machine.ID, track.URI(), nextStateID) && state.ref != nil && !a.pl.IsRemote()
+	prevPosMs := a.pl.Position().Milliseconds()
+	if !sameState {
+		a.finalizePlayback(nextStateID)
 	}
 	copyRef := *ref
 	state.err = ""
@@ -593,7 +750,27 @@ func (a *app) applyConnect(ref *spotify.ConnectRef, seek *int64) {
 	a.pl.ApplyConnect(track, position, ref.Paused)
 	a.connectQueue(ref.Index)
 	state.applying = false
-	a.reportConnect()
+	if state.tracker != nil && !sameState {
+		startPos := a.pl.Position().Milliseconds()
+		if position >= 0 {
+			startPos = position.Milliseconds()
+		}
+		bitrate, format, _ := a.pl.MediaInfo()
+		playing := !ref.Paused && !a.pl.Loading() && a.pl.Ready()
+		prevPos := state.tracker.start(track.URI(), state.machine.ID, nextStateID, startPos, track.Length().Milliseconds(), bitrate, format, playing, connectNow())
+		a.reportConnectWith("before_track_load", prevPos)
+	} else {
+		if state.tracker != nil && sameState {
+			now := connectNow()
+			if position >= 0 {
+				state.tracker.seek(prevPosMs, position.Milliseconds(), now)
+			}
+			bitrate, format, _ := a.pl.MediaInfo()
+			playing := !ref.Paused && !a.pl.Loading() && a.pl.Ready()
+			state.tracker.update(playing, a.pl.Position().Milliseconds(), track.Length().Milliseconds(), bitrate, format, now)
+		}
+		a.reportConnect()
+	}
 }
 
 // connectQueue shows what follows the machine's state index as Spotify's
@@ -676,21 +853,31 @@ func (a *app) showConnectQueue(queue []spotify.Track) {
 
 func (a *app) connectControl(action string, value any) bool {
 	state := a.connect
+	if state != nil && action == "smart_shuffle" {
+		if !a.pl.IsRemote() {
+			state.localQueue = true
+		}
+		return false
+	}
 	if state != nil && action != "play" {
-		for _, track := range a.pl.Queue() {
-			if track.Local() {
-				state.local, state.ref = true, nil
-				break
-			}
+		if cur := a.pl.Current(); cur != nil && cur.Local() {
+			state.local, state.ref = true, nil
 		}
 	}
 	if state != nil && action == "play" {
-		state.local = false
+		nextLocal := false
 		request := value.(player.QueueRequest)
 		for _, track := range request.Tracks {
-			state.local = state.local || track.Local()
+			nextLocal = nextLocal || track.Local()
 		}
-		if state.local {
+		if nextLocal {
+			// Finalize any running Spotify track BEFORE setting state.local = true.
+			a.finalizePlayback("")
+			if state.tracker != nil {
+				state.tracker.clearPrevEndPos()
+			}
+			state.local = true
+			state.contextURI = ""
 			state.ref = nil
 			state.pendingPlay = ""
 			state.localQueue = false
@@ -698,6 +885,8 @@ func (a *app) connectControl(action string, value any) bool {
 			if state.cluster.Active == state.client.ID {
 				a.connectJob(func() error { return state.client.Command(state.client.ID, "pause", nil) })
 			}
+		} else {
+			state.local = false
 		}
 	}
 	if state != nil && state.local {
@@ -708,6 +897,42 @@ func (a *app) connectControl(action string, value any) bool {
 	}
 	if a.localConnectControl(action, value) {
 		return true
+	}
+	localDevice := !a.pl.IsRemote() && (state.cluster.Active == "" || state.cluster.Active == state.client.ID)
+	if localDevice {
+		switch action {
+		case "seek":
+			if state.ref != nil && state.ref.Index >= 0 && state.ref.Index < len(state.machine.States) && state.machine.States[state.ref.Index].NoSeek {
+				a.toast = "当前内容不支持拖动进度"
+				return true
+			}
+			prevPos := a.pl.Position().Milliseconds()
+			targetPos := max(0, value.(time.Duration))
+			a.here(func() { a.pl.Seek(targetPos) })
+			newPos := a.pl.Position().Milliseconds()
+			if state.tracker != nil {
+				prevPos = state.tracker.seek(prevPos, newPos, connectNow())
+			}
+			a.reportConnectWith("seek", &prevPos)
+			return true
+		case "volume":
+			volume := value.(float64)
+			a.here(func() { a.pl.SetVolume(volume) })
+			state.volLocal = time.Now()
+			if state.observer && state.receiver {
+				target := state.cluster.Active
+				if target == "" {
+					target = state.client.ID
+				}
+				a.sendVolume(state, target, volume)
+			}
+			return true
+		case "advance":
+			if state.localQueue || state.ref == nil || !state.observer || !state.receiver {
+				a.playHere(a.pl.AdvanceLocal, !state.localQueue && state.ref != nil)
+				return true
+			}
+		}
 	}
 	if !state.observer || !state.receiver {
 		if a.pl.IsRemote() || state.ref != nil {
@@ -735,27 +960,25 @@ func (a *app) connectControl(action string, value any) bool {
 			a.toast = "当前内容不支持拖动进度"
 			return true
 		}
-		if target == state.client.ID && !a.pl.IsRemote() {
-			// Playing here: it jumps at once and Spotify hears where it
-			// is after, rather than being asked to say so, a trip through
-			// its servers that took seconds behind a proxy.
-			a.here(func() { a.pl.Seek(value.(time.Duration)) })
-			a.reportConnect()
-			return true
-		}
 		action = "seek_to"
 		extra["value"] = max(0, value.(time.Duration).Milliseconds())
 	case "advance":
 		if state.ref == nil {
 			return false
 		}
+		if state.localQueue {
+			a.playHere(a.pl.AdvanceLocal, false)
+			return true
+		}
 		next := state.machine.States[state.ref.Index].Transitions.Advance
 		if next == nil {
+			a.finalizePlayback("")
+			state.ref = nil
 			a.pl.StopConnect()
 			return true
 		}
 		zero := int64(0)
-		a.applyConnect(next, &zero)
+		a.applyConnectWith(next, &zero, true)
 		return true
 	case "shuffle", "repeat":
 		if !a.pl.IsRemote() && state.ref == nil && state.cluster.Active == "" {
@@ -794,11 +1017,6 @@ func (a *app) connectControl(action string, value any) bool {
 		return true
 	case "volume":
 		volume := value.(float64)
-		if target == state.client.ID && !a.pl.IsRemote() {
-			// Playing here: heard at once, not when Spotify sends it back.
-			a.here(func() { a.pl.SetVolume(volume) })
-			state.volLocal = time.Now()
-		}
 		a.sendVolume(state, target, volume)
 		return true
 	case "jump":
@@ -809,7 +1027,7 @@ func (a *app) connectControl(action string, value any) bool {
 			return false
 		}
 		track := map[string]string{"uri": queue[i].URI(), "uid": queue[i].UID}
-		request := player.QueueRequest{Tracks: append([]spotify.Track(nil), queue...), Start: i}
+		request := player.QueueRequest{Tracks: append([]spotify.Track(nil), queue...), Start: i, ContextURI: state.contextURI}
 		a.connectJob(func() error {
 			err := state.client.Command(target, "skip_next", map[string]any{"track": track})
 			if err != nil {
@@ -830,6 +1048,8 @@ func (a *app) connectControl(action string, value any) bool {
 		track := value.(spotify.Track)
 		extra["track"] = map[string]any{"uri": track.URI(), "metadata": map[string]string{"is_queued": "true"}, "provider": "queue"}
 	case "skip_next", "skip_prev":
+	case "skip_prev_track":
+		action = "skip_prev"
 	default:
 		return false
 	}
@@ -848,11 +1068,40 @@ func connectMessage(err error) string {
 }
 
 func connectPlayBody(request player.QueueRequest) map[string]any {
-	tracks := make([]map[string]string, 0, len(request.Tracks))
-	for _, track := range request.Tracks {
+	const maxPlayTracks = 200
+	lo, hi := 0, len(request.Tracks)
+	start := min(max(request.Start, 0), max(0, hi-1))
+	if hi > maxPlayTracks {
+		lo = max(0, start-50)
+		hi = min(len(request.Tracks), lo+maxPlayTracks)
+		lo = max(0, hi-maxPlayTracks)
+	}
+	window := request.Tracks[lo:hi]
+	startIdx := max(0, start-lo)
+	tracks := make([]map[string]string, 0, len(window))
+	for _, track := range window {
 		tracks = append(tracks, map[string]string{"uri": track.URI()})
 	}
-	return map[string]any{"context": map[string]any{"uri": "", "url": "", "metadata": map[string]any{}, "pages": []any{map[string]any{"tracks": tracks}}}, "play_origin": map[string]any{}, "options": map[string]any{"license": "on-demand", "skip_to": map[string]any{"track_index": request.Start}}}
+	skipTo := map[string]any{"track_index": startIdx}
+	if startIdx < len(tracks) && tracks[startIdx]["uri"] != "" {
+		skipTo["track_uri"] = tracks[startIdx]["uri"]
+	}
+	return map[string]any{
+		"context": map[string]any{
+			"uri":      normalizeConnectContextURI(request.ContextURI),
+			"url":      "",
+			"metadata": map[string]any{},
+			"pages":    []any{map[string]any{"tracks": tracks}},
+		},
+		"play_origin": map[string]any{
+			"feature_identifier": "harmony",
+			"feature_version":    spotify.ConnectClientVersion,
+		},
+		"options": map[string]any{
+			"license": "on-demand",
+			"skip_to": skipTo,
+		},
+	}
 }
 
 // connectButton is the monitor speaker standing for the device the music
@@ -911,6 +1160,13 @@ func (a *app) connectButton(c *ui.Context) {
 					row.Children(func() { ui.Text(c, name).FontSize(13).SingleLine() })
 					if row.Clicked() {
 						target := id
+						if state.local {
+							state.local = false
+							state.ref = nil
+							if a.pl.Playing() {
+								a.here(a.pl.TogglePlay)
+							}
+						}
 						a.connectJob(func() error { return state.client.Transfer(target) })
 						state.open = false
 					}

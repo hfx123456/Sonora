@@ -7,30 +7,46 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-// readSystemProxy reads the proxy Windows is set to.
-func readSystemProxy() *url.URL {
+// readSystemProxyConfig reads Windows Internet Settings proxy & bypass rules.
+func readSystemProxyConfig() systemProxyConfig {
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.QUERY_VALUE)
 	if err != nil {
-		return nil
+		return systemProxyConfig{}
 	}
 	defer k.Close()
 	if on, _, _ := k.GetIntegerValue("ProxyEnable"); on == 0 {
-		return nil
+		return systemProxyConfig{}
 	}
 	server, _, _ := k.GetStringValue("ProxyServer")
-	raw := pickProxy(server)
-	if raw == "" {
-		return nil
+	override, _, _ := k.GetStringValue("ProxyOverride")
+	return parseWindowsProxyConfig(server, override)
+}
+
+func parseWindowsProxyConfig(server, override string) systemProxyConfig {
+	parseRaw := func(raw string) *url.URL {
+		if raw == "" {
+			return nil
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			return nil
+		}
+		return u
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return nil
+	return systemProxyConfig{
+		httpProxy:  parseRaw(pickProxyForScheme(server, "http")),
+		httpsProxy: parseRaw(pickProxyForScheme(server, "https")),
+		socksProxy: parseRaw(pickProxyForScheme(server, "socks")),
+		override:   override,
 	}
-	return u
 }
 
 // pickProxy reads ProxyServer: "host:port", or "http=a:1;https=b:2;socks=c:3".
 func pickProxy(server string) string {
+	return pickProxyForScheme(server, "https")
+}
+
+func pickProxyForScheme(server, reqScheme string) string {
 	server = strings.TrimSpace(server)
 	if server == "" {
 		return ""
@@ -40,28 +56,52 @@ func pickProxy(server string) string {
 		if addr == "" {
 			return ""
 		}
-		if strings.Contains(addr, "://") {
-			return addr
+		if idx := strings.Index(addr, "://"); idx >= 0 {
+			scheme := strings.ToLower(addr[:idx])
+			rest := addr[idx+3:]
+			if scheme == "socks" {
+				scheme = "socks5"
+			}
+			return scheme + "://" + rest
 		}
 		return fallback + "://" + addr
 	}
-	if !strings.Contains(server, "=") {
-		return withScheme(server, "http")
-	}
+	parts := strings.FieldsFunc(server, func(r rune) bool {
+		return r == ';' || r == ' ' || r == '\t' || r == '\r' || r == '\n'
+	})
 	entries := map[string]string{}
-	for _, part := range strings.Split(server, ";") {
+	var bare string
+	for _, part := range parts {
 		if k, v, ok := strings.Cut(part, "="); ok {
-			entries[strings.ToLower(strings.TrimSpace(k))] = strings.TrimSpace(v)
+			key := strings.ToLower(strings.TrimSpace(k))
+			val := strings.TrimSpace(v)
+			if val != "" {
+				entries[key] = val
+			}
+		} else if bare == "" {
+			bare = part
 		}
 	}
-	if v := entries["https"]; v != "" {
-		return withScheme(v, "http")
+	if len(entries) == 0 {
+		return withScheme(bare, "http")
 	}
-	if v := entries["http"]; v != "" {
-		return withScheme(v, "http")
+	var order []string
+	switch strings.ToLower(reqScheme) {
+	case "http":
+		order = []string{"http", "https", "socks"}
+	case "socks":
+		order = []string{"socks", "https", "http"}
+	default:
+		order = []string{"https", "http", "socks"}
 	}
-	if v := entries["socks"]; v != "" {
-		return withScheme(v, "socks5")
+	for _, k := range order {
+		if v := entries[k]; v != "" {
+			fb := "http"
+			if k == "socks" {
+				fb = "socks5"
+			}
+			return withScheme(v, fb)
+		}
 	}
 	return ""
 }

@@ -237,7 +237,7 @@ func fetchNetEaseBestResult(ctx context.Context, client *http.Client, songID str
 		return Result{}
 	}
 	var variants []Result
-	if yrc := strings.TrimSpace(parsed.Yrc.Lyric); yrc != "" {
+	if yrc := strings.TrimSpace(parsed.Yrc.Lyric); hasSubstantiveYRC(yrc) {
 		tr := strings.TrimSpace(parsed.Ytlrc.Lyric)
 		if tr == "" {
 			tr = strings.TrimSpace(parsed.Tlyric.Lyric)

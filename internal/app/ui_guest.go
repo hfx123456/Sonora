@@ -14,20 +14,30 @@ import (
 // playQueue plays tracks from start, or asks for a sign-in first if nobody
 // is signed in. It reports whether it played.
 func (a *app) playQueue(tracks []spotify.Track, start int) bool {
+	return a.playQueueWithContext(tracks, start, "")
+}
+
+// playQueueWithContext plays tracks from start under contextURI (such as a
+// playlist, album, artist, or liked collection URI).
+func (a *app) playQueueWithContext(tracks []spotify.Track, start int, contextURI string) bool {
 	local := len(tracks) > 0 && tracks[min(max(start, 0), len(tracks)-1)].Local()
 	if !local && !a.canPlay() {
 		return false
 	}
-	a.pl.PlayQueue(tracks, start)
+	a.pl.PlayQueueContext(tracks, start, contextURI)
 	return true
 }
 
 // playRadio plays the radio of name, from tracks, as playQueue does.
 func (a *app) playRadio(name string, tracks []spotify.Track) bool {
+	return a.playRadioWithContext(name, "", tracks)
+}
+
+func (a *app) playRadioWithContext(name, contextURI string, tracks []spotify.Track) bool {
 	if !a.canPlay() {
 		return false
 	}
-	a.pl.PlayRadio(name, tracks, a.radioFeed())
+	a.pl.PlayRadioContext(name, contextURI, tracks, a.radioFeed())
 	return true
 }
 

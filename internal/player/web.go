@@ -14,6 +14,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"golang.org/x/net/publicsuffix"
 
 	"vinyl/internal/spotify"
 )
@@ -425,11 +427,12 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	case p == "/event" && r.Method == http.MethodPost:
 		var e struct {
-			Gen  int     `json:"gen"`
-			Type string  `json:"type"`
-			T    float64 `json:"t"`
-			Msg  string  `json:"msg"`
-			Seq  int     `json:"seq"`
+			Gen     int     `json:"gen"`
+			Type    string  `json:"type"`
+			T       float64 `json:"t"`
+			Msg     string  `json:"msg"`
+			Seq     int     `json:"seq"`
+			SeekSeq int     `json:"seekSeq"`
 		}
 		if json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&e) != nil {
 			http.Error(rw, "bad event", http.StatusBadRequest)
@@ -440,7 +443,7 @@ func (w *Web) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		} else if e.Type == "backend-error" {
 			w.backendFailed("backendError " + e.Msg)
 		} else if o := w.out(e.Gen); o != nil {
-			o.event(e.Type, time.Duration(e.T*float64(time.Second)), e.Msg, e.Seq)
+			o.eventWithSeek(e.Type, time.Duration(e.T*float64(time.Second)), e.Msg, e.Seq, e.SeekSeq)
 		}
 		rw.WriteHeader(http.StatusNoContent)
 	default:
@@ -570,7 +573,13 @@ func (w *Web) forward(rw http.ResponseWriter, r *http.Request, method, target st
 			http.Error(rw, err.Error(), status)
 			return
 		}
-		req, _ := http.NewRequestWithContext(r.Context(), method, target, bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(r.Context(), method, target, bytes.NewReader(body))
+		if err != nil {
+			log.Printf("player: %s: %v", r.URL.Path, err)
+			o.answered(http.StatusBadGateway, 0)
+			http.Error(rw, err.Error(), http.StatusBadGateway)
+			return
+		}
 		req.Header.Set("client-token", id.ClientToken)
 		req.Header.Set("User-Agent", spotify.UserAgent)
 		req.Header.Set("Referer", "https://open.spotify.com/")
@@ -589,8 +598,14 @@ func (w *Web) forward(rw http.ResponseWriter, r *http.Request, method, target st
 			http.Error(rw, err.Error(), http.StatusBadGateway)
 			return
 		}
-		out, _ = io.ReadAll(res.Body)
+		out, err = io.ReadAll(res.Body)
 		res.Body.Close()
+		if err != nil {
+			log.Printf("player: %s: %v", r.URL.Path, err)
+			o.answered(http.StatusBadGateway, 0)
+			http.Error(rw, err.Error(), http.StatusBadGateway)
+			return
+		}
 		if res.StatusCode != http.StatusUnauthorized || attempt > 0 {
 			break
 		}
@@ -652,17 +667,19 @@ type webOut struct {
 	// and back, and the page asks for a range many times as it starts.
 	wentTo string
 
-	mu           sync.Mutex
-	pos          time.Duration // where it was at at
-	at           time.Time
-	running      bool // the page plays it: its time moves
-	playing      bool // it was asked to play, and has not ended
-	played       bool // audio reached playing at least once
-	asked        int  // how many times Vinyl asked the page to play or pause
-	seekPending  *time.Duration
-	seekAt       time.Time
-	lastEventSeq int
-	onEnd        func()
+	mu              sync.Mutex
+	pos             time.Duration // where it was at at
+	at              time.Time
+	running         bool // the page plays it: its time moves
+	playing         bool // it was asked to play, and has not ended
+	played          bool // audio reached playing at least once
+	asked           int // how many times Vinyl asked the page to play or pause
+	seekPending     *time.Duration
+	seekAt          time.Time
+	seekSeq         int
+	lastPositionSeq int
+	lastStateSeq    int
+	onEnd           func()
 	// onSystem hears what the system did to the page rather than Vinyl.
 	onSystem func(cmd string, at time.Duration)
 	endSeq   int
@@ -689,11 +706,16 @@ func (o *webOut) headersFor(target string) map[string]string {
 	if len(o.headers) == 0 || len(o.sources) == 0 {
 		return nil
 	}
-	hTarget, hOrig := hostOf(target), hostOf(o.sources[0])
-	if strings.EqualFold(hTarget, hOrig) {
+	dest, destErr := url.Parse(target)
+	origin, originErr := url.Parse(o.sources[0])
+	if destErr != nil || originErr != nil || dest.Hostname() == "" || origin.Hostname() == "" {
+		return nil
+	}
+	sameScheme := strings.EqualFold(dest.Scheme, origin.Scheme)
+	if sameScheme && strings.EqualFold(dest.Host, origin.Host) {
 		return o.headers
 	}
-	sameSite := sameBaseDomain(hTarget, hOrig)
+	sameSite := sameScheme && sameBaseDomain(dest.Hostname(), origin.Hostname())
 	var safe map[string]string
 	for k, v := range o.headers {
 		if strings.EqualFold(k, "Authorization") {
@@ -711,18 +733,16 @@ func (o *webOut) headersFor(target string) map[string]string {
 }
 
 func sameBaseDomain(a, b string) bool {
-	stripPort := func(h string) string {
-		if i := strings.IndexByte(h, ':'); i >= 0 {
-			h = h[:i]
-		}
-		return strings.ToLower(h)
+	a, b = strings.ToLower(a), strings.ToLower(b)
+	if a == b {
+		return a != ""
 	}
-	a, b = stripPort(a), stripPort(b)
-	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
-	if len(pa) < 2 || len(pb) < 2 {
-		return a == b
+	if net.ParseIP(a) != nil || net.ParseIP(b) != nil {
+		return false
 	}
-	return pa[len(pa)-1] == pb[len(pb)-1] && pa[len(pa)-2] == pb[len(pb)-2]
+	domainA, errA := publicsuffix.EffectiveTLDPlusOne(a)
+	domainB, errB := publicsuffix.EffectiveTLDPlusOne(b)
+	return errA == nil && errB == nil && domainA == domainB
 }
 
 // follow takes the answer for the file asked for at source, sources[i]
@@ -786,11 +806,13 @@ func (o *webOut) Seek(t time.Duration) {
 		t = o.dur
 	}
 	target := t
+	o.seekSeq++
+	seekSeq := o.seekSeq
 	o.seekPending = &target
 	o.seekAt = time.Now()
 	o.pos, o.at = t, time.Now()
 	o.mu.Unlock()
-	o.w.send(fmt.Sprintf("vinyl.seek(%d,%.3f)", o.gen, t.Seconds()))
+	o.w.send(fmt.Sprintf("vinyl.seek(%d,%.3f,%d)", o.gen, t.Seconds(), seekSeq))
 }
 
 func (o *webOut) Position() time.Duration {
@@ -801,7 +823,7 @@ func (o *webOut) Position() time.Duration {
 
 func (o *webOut) position(now time.Time) time.Duration {
 	p := o.pos
-	if o.running {
+	if o.running && o.seekPending == nil {
 		p += now.Sub(o.at)
 	}
 	if o.dur > 0 {
@@ -877,19 +899,46 @@ func (o *webOut) answered(status int, wait time.Duration) {
 
 // event takes in what the page reports: an event of its audio at t.
 func (o *webOut) event(kind string, t time.Duration, msg string, seq int) {
+	o.eventWithSeek(kind, t, msg, seq, 0)
+}
+
+func (o *webOut) eventWithSeek(kind string, t time.Duration, msg string, seq, seekSeq int) {
 	o.mu.Lock()
-	isOrdered := kind == "time" || kind == "seeked" || kind == "playing" || kind == "pause" || kind == "waiting"
-	if isOrdered && seq > 0 {
-		if seq < o.lastEventSeq {
+	isTime := kind == "time"
+	isState := kind == "seeked" || kind == "playing" || kind == "pause" || kind == "waiting"
+	stalePosition := (isTime || isState) && seq > 0 && seq <= o.lastPositionSeq
+	if isTime && stalePosition {
+		o.mu.Unlock()
+		return
+	}
+	if isState && seq > 0 {
+		if seq <= o.lastStateSeq {
 			o.mu.Unlock()
 			return
 		}
-		o.lastEventSeq = seq
+		o.lastStateSeq = seq
 	}
-	if o.seekPending != nil && isOrdered {
-		delta := t - *o.seekPending
-		settled := kind == "seeked" || (delta >= -500*time.Millisecond && delta <= 500*time.Millisecond) || (!o.seekAt.IsZero() && time.Since(o.seekAt) > 2*time.Second)
+	if o.seekPending != nil && (isTime || isState) {
+		var settled bool
+		if seekSeq > 0 && seekSeq < o.seekSeq {
+			settled = false
+		} else {
+			delta := t - *o.seekPending
+			near := delta >= -500*time.Millisecond && delta <= 500*time.Millisecond
+			if seekSeq > 0 {
+				settled = kind == "seeked" || near || (!o.seekAt.IsZero() && time.Since(o.seekAt) > 10*time.Second)
+			} else {
+				settled = kind == "seeked" || near || (!o.seekAt.IsZero() && time.Since(o.seekAt) > 2*time.Second)
+			}
+		}
 		if !settled {
+			switch kind {
+			case "playing":
+				o.running = true
+				o.played = true
+			case "pause", "waiting":
+				o.running = false
+			}
 			o.mu.Unlock()
 			return
 		}
@@ -929,6 +978,7 @@ func (o *webOut) event(kind string, t time.Duration, msg string, seq int) {
 		o.endSeq = seq
 		log.Printf("player: track %d ended seq=%d at=%v duration=%v (%s)", o.gen, seq, t, o.dur, msg)
 		o.running, o.playing = false, false
+		o.seekPending = nil
 		t, end = o.dur, o.onEnd
 	case "duration":
 		// A file says how long it is once it loads: an episode's, where its
@@ -958,8 +1008,13 @@ func (o *webOut) event(kind string, t time.Duration, msg string, seq int) {
 		return
 	}
 	// A seek on its way lands where it was asked, not where the page was.
-	if kind != "error" {
-		o.pos, o.at = t, time.Now()
+	if kind != "error" && !stalePosition && o.seekPending == nil {
+		if system == "" || (seekSeq == 0 || seekSeq >= o.seekSeq) {
+			o.pos, o.at = t, time.Now()
+		}
+		if (isTime || isState) && seq > 0 {
+			o.lastPositionSeq = seq
+		}
 	}
 	fn := o.onSystem
 	o.mu.Unlock()

@@ -12,6 +12,27 @@ import (
 
 const mirrorFileID = "f6e2ff1804615a9cb45b63cbba993d3ba440eb4a"
 
+// Media redirects keep cookies on the same registered site and scheme only.
+func TestMediaRedirectCookieScope(t *testing.T) {
+	for _, tc := range []struct {
+		source, target string
+		keepCookie     bool
+	}{
+		{"https://origin.example.co.uk/audio", "https://cdn.example.co.uk/audio", true},
+		{"https://origin.example.co.uk/audio", "https://other.co.uk/audio", false},
+		{"https://[2001:db8::1]/audio", "https://[2001:db8::2]/audio", false},
+		{"https://origin.example.com/audio", "http://origin.example.com/audio", false},
+	} {
+		out := &webOut{sources: []string{tc.source}, headers: map[string]string{
+			"Cookie": "test=cookie", "Authorization": "test-token", "User-Agent": "test",
+		}}
+		headers := out.headersFor(tc.target)
+		if (headers["Cookie"] != "") != tc.keepCookie || headers["Authorization"] != "" || headers["User-Agent"] == "" {
+			t.Errorf("unexpected redirect headers from %s to %s: %v", tc.source, tc.target, headers)
+		}
+	}
+}
+
 // A CDN that does not answer costs the part, not the song: the same bytes
 // come from another CDN that serves the file, for the same range.
 func TestAPartComesFromAnotherCDN(t *testing.T) {

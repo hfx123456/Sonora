@@ -119,30 +119,57 @@ func captureQt(ctx context.Context, client *qtweb.Client, id uint64, signedIn bo
 }
 
 func (a *app) renewQtIdentity() (spotify.Identity, error) {
+	return a.renewQtIdentityMode(false)
+}
+
+func (a *app) renewQtIdentityFull() (spotify.Identity, error) {
+	return a.renewQtIdentityMode(true)
+}
+
+func (a *app) renewQtIdentityMode(full bool) (spotify.Identity, error) {
+	if !a.hasAccountSession() {
+		return spotify.Identity{}, spotify.ErrSignedOut
+	}
 	epoch := accountEpoch()
-	captureMu.Lock()
-	defer captureMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	kept, err := qtAccountCookies(ctx)
-	if err != nil {
-		return spotify.Identity{}, err
+	cancelID := a.setRenewCancel(cancel)
+	defer a.clearRenewCancel(cancelID)
+	captureMu.Lock()
+	defer captureMu.Unlock()
+	if ctx.Err() != nil || accountEpoch() != epoch || !a.hasAccountSession() {
+		return spotify.Identity{}, spotify.ErrSignedOut
 	}
-	if kept != "" {
-		if id, err := spotify.AccountIdentity(kept); err == nil {
-			if accountEpoch() != epoch {
-				return spotify.Identity{}, spotify.ErrSignedOut
-			}
-			mygo.RunOnMain(func() {
-				if accountEpoch() == epoch {
-					a.signin.cookies = kept
+	var (
+		kept string
+		err  error
+	)
+	if !full {
+		kept, err = qtAccountCookies(ctx)
+		if err != nil {
+			return spotify.Identity{}, err
+		}
+		if kept != "" {
+			if id, err := spotify.AccountIdentityWithContext(ctx, kept); err == nil {
+				if accountEpoch() != epoch || !a.hasAccountSession() {
+					return spotify.Identity{}, spotify.ErrSignedOut
 				}
-			})
-			log.Printf("Qt identity: renewed from cookies")
-			return id, nil
+				mygo.RunOnMain(func() {
+					if accountEpoch() == epoch && a.hasAccountSession() {
+						a.signin.cookies = kept
+					}
+				})
+				log.Printf("Qt identity: renewed from cookies")
+				return id, nil
+			} else if ctx.Err() != nil {
+				return spotify.Identity{}, ctx.Err()
+			}
 		}
 	}
-	log.Printf("Qt identity: browser renewal")
+	if ctx.Err() != nil || accountEpoch() != epoch || !a.hasAccountSession() {
+		return spotify.Identity{}, spotify.ErrSignedOut
+	}
+	log.Printf("Qt identity: browser renewal (full=%v)", full)
 	client, release, err := qtweb.Acquire()
 	if err != nil {
 		return spotify.Identity{}, err
@@ -150,7 +177,7 @@ func (a *app) renewQtIdentity() (spotify.Identity, error) {
 	defer release()
 	id := qtAuthSequence.Add(1)
 	mygo.RunOnMain(func() {
-		if accountEpoch() != epoch || a.quitting {
+		if ctx.Err() != nil || accountEpoch() != epoch || !a.hasAccountSession() || a.quitting {
 			cancel()
 			return
 		}
@@ -164,27 +191,32 @@ func (a *app) renewQtIdentity() (spotify.Identity, error) {
 			}
 		})
 	}()
-	// A tiny same-origin JSON document can use HttpOnly cookies without
-	// enumerating them or starting the complete Spotify web application.
-	identity, err := spotify.AccountIdentityViaBrowser(func(url string) ([]byte, error) {
-		return qtTokenBody(ctx, client, id, url)
-	})
-	if accountEpoch() != epoch {
+	if !full {
+		// A tiny same-origin JSON document can use HttpOnly cookies without
+		// enumerating them or starting the complete Spotify web application.
+		identity, err := spotify.AccountIdentityViaBrowserWithContext(ctx, func(url string) ([]byte, error) {
+			return qtTokenBody(ctx, client, id, url)
+		})
+		if accountEpoch() != epoch || !a.hasAccountSession() {
+			return spotify.Identity{}, spotify.ErrSignedOut
+		}
+		if err == nil {
+			qtweb.SetKnownLogin(true)
+			log.Printf("Qt identity: renewed through browser token API")
+			return identity, nil
+		}
+		if ctx.Err() != nil {
+			return spotify.Identity{}, ctx.Err()
+		}
+	}
+	if ctx.Err() != nil || accountEpoch() != epoch || !a.hasAccountSession() {
 		return spotify.Identity{}, spotify.ErrSignedOut
-	}
-	if err == nil {
-		qtweb.SetKnownLogin(true)
-		log.Printf("Qt identity: renewed through browser token API")
-		return identity, nil
-	}
-	if ctx.Err() != nil {
-		return spotify.Identity{}, ctx.Err()
 	}
 	log.Printf("Qt identity: full web player fallback")
 	if _, err := client.Call(ctx, "auth.open", map[string]any{"id": id, "url": spotify.WebPlayerURL, "preload": spotify.CaptureJS}); err != nil {
 		return spotify.Identity{}, err
 	}
-	identity, err = captureQt(ctx, client, id, false)
+	identity, err := captureQt(ctx, client, id, false)
 	if err != nil {
 		return spotify.Identity{}, err
 	}
@@ -209,7 +241,7 @@ func (a *app) openQtLogin() {
 	a.closeSignin()
 	s := &a.signin
 	s.gen++
-	gen, epoch := s.gen, accountEpoch()
+	gen, epoch := s.gen, bumpAccountEpoch()
 	ctx, cancel := context.WithCancel(context.Background())
 	s.qtCancel, s.shown = cancel, true
 	go func() {
@@ -217,11 +249,19 @@ func (a *app) openQtLogin() {
 		defer a.post(func() {
 			if gen == s.gen {
 				s.qtID, s.qtCancel, s.shown = 0, nil, false
+				if a.profile == nil && a.homeLoading && !a.quitting {
+					a.signedIn(nil)
+				}
 			}
 		})
 		kept, accepted := func() (string, bool) {
 			captureMu.Lock()
 			defer captureMu.Unlock()
+			if pendingCookieClear.Swap(false) {
+				if err := clearQtCookiesLocked(); err != nil {
+					log.Printf("sign out: %v", err)
+				}
+			}
 			if err := ensureQtCookies(); err != nil || ctx.Err() != nil {
 				a.post(func() {
 					if gen == s.gen && ctx.Err() == nil {
@@ -292,9 +332,16 @@ func (a *app) openQtLogin() {
 	}()
 }
 
-func clearQtAccount() error {
+func clearQtAccountPending() error {
 	captureMu.Lock()
 	defer captureMu.Unlock()
+	if !pendingCookieClear.Swap(false) {
+		return nil
+	}
+	return clearQtCookiesLocked()
+}
+
+func clearQtCookiesLocked() error {
 	qtCookieMu.Lock()
 	defer qtCookieMu.Unlock()
 	if err := qtweb.SetKnownLogin(false); err != nil {

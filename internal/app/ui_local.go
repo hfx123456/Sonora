@@ -178,11 +178,18 @@ func (a *app) authorizeOAuthForm(provider string) {
 	a.cloudFormAuthing = true
 	a.cloudFormErr = ""
 	a.cloudFormOK = "正在打开浏览器，请在浏览器中完成授权登录…"
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cloudOAuthCancel = cancel
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
-		res, err := authorizeCloudOAuth(ctx, provider, clientID, clientSecret, openExternalURL)
+		authCtx, stop := context.WithTimeout(ctx, 3*time.Minute)
+		defer stop()
+		res, err := authorizeCloudOAuth(authCtx, provider, clientID, clientSecret, openExternalURL)
 		a.post(func() {
+			defer cancel()
+			if ctx.Err() != nil || a.quitting {
+				return
+			}
+			a.cloudOAuthCancel = nil
 			a.cloudFormAuthing = false
 			if err != nil {
 				a.cloudFormErr, a.cloudFormOK = err.Error(), ""
@@ -196,29 +203,50 @@ func (a *app) authorizeOAuthForm(provider string) {
 				defaultName = "百度网盘"
 			}
 			name := cmp.Or(customName, defaultName)
-			key := provider + "|" + strings.ToLower(cmp.Or(res.Email, clientID)) + "|" + strings.Trim(folder, "/")
-			sum := sha256.Sum256([]byte(key))
 			sealedRefresh, plainRefresh := sealCloudPassword(res.RefreshToken)
 			sealedSecret, plainSecret := sealCloudPassword(clientSecret)
-			entry := cloudSourceSetting{
-				ID:            hex.EncodeToString(sum[:8]),
-				Type:          provider,
-				Name:          name,
-				Folder:        "",
-				FolderPending: true,
-				Username:      res.Email,
-				ClientID:      clientID,
-				SealedSecret:  sealedSecret,
-				PlainSecret:   plainSecret,
-				SealedRefresh: sealedRefresh,
-				PlainRefresh:  plainRefresh,
-			}
-			idx := slices.IndexFunc(a.settings.CloudSources, func(existing cloudSourceSetting) bool {
-				return existing.ID == entry.ID
-			})
-			if idx >= 0 {
-				a.settings.CloudSources[idx] = entry
+			var entry cloudSourceSetting
+			if res.Email != "" {
+				key := provider + "|" + strings.ToLower(res.Email) + "|" + strings.Trim(folder, "/")
+				sum := sha256.Sum256([]byte(key))
+				entry = cloudSourceSetting{
+					ID:            hex.EncodeToString(sum[:8]),
+					Type:          provider,
+					Name:          name,
+					Folder:        "",
+					FolderPending: true,
+					Username:      res.Email,
+					ClientID:      clientID,
+					SealedSecret:  sealedSecret,
+					PlainSecret:   plainSecret,
+					SealedRefresh: sealedRefresh,
+					PlainRefresh:  plainRefresh,
+				}
+				idx := slices.IndexFunc(a.settings.CloudSources, func(existing cloudSourceSetting) bool {
+					return existing.ID == entry.ID
+				})
+				if idx >= 0 {
+					a.settings.CloudSources[idx] = entry
+				} else {
+					a.settings.CloudSources = append(a.settings.CloudSources, entry)
+				}
 			} else {
+				tokSum := sha256.Sum256([]byte(res.RefreshToken))
+				baseKey := provider + "|" + strings.ToLower(clientID) + "|" + strings.Trim(folder, "/") + "|" + hex.EncodeToString(tokSum[:8])
+				id, finalName := a.uniqueCloudIdentity(baseKey, name)
+				entry = cloudSourceSetting{
+					ID:            id,
+					Type:          provider,
+					Name:          finalName,
+					Folder:        "",
+					FolderPending: true,
+					Username:      res.Email,
+					ClientID:      clientID,
+					SealedSecret:  sealedSecret,
+					PlainSecret:   plainSecret,
+					SealedRefresh: sealedRefresh,
+					PlainRefresh:  plainRefresh,
+				}
 				a.settings.CloudSources = append(a.settings.CloudSources, entry)
 			}
 			a.settings.save()
@@ -262,25 +290,19 @@ func (a *app) saveQuarkForm() {
 	}
 	name := cmp.Or(strings.TrimSpace(a.cloudFormName), "夸克网盘")
 	folder := strings.TrimSpace(a.cloudFormFolder)
-	sum := sha256.Sum256([]byte("quark|" + name + "|" + strings.Trim(folder, "/")))
+	cookieSum := sha256.Sum256([]byte(cookie))
+	id, finalName := a.uniqueCloudIdentity("quark|"+name+"|"+strings.Trim(folder, "/")+"|"+hex.EncodeToString(cookieSum[:8]), name)
 	sealed, plain := sealCloudPassword(cookie)
 	entry := cloudSourceSetting{
-		ID:            hex.EncodeToString(sum[:8]),
+		ID:            id,
 		Type:          localmusic.CloudTypeQuark,
-		Name:          name,
+		Name:          finalName,
 		Folder:        folder,
 		FolderPending: folder == "",
 		SealedPass:    sealed,
 		PlainPass:     plain,
 	}
-	idx := slices.IndexFunc(a.settings.CloudSources, func(existing cloudSourceSetting) bool {
-		return existing.ID == entry.ID
-	})
-	if idx >= 0 {
-		a.settings.CloudSources[idx] = entry
-	} else {
-		a.settings.CloudSources = append(a.settings.CloudSources, entry)
-	}
+	a.settings.CloudSources = append(a.settings.CloudSources, entry)
 	a.settings.save()
 	a.resetCloudForm()
 	if entry.FolderPending {
@@ -325,25 +347,19 @@ func (a *app) save115Form() {
 	}
 	name := cmp.Or(strings.TrimSpace(a.cloudFormName), "115网盘")
 	folder := strings.TrimSpace(a.cloudFormFolder)
-	sum := sha256.Sum256([]byte("115|" + name + "|" + strings.Trim(folder, "/")))
+	cookieSum := sha256.Sum256([]byte(cookie))
+	id, finalName := a.uniqueCloudIdentity("115|"+name+"|"+strings.Trim(folder, "/")+"|"+hex.EncodeToString(cookieSum[:8]), name)
 	sealed, plain := sealCloudPassword(cookie)
 	entry := cloudSourceSetting{
-		ID:            hex.EncodeToString(sum[:8]),
+		ID:            id,
 		Type:          localmusic.CloudType115,
-		Name:          name,
+		Name:          finalName,
 		Folder:        folder,
 		FolderPending: folder == "",
 		SealedPass:    sealed,
 		PlainPass:     plain,
 	}
-	idx := slices.IndexFunc(a.settings.CloudSources, func(existing cloudSourceSetting) bool {
-		return existing.ID == entry.ID
-	})
-	if idx >= 0 {
-		a.settings.CloudSources[idx] = entry
-	} else {
-		a.settings.CloudSources = append(a.settings.CloudSources, entry)
-	}
+	a.settings.CloudSources = append(a.settings.CloudSources, entry)
 	a.settings.save()
 	a.resetCloudForm()
 	if entry.FolderPending {
@@ -356,6 +372,7 @@ func (a *app) save115Form() {
 }
 
 func (a *app) resetCloudForm() {
+	a.cancelCloudOAuth()
 	a.cloudFormOpen = false
 	a.cloudFormAdvanced = false
 	a.cloudFormName, a.cloudFormURL, a.cloudFormFolder = "", "", ""
@@ -364,25 +381,70 @@ func (a *app) resetCloudForm() {
 	a.cloudFormErr, a.cloudFormOK = "", ""
 }
 
-func (a *app) registerCloudTokenPersistence() {
-	localmusic.OnCloudTokenRefresh = func(sourceID, newRefreshToken string) {
-		a.post(func() {
-			for i := range a.settings.CloudSources {
-				if a.settings.CloudSources[i].ID == sourceID {
-					sealed, plain := sealCloudPassword(newRefreshToken)
-					a.settings.CloudSources[i].SealedRefresh = sealed
-					a.settings.CloudSources[i].PlainRefresh = plain
-					a.settings.save()
-					break
-				}
+func (a *app) cancelCloudOAuth() {
+	if a.cloudOAuthCancel != nil {
+		a.cloudOAuthCancel()
+		a.cloudOAuthCancel = nil
+		a.cloudFormAuthing = false
+	}
+}
+
+func (a *app) uniqueCloudIdentity(baseKey, name string) (string, string) {
+	sum := sha256.Sum256([]byte(baseKey))
+	id := hex.EncodeToString(sum[:8])
+	idExists := func(cand string) bool {
+		return slices.ContainsFunc(a.settings.CloudSources, func(existing cloudSourceSetting) bool {
+			return existing.ID == cand
+		})
+	}
+	for idExists(id) {
+		sum = sha256.Sum256([]byte(baseKey + "|" + randomHexID(8)))
+		id = hex.EncodeToString(sum[:8])
+	}
+	finalName := name
+	nameExists := func(cand string) bool {
+		return slices.ContainsFunc(a.settings.CloudSources, func(existing cloudSourceSetting) bool {
+			return existing.Name == cand
+		})
+	}
+	if nameExists(finalName) {
+		for n := 2; ; n++ {
+			cand := fmt.Sprintf("%s %d", name, n)
+			if !nameExists(cand) {
+				finalName = cand
+				break
 			}
-		})
+		}
 	}
-	localmusic.OnCloudTrackEnriched = func(enriched spotify.Track) {
-		a.post(func() {
-			a.replaceCloudTrack(enriched)
-		})
-	}
+	return id, finalName
+}
+
+func (a *app) registerCloudTokenPersistence() {
+	localmusic.SetCloudCallbacks(
+		func(sourceID, newRefreshToken string) {
+			a.post(func() {
+				// Drop stale out-of-order rotation callbacks if a newer token
+				// or re-authorization has already replaced this source in memory.
+				if cur := localmusic.CurrentOAuthRefreshToken(sourceID); cur != "" && cur != newRefreshToken {
+					return
+				}
+				for i := range a.settings.CloudSources {
+					if a.settings.CloudSources[i].ID == sourceID {
+						sealed, plain := sealCloudPassword(newRefreshToken)
+						a.settings.CloudSources[i].SealedRefresh = sealed
+						a.settings.CloudSources[i].PlainRefresh = plain
+						a.settings.save()
+						break
+					}
+				}
+			})
+		},
+		func(enriched spotify.Track) {
+			a.post(func() {
+				a.replaceCloudTrack(enriched)
+			})
+		},
+	)
 }
 
 func (a *app) replaceCloudTrack(enriched spotify.Track) {
@@ -402,6 +464,8 @@ func (a *app) replaceCloudTrack(enriched spotify.Track) {
 }
 
 func (a *app) toggleCacheAllCloud() {
+	a.cloudSyncGen++
+	gen := a.cloudSyncGen
 	if a.cloudSyncing {
 		if a.cloudSyncCancel != nil {
 			a.cloudSyncCancel()
@@ -431,6 +495,9 @@ func (a *app) toggleCacheAllCloud() {
 		defer cancel()
 		stats := localmusic.CacheAllCloudTracks(ctx, tracks, coverDir, cachePath, func(done, succeeded, failed, total int, enriched *spotify.Track) {
 			a.post(func() {
+				if gen != a.cloudSyncGen || a.quitting {
+					return
+				}
 				a.cloudSyncDone = done
 				a.cloudSyncSucceeded = succeeded
 				a.cloudSyncFailed = failed
@@ -441,19 +508,19 @@ func (a *app) toggleCacheAllCloud() {
 			})
 		})
 		a.post(func() {
-			wasActive := a.cloudSyncing
+			if gen != a.cloudSyncGen || a.quitting {
+				return
+			}
 			a.cloudSyncing = false
 			a.cloudSyncCancel = nil
-			if wasActive && ctx.Err() == nil {
-				a.cloudSyncLastFailed = stats.Failed
-				switch {
-				case stats.Failed > 0:
-					a.toast = fmt.Sprintf("已缓存 %d 首，%d 首失败", stats.Succeeded, stats.Failed)
-				case stats.Total == 0:
-					a.toast = "云盘歌曲已全部缓存到本地，之后将直接读取本地文件"
-				default:
-					a.toast = fmt.Sprintf("已缓存 %d 首云盘歌曲到本地，之后将直接读取本地文件", stats.Succeeded)
-				}
+			a.cloudSyncLastFailed = stats.Failed
+			switch {
+			case stats.Failed > 0:
+				a.toast = fmt.Sprintf("已缓存 %d 首，%d 首失败", stats.Succeeded, stats.Failed)
+			case stats.Total == 0:
+				a.toast = "云盘歌曲已全部缓存到本地，之后将直接读取本地文件"
+			default:
+				a.toast = fmt.Sprintf("已缓存 %d 首云盘歌曲到本地，之后将直接读取本地文件", stats.Succeeded)
 			}
 		})
 	}()
@@ -521,12 +588,13 @@ func (a *app) openCloudFolderBrowser(src cloudSourceSetting, folderPath string) 
 	a.cloudBrowseGen++
 	gen := a.cloudBrowseGen
 	cloudSrc := src.toCloudSource()
+	browsePath := a.cloudBrowsePath
 	localmusic.SetCloudSources(a.settings.allCloudSources())
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		dirs, err := listCloudFolders(ctx, cloudSrc, a.cloudBrowsePath)
+		dirs, err := listCloudFolders(ctx, cloudSrc, browsePath)
 		a.post(func() {
 			if a.cloudBrowseGen != gen {
 				return
@@ -864,7 +932,12 @@ func (a *app) localMusicPage(c *ui.Context) {
 					cloudBtnLabel = "收起云盘设置"
 				}
 				if ui.Button(c.Key("toggle-cloud-form"), cloudBtnLabel).Clicked() {
-					a.cloudFormOpen = !a.cloudFormOpen
+					if a.cloudFormOpen {
+						a.closeCloudLoginWindow()
+						a.resetCloudForm()
+					} else {
+						a.cloudFormOpen = true
+					}
 					a.cloudFormErr, a.cloudFormOK = "", ""
 				}
 				if ui.Button(c.Key("rescan"), "重新扫描").Clicked() {
@@ -923,14 +996,15 @@ func (a *app) localMusicPage(c *ui.Context) {
 								a.cloudBrowseID = ""
 							}
 							if a.cloudSyncing && a.cloudSyncCancel != nil {
+								a.cloudSyncGen++
 								a.cloudSyncCancel()
 								a.cloudSyncCancel = nil
 								a.cloudSyncing = false
 							}
 							// Clean up locally cached audio files for this cloud source.
-							srcLabel := cmp.Or(source.Name, source.URL)
-							for _, tr := range a.localTracks {
-								if tr.Cloud() && (tr.CloudSource == srcLabel || strings.Contains(tr.CloudURL, "://"+source.ID+"/")) {
+							if dir, err := mygo.App.Path(mygo.PathCache); err == nil {
+								cached := localmusic.LoadCachedCloud(filepath.Join(dir, "cloud-index.json"), []localmusic.CloudSource{{ID: source.ID}})
+								for _, tr := range cached {
 									localmusic.DeleteCachedCloudAudio(tr.ID)
 								}
 							}
@@ -1107,8 +1181,9 @@ func (a *app) cloudSourceForm(c *ui.Context) {
 			ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
 				ui.Text(c, "连接音乐云盘").FontSize(13.5).FontWeight(600)
 				if segmented(c.Key("cloud-provider-tab"), &a.cloudFormTab, "WebDAV", "OneDrive", "Google Drive", "百度网盘", "夸克网盘", "115网盘") {
-					a.cloudFormErr, a.cloudFormOK = "", ""
-					a.cloudFormAdvanced = false
+					a.closeCloudLoginWindow()
+					a.resetCloudForm()
+					a.cloudFormOpen = true
 				}
 			})
 
@@ -1326,7 +1401,7 @@ func (a *app) cloudSourceForm(c *ui.Context) {
 				}
 				if ui.Button(c.Key("cloud-cancel"), "取消").Clicked() {
 					a.closeCloudLoginWindow()
-					a.cloudFormOpen = false
+					a.resetCloudForm()
 					a.cloudFormErr, a.cloudFormOK = "", ""
 				}
 			})
@@ -1349,7 +1424,7 @@ func (a *app) localSearch(c *ui.Context, tracks []spotify.Track) {
 }
 
 func (a *app) playLocalMatch(match spotify.Track) {
-	tracks := a.orderedLocalTracks()
+	tracks := a.filterLocalScope(a.orderedLocalTracks())
 	for index, track := range tracks {
 		if track.ID == match.ID {
 			a.playQueue(tracks, index)

@@ -40,33 +40,45 @@ func LoadCached(dir, key string) Cached {
 }
 
 func SaveCached(dir, key, source string, lines []Line) {
+	saveCached(dir, key, source, lines, false)
+}
+
+// SaveCachedForce unconditionally replaces any previously cached lyrics for
+// key, used for explicit user actions like manual lyric import or re-search.
+func SaveCachedForce(dir, key, source string, lines []Line) {
+	saveCached(dir, key, source, lines, true)
+}
+
+func saveCached(dir, key, source string, lines []Line, force bool) {
 	if dir == "" || key == "" || len(lines) == 0 {
 		return
 	}
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
-	previous := loadCachedUnlocked(dir, key)
-	quality := func(items []Line) int {
-		score := 0
-		hasTranslation := false
-		for _, line := range items {
-			if !line.Unsynced {
-				score = max(score, 1)
+	if !force {
+		previous := loadCachedUnlocked(dir, key)
+		quality := func(items []Line) int {
+			score := 0
+			hasTranslation := false
+			for _, line := range items {
+				if !line.Unsynced {
+					score = max(score, 1)
+				}
+				if line.Timed {
+					score = max(score, 2)
+				}
+				if line.Translation != "" {
+					hasTranslation = true
+				}
 			}
-			if line.Timed {
-				score = max(score, 2)
+			if hasTranslation {
+				score += 4
 			}
-			if line.Translation != "" {
-				hasTranslation = true
-			}
+			return score
 		}
-		if hasTranslation {
-			score += 4
+		if quality(previous.Lines) > quality(lines) {
+			return
 		}
-		return score
-	}
-	if quality(previous.Lines) > quality(lines) {
-		return
 	}
 	data, err := json.Marshal(Cached{key, source, lines})
 	if err != nil || os.MkdirAll(dir, 0o700) != nil {

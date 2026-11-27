@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"slices"
 	"strings"
 	"time"
 
@@ -115,6 +114,7 @@ func (a *app) openCloudWebLogin(provider string) {
 
 	go func() {
 		lastChecked := ""
+		var retryAt time.Time
 		deadline := time.Now().Add(5 * time.Minute)
 		ticker := time.NewTicker(1200 * time.Millisecond)
 		defer ticker.Stop()
@@ -133,7 +133,7 @@ func (a *app) openCloudWebLogin(provider string) {
 			mygo.RunOnMain(func() {
 				cookie = collectWebViewCookies(cookieURLs)
 			})
-			if cookie == "" || cookie == lastChecked {
+			if cookie == "" || (cookie == lastChecked && time.Now().Before(retryAt)) {
 				continue
 			}
 			lastChecked = cookie
@@ -142,6 +142,7 @@ func (a *app) openCloudWebLogin(provider string) {
 			err := verify(ctx, cookie)
 			cancel()
 			if err != nil {
+				retryAt = time.Now().Add(5 * time.Second)
 				continue
 			}
 
@@ -151,25 +152,20 @@ func (a *app) openCloudWebLogin(provider string) {
 				}
 				a.closeCloudLoginWindow()
 				name := cmp.Or(customName, defaultName)
-				sum := sha256.Sum256([]byte(provider + "|" + name + "|" + strings.Trim(folder, "/")))
+				cookieSum := sha256.Sum256([]byte(cookie))
+				baseKey := provider + "|" + name + "|" + strings.Trim(folder, "/") + "|" + hex.EncodeToString(cookieSum[:8])
+				id, finalName := a.uniqueCloudIdentity(baseKey, name)
 				sealed, plain := sealCloudPassword(cookie)
 				entry := cloudSourceSetting{
-					ID:            hex.EncodeToString(sum[:8]),
+					ID:            id,
 					Type:          provider,
-					Name:          name,
+					Name:          finalName,
 					Folder:        folder,
 					FolderPending: true,
 					SealedPass:    sealed,
 					PlainPass:     plain,
 				}
-				idx := slices.IndexFunc(a.settings.CloudSources, func(existing cloudSourceSetting) bool {
-					return existing.ID == entry.ID
-				})
-				if idx >= 0 {
-					a.settings.CloudSources[idx] = entry
-				} else {
-					a.settings.CloudSources = append(a.settings.CloudSources, entry)
-				}
+				a.settings.CloudSources = append(a.settings.CloudSources, entry)
 				a.settings.save()
 				a.resetCloudForm()
 				a.toast = "登录成功，请选择要扫描的音乐文件夹"

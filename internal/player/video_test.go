@@ -107,7 +107,7 @@ func TestVideoPicksUpWhereTheSongIs(t *testing.T) {
 	if p.Position() != 30*time.Second || p.Duration() != 4*time.Minute {
 		t.Fatalf("video at %v of %v", p.Position(), p.Duration())
 	}
-	if cmds := sent(p.Video); !slices.Contains(cmds, "vinyl.seek(1,30.000)") || !slices.Contains(cmds, "vinyl.play(1,1)") {
+	if cmds := sent(p.Video); !slices.Contains(cmds, "vinyl.seek(1,30.000,1)") || !slices.Contains(cmds, "vinyl.play(1,1)") {
 		t.Fatalf("the video's page was asked %q", cmds)
 	}
 	p.out.Seek(50 * time.Second)
@@ -211,7 +211,7 @@ func TestVideoRunsAheadOfTheSong(t *testing.T) {
 	if p.VideoLead() != 2*time.Second || p.Position() != 32*time.Second || p.SongPosition() != 30*time.Second {
 		t.Fatalf("video ahead by %v, at %v, the song at %v", p.VideoLead(), p.Position(), p.SongPosition())
 	}
-	if cmds := sent(p.Video); !slices.Contains(cmds, "vinyl.seek(1,32.000)") {
+	if cmds := sent(p.Video); !slices.Contains(cmds, "vinyl.seek(1,32.000,1)") {
 		t.Fatalf("the video's page was asked %q", cmds)
 	}
 	p.Leads = func(id string) (time.Duration, bool) { return 6 * time.Second, id == "1" }

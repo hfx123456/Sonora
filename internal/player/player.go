@@ -86,6 +86,7 @@ type Player struct {
 	queue        []spotify.Track
 	order        []int // the queue's indices in play order: shuffled or not
 	at           int   // where in order the current track is, -1 for none
+	contextURI   string
 	shuffle      bool
 	smartShuffle bool
 	repeat       RepeatMode
@@ -112,16 +113,19 @@ type Player struct {
 	// media is where the track's audio is, once resolved; video whether
 	// its music video plays rather than its audio, when it has one, and
 	// showsVideo whether out is the video.
-	media      *spotify.Media
-	video      bool
-	showsVideo bool
-	lead       time.Duration // how far the video shown likely runs ahead of the song
-	fade       fader
-	loading    bool
-	playing    bool // what the listener wants: false while paused
-	err        string
-	gen        int // counts loads, to drop the results of stale ones
-	skipped    int // the tracks skipped, as they could not play, before this one
+	media        *spotify.Media
+	mediaBitrate int
+	mediaFormat  int
+	mediaFileID  string
+	video        bool
+	showsVideo   bool
+	lead         time.Duration // how far the video shown likely runs ahead of the song
+	fade         fader
+	loading      bool
+	playing      bool // what the listener wants: false while paused
+	err          string
+	gen          int // counts loads, to drop the results of stale ones
+	skipped      int // the tracks skipped, as they could not play, before this one
 
 	// Spotify turned the track away for asking too often: it loads again
 	// once the wait is over, if it is to play then.
@@ -218,7 +222,7 @@ func (p *Player) sync() {
 	if p.playing {
 		state = mygo.PlaybackPlaying
 	}
-	mygo.NowPlaying.SetPlayback(state, p.Position())
+	mygo.NowPlaying.SetPlayback(state, p.SongPosition())
 }
 
 // pageNowPlaying is whether the system shows a page playing as a media
@@ -358,6 +362,13 @@ func (p *Player) ended() {
 	if p.control("advance", nil) {
 		return
 	}
+	p.AdvanceLocal()
+}
+
+// AdvanceLocal finishes the current track locally (RepeatOne, Radio/SmartFeed,
+// RepeatOff stop, or advancing to the next local track) without notifying
+// p.Control.
+func (p *Player) AdvanceLocal() {
 	p.throttles, p.flaky = 0, 0
 	if p.repeat == RepeatOne {
 		if p.out != nil {
@@ -380,7 +391,7 @@ func (p *Player) ended() {
 		p.sync()
 		return
 	}
-	p.Next()
+	p.nextLocal()
 }
 
 func (p *Player) certificateFailed(status int, wait time.Duration) {
@@ -442,7 +453,7 @@ func (p *Player) failed(msg string, licence int, wait time.Duration) {
 // connections now and then answers between its drops; on it went, three
 // tracks failed as the identity could not be renewed, and it stopped.
 func (p *Player) unlessOffline(flaky bool, then func()) {
-	if p.track != nil && p.track.Local() {
+	if p.track != nil && p.track.Local() && !p.track.Cloud() {
 		p.stop()
 		then()
 		return
@@ -552,12 +563,18 @@ func (p *Player) skip(at, skipped int) {
 
 // PlayQueue replaces the queue with tracks and plays the one at start.
 func (p *Player) PlayQueue(tracks []spotify.Track, start int) {
-	if len(tracks) > 0 && p.control("play", QueueRequest{tracks, min(max(start, 0), len(tracks)-1)}) {
+	p.PlayQueueContext(tracks, start, "")
+}
+
+// PlayQueueContext replaces the queue with tracks played from contextURI.
+func (p *Player) PlayQueueContext(tracks []spotify.Track, start int, contextURI string) {
+	if len(tracks) > 0 && p.control("play", QueueRequest{Tracks: tracks, Start: min(max(start, 0), len(tracks)-1), ContextURI: contextURI}) {
 		return
 	}
 	if len(tracks) == 0 {
 		return
 	}
+	p.contextURI = contextURI
 	p.endRadio()
 	p.smartGen++
 	p.smartFeeding = false
@@ -576,16 +593,30 @@ func (p *Player) PlayQueue(tracks []spotify.Track, start int) {
 	p.load(start)
 }
 
+// ContextURI returns the Spotify context URI of the active queue, if known.
+func (p *Player) ContextURI() string { return p.contextURI }
+
+// SetContextURI updates the Spotify context URI of the active queue.
+func (p *Player) SetContextURI(uri string) { p.contextURI = uri }
+
+// Awaiting reports whether playback is waiting for an async radio or Smart Shuffle feed.
+func (p *Player) Awaiting() bool { return p.awaiting }
+
 // PlayRadio plays tracks in their order, then goes on with those feed
 // gives as the queue nears its end, until something else is played. The
 // radio's name says which it is. feed calls got on the main thread.
 func (p *Player) PlayRadio(name string, tracks []spotify.Track, feed func(got func([]spotify.Track))) {
+	p.PlayRadioContext(name, "", tracks, feed)
+}
+
+// PlayRadioContext plays a radio queue carrying its Spotify playlist contextURI.
+func (p *Player) PlayRadioContext(name, contextURI string, tracks []spotify.Track, feed func(got func([]spotify.Track))) {
 	if len(tracks) == 0 {
 		return
 	}
 	shuffle, smart := p.shuffle, p.smartShuffle
 	p.shuffle, p.smartShuffle = false, false
-	p.PlayQueue(tracks, 0)
+	p.PlayQueueContext(tracks, 0, contextURI)
 	p.shuffle, p.smartShuffle = shuffle, smart
 	p.AttachRadio(name, feed)
 }
@@ -757,9 +788,11 @@ func (p *Player) shuffleOrder(first int) {
 }
 
 func (p *Player) ToggleShuffle() {
-	if p.control("shuffle", !p.shuffle) {
-		if !p.shuffle {
+	next := !p.shuffle
+	if p.control("shuffle", next) {
+		if !next {
 			p.smartShuffle = false
+			p.removeUnplayedSmartTracks()
 		}
 		return
 	}
@@ -795,6 +828,7 @@ func (p *Player) CycleShuffle() ShuffleMode {
 		}
 		if p.shuffle {
 			p.smartShuffle = true
+			p.control("smart_shuffle", true)
 			p.refillSmart()
 		}
 	case ShuffleSmart:
@@ -852,9 +886,7 @@ func (p *Player) removeUnplayedSmartTracks() {
 	p.smartFeeding = false
 	if p.awaiting && p.feed == nil {
 		p.awaiting = false
-		if p.out == nil {
-			p.playing = false
-		}
+		p.playing = false
 		p.sync()
 	}
 	if len(p.smartAdded) == 0 || len(p.order) == 0 {
@@ -1082,10 +1114,18 @@ func (p *Player) UseFallbackLyrics(uri string, lines []lyrics.Line) {
 // current track is among them, -1 for none.
 func (p *Player) PlayOrder() ([]int, int) { return p.order, p.at }
 
+func (p *Player) MediaInfo() (bitrate, format int, fileID string) {
+	return p.mediaBitrate, p.mediaFormat, p.mediaFileID
+}
+
 func (p *Player) Next() {
 	if p.control("skip_next", nil) {
 		return
 	}
+	p.nextLocal()
+}
+
+func (p *Player) nextLocal() {
 	if len(p.order) == 0 {
 		return
 	}
@@ -1093,11 +1133,13 @@ func (p *Player) Next() {
 	if at >= len(p.order) {
 		if p.feed != nil {
 			p.stop()
+			p.playing = true
 			p.awaitFeed()
 			return
 		}
 		if p.smartShuffle && p.SmartFeed != nil {
 			p.stop()
+			p.playing = true
 			p.awaitSmartFeed()
 			return
 		}
@@ -1124,7 +1166,7 @@ func (p *Player) Prev() {
 // PrevTrack plays the track before this one, however far this one has
 // played, as flicking the cover back does.
 func (p *Player) PrevTrack() {
-	if p.control("skip_prev", nil) {
+	if p.control("skip_prev_track", nil) {
 		return
 	}
 	if len(p.order) == 0 {
@@ -1139,7 +1181,7 @@ func (p *Player) PrevTrack() {
 
 // Jump plays the queue's track i.
 func (p *Player) Jump(i int) {
-	if i >= 0 && i < len(p.queue) && (p.control("jump", i) || p.control("play", QueueRequest{p.queue, i})) {
+	if i >= 0 && i < len(p.queue) && (p.control("jump", i) || p.control("play", QueueRequest{Tracks: p.queue, Start: i, ContextURI: p.contextURI})) {
 		return
 	}
 	for k, v := range p.order {
@@ -1415,6 +1457,9 @@ func (p *Player) CloseWeb() {
 func (p *Player) Clear() {
 	p.gen++
 	p.stop()
+	p.upNext.id, p.upNext.m, p.upNext.at = "", nil, time.Time{}
+	p.ahead.id, p.ahead.lines, p.ahead.loaded = "", nil, false
+	p.cover = nil
 	p.endRadio()
 	p.smartGen++
 	p.smartFeeding = false
@@ -1430,6 +1475,7 @@ func (p *Player) Clear() {
 	p.at = -1
 	p.track = nil
 	p.media = nil
+	p.mediaBitrate, p.mediaFormat, p.mediaFileID = 0, 0, ""
 	p.lyrics = nil
 	p.lyricsLoaded = false
 	p.lyricsOverride = false
@@ -1545,17 +1591,37 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 				return
 			}
 			p.loading = false
+			var webErr error
 			if err == nil && p.Web == nil && p.NewWeb != nil {
-				p.Web, err = p.NewWeb()
+				p.Web, webErr = p.NewWeb()
 			}
-			if err == nil && p.Web == nil {
-				err = errNoWeb
+			if err == nil && webErr == nil && p.Web == nil {
+				webErr = errNoWeb
+			}
+			if webErr != nil {
+				log.Printf("player: %s: %v", t.URI(), webErr)
+				p.err, p.playing = "播放器初始化失败，请重试", false
+				p.sync()
+				return
 			}
 			if err != nil {
 				log.Printf("player: %s: %v", t.URI(), err)
-				if t.Local() {
+				if t.Local() && !t.Cloud() {
 					p.err, p.playing = "本地文件无法读取，请下载到本机后重新扫描", false
 					p.sync()
+					return
+				}
+				if t.Cloud() {
+					p.unlessOffline(netFault(err), func() {
+						if len(p.order) == 0 {
+							p.playing = false
+							p.sync()
+							return
+						}
+						curAt := min(max(p.at, 0), len(p.order)-1)
+						p.err = "云盘歌曲暂时无法播放"
+						p.skip(curAt, skipped)
+					})
 					return
 				}
 				var thr *spotify.Throttled
@@ -1600,6 +1666,11 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			}
 			p.offline = 0
 			p.media = m
+			if m != nil {
+				p.mediaBitrate, p.mediaFormat, p.mediaFileID = m.Bitrate, m.Format, m.FileID
+			} else {
+				p.mediaBitrate, p.mediaFormat, p.mediaFileID = 0, 0, ""
+			}
 			if !p.video {
 				v = nil
 			}
@@ -1752,8 +1823,8 @@ func (p *Player) reopen() {
 			}
 			if v == nil {
 				p.video, p.err = false, "MV 暂时无法播放"
-			} else if from > 0 {
-				p.pending = max(from+p.leadFor(v), 0)
+			} else if p.pending > 0 {
+				p.pending = max(p.pending+p.leadFor(v), 0)
 			}
 			p.open(gen, m, v)
 		})
@@ -1786,6 +1857,7 @@ func (p *Player) cue(at int, play bool, from time.Duration) (int, spotify.Track)
 	p.track = &t
 	p.loading, p.playing, p.err = false, play, ""
 	p.media = nil
+	p.mediaBitrate, p.mediaFormat, p.mediaFileID = 0, 0, ""
 	p.awaiting, p.waiting = false, false
 	p.lyrics, p.lyricsLoaded, p.lyricsOverride = nil, false, false
 	p.pending = from
@@ -1944,6 +2016,7 @@ type Session struct {
 	Queue        []spotify.Track `json:"queue"`
 	Order        []int           `json:"order"`
 	At           int             `json:"at"`
+	ContextURI   string          `json:"contextURI,omitempty"`
 	Shuffle      bool            `json:"shuffle"`
 	SmartShuffle bool            `json:"smartShuffle,omitempty"`
 	SmartAdded   map[string]bool `json:"smartAdded,omitempty"`
@@ -1961,6 +2034,7 @@ func (p *Player) Session() (Session, bool) {
 		Queue:        p.queue,
 		Order:        p.order,
 		At:           p.at,
+		ContextURI:   p.contextURI,
 		Shuffle:      p.shuffle,
 		SmartShuffle: p.smartShuffle,
 		SmartAdded:   p.smartAdded,
@@ -1986,9 +2060,11 @@ func (p *Player) Restore(s Session) {
 		seen[i] = true
 	}
 	p.queue, p.order = s.Queue, s.Order
+	p.contextURI = s.ContextURI
 	p.shuffle = s.Shuffle || s.SmartShuffle
 	p.smartShuffle = s.SmartShuffle
 	p.smartAdded = s.SmartAdded
-	p.repeat = s.Repeat % 3
-	p.cue(s.At, false, time.Duration(s.Position)*time.Millisecond)
+	p.repeat = max(s.Repeat, RepeatOff) % 3
+	position := min(max(s.Position, 0), int64((1<<63-1)/time.Millisecond))
+	p.cue(s.At, false, time.Duration(position)*time.Millisecond)
 }

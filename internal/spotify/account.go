@@ -1,6 +1,7 @@
 package spotify
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,17 +34,28 @@ var ErrStaleCookies = errors.New("spotify: the cookies are signed out")
 // error when Spotify turns the request down or there is no client token to
 // go with it: the caller opens the web view then, which can sign in again.
 func AccountIdentity(cookies string) (Identity, error) {
-	r, err := apiToken(cookies)
+	return AccountIdentityWithContext(context.Background(), cookies)
+}
+
+func AccountIdentityWithContext(ctx context.Context, cookies string) (Identity, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r, err := apiTokenWithContext(ctx, cookies)
 	if err != nil {
 		return Identity{}, fmt.Errorf("spotify: account token: %w", err)
 	}
-	return accountIdentity(r)
+	return accountIdentityWithContext(ctx, r)
 }
 
 // AccountIdentityViaBrowser asks through the browser's own cookie store. This
 // avoids exporting HttpOnly cookies when the WebView cannot enumerate a cold store.
 func AccountIdentityViaBrowser(fetch func(string) ([]byte, error)) (Identity, error) {
-	body, err := fetch(tokenRequestURL())
+	return AccountIdentityViaBrowserWithContext(context.Background(), fetch)
+}
+
+func AccountIdentityViaBrowserWithContext(ctx context.Context, fetch func(string) ([]byte, error)) (Identity, error) {
+	body, err := fetch(tokenRequestURLWithContext(ctx))
 	if err != nil {
 		return Identity{}, err
 	}
@@ -51,10 +63,14 @@ func AccountIdentityViaBrowser(fetch func(string) ([]byte, error)) (Identity, er
 	if err != nil {
 		return Identity{}, err
 	}
-	return accountIdentity(r)
+	return accountIdentityWithContext(ctx, r)
 }
 
 func accountIdentity(r tokenReply) (Identity, error) {
+	return accountIdentityWithContext(context.Background(), r)
+}
+
+func accountIdentityWithContext(ctx context.Context, r tokenReply) (Identity, error) {
 	// Before the client token is asked for: a visitor's would be thrown away.
 	if r.id.Anonymous {
 		return Identity{}, ErrStaleCookies
@@ -65,8 +81,11 @@ func accountIdentity(r tokenReply) (Identity, error) {
 	// identity before had lasts a fortnight, so a failure to get a new one
 	// keeps it; with none to keep, the web view gets one with its token,
 	// rather than an hour of nothing playing.
-	ct, err := clientToken(r.clientID)
+	ct, err := clientTokenWithContext(ctx, r.clientID)
 	if err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			return Identity{}, ctx.Err()
+		}
 		if ct = lastClientToken(); ct == "" {
 			return Identity{}, fmt.Errorf("spotify: account token: %w", err)
 		}
@@ -143,22 +162,32 @@ type tokenReply struct {
 // apiToken asks /api/token for an identity, with cookies (none for a
 // visitor). The access token lasts about an hour.
 func tokenRequestURL() string {
-	now := time.Now()
+	return tokenRequestURLWithContext(context.Background())
+}
+
+func tokenRequestURLWithContext(ctx context.Context) string {
 	sec := totpSecrets[0]
 
-	// The code of now and the code of Spotify's clock must both be right, so
-	// ask Spotify what its clock reads first. If it does not say, now is
-	// close enough: the codes are 30 seconds wide.
-	serverTime := now
-	if t, err := serverTimeOf(); err == nil {
-		serverTime = t
+	// Ask Spotify what its clock reads first, then sample local time right
+	// after so a slow response cannot push now across a 30-second TOTP boundary.
+	serverTime, err := serverTimeOfWithContext(ctx)
+	now := time.Now()
+	if err != nil {
+		serverTime = now
 	}
 
 	return apiTokenURL + "?" + tokenQuery(sec.unmask(), sec.version, now, serverTime)
 }
 
 func apiToken(cookies string) (tokenReply, error) {
-	req, err := http.NewRequest(http.MethodGet, tokenRequestURL(), nil)
+	return apiTokenWithContext(context.Background(), cookies)
+}
+
+func apiTokenWithContext(ctx context.Context, cookies string) (tokenReply, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenRequestURLWithContext(ctx), nil)
 	if err != nil {
 		return tokenReply{}, err
 	}

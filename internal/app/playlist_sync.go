@@ -12,6 +12,7 @@ const playlistSyncInterval = 5 * time.Minute
 type playlistSyncState struct {
 	pending []string
 	queued  map[string]bool
+	forced  map[string]bool
 	checked map[string]time.Time
 	active  string
 }
@@ -23,24 +24,43 @@ func (state *playlistSyncState) enqueue(id string, force bool, now time.Time) {
 	if state.queued == nil {
 		state.queued = map[string]bool{}
 	}
+	if state.forced == nil {
+		state.forced = map[string]bool{}
+	}
 	if state.checked == nil {
 		state.checked = map[string]time.Time{}
 	}
-	if state.queued[id] || !force && (state.active == id || !state.checked[id].IsZero() && now.Sub(state.checked[id]) < playlistSyncInterval) {
+	if state.queued[id] {
+		if force {
+			state.forced[id] = true
+		}
+		return
+	}
+	if !force && (state.active == id || !state.checked[id].IsZero() && now.Sub(state.checked[id]) < playlistSyncInterval) {
 		return
 	}
 	state.pending = append(state.pending, id)
 	state.queued[id] = true
+	if force {
+		state.forced[id] = true
+	}
 }
 
-func (state *playlistSyncState) next() string {
+func (state *playlistSyncState) takeNext() (string, bool) {
 	if state.active != "" || len(state.pending) == 0 {
-		return ""
+		return "", false
 	}
 	id := state.pending[0]
 	state.pending = state.pending[1:]
 	delete(state.queued, id)
+	forced := state.forced[id]
+	delete(state.forced, id)
 	state.active = id
+	return id, forced
+}
+
+func (state *playlistSyncState) next() string {
+	id, _ := state.takeNext()
 	return id
 }
 
@@ -79,8 +99,17 @@ func (a *app) startPlaylistSync() {
 	if a.playlistCacheRoot == "" || a.profile == nil || a.quitting {
 		return
 	}
-	id := a.playlistSync.next()
-	if id == "" || a.loadingPl[id] {
+	id, forced := a.playlistSync.takeNext()
+	if id == "" {
+		return
+	}
+	if a.loadingPl[id] {
+		if forced {
+			if a.plRefreshAgain == nil {
+				a.plRefreshAgain = map[string]bool{}
+			}
+			a.plRefreshAgain[id] = true
+		}
 		return
 	}
 	a.requestPlaylist(id, false, true)

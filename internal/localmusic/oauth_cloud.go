@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -67,8 +68,38 @@ func DefaultOAuthCreds(provider string) (clientID, clientSecret string) {
 	}
 }
 
-// OnCloudTokenRefresh is called when an OAuth provider rotates a refresh token.
-var OnCloudTokenRefresh func(sourceID, newRefreshToken string)
+// onCloudTokenRefresh is registered via SetCloudCallbacks.
+var onCloudTokenRefresh func(sourceID, newRefreshToken string)
+var tokenRefreshNotifyMu sync.Mutex
+
+func notifyCloudTokenRefresh(sourceID, newRefreshToken string) {
+	cloudCallbackMu.RLock()
+	cb := onCloudTokenRefresh
+	cloudCallbackMu.RUnlock()
+	if cb != nil {
+		go func() {
+			tokenRefreshNotifyMu.Lock()
+			defer tokenRefreshNotifyMu.Unlock()
+			cb(sourceID, newRefreshToken)
+		}()
+	}
+}
+
+// CurrentOAuthRefreshToken returns the latest in-memory refresh token for
+// sourceID so async persistence callbacks never overwrite a newer rotated or
+// re-authorized token.
+func CurrentOAuthRefreshToken(sourceID string) string {
+	oauthRegistry.RLock()
+	entry := oauthRegistry.byID[sourceID]
+	oauthRegistry.RUnlock()
+	if entry == nil {
+		return ""
+	}
+	entry.mu.Lock()
+	tok := entry.refreshToken
+	entry.mu.Unlock()
+	return tok
+}
 
 // OAuthResult carries the tokens and account info returned by AuthorizeCloudOAuth.
 type OAuthResult struct {
@@ -80,17 +111,109 @@ type OAuthResult struct {
 }
 
 type oauthTokenEntry struct {
-	mu           sync.Mutex
-	source       CloudSource
-	accessToken  string
-	expiresAt    time.Time
-	refreshToken string
+	mu             sync.Mutex
+	source         CloudSource
+	knownRefreshes map[string]struct{}
+	accessToken    string
+	expiresAt      time.Time
+	refreshToken   string
 }
 
 var oauthRegistry struct {
 	sync.RWMutex
 	byID   map[string]*oauthTokenEntry
-	byType map[string]*oauthTokenEntry // fallback by provider type when resolving by host
+	byType map[string]*oauthTokenEntry // fallback by provider type when resolving legacy HTTPS URLs
+}
+
+func oauthVirtualURL(provider, sourceID, itemID string) string {
+	escapedID := url.PathEscape(itemID)
+	switch {
+	case provider == CloudTypeOneDrive && sourceID != "":
+		return "onedrive://" + url.PathEscape(sourceID) + "/" + escapedID
+	case provider == CloudTypeOneDrive:
+		return oneDriveAPIBase + "/me/drive/items/" + escapedID + "/content"
+	case provider == CloudTypeGoogleDrive && sourceID != "":
+		return "gdrive://" + url.PathEscape(sourceID) + "/" + escapedID
+	case provider == CloudTypeGoogleDrive:
+		return googleDriveAPIBase + "/files/" + escapedID + "?alt=media"
+	default:
+		return ""
+	}
+}
+
+// cachedOAuthURL attaches the source recorded by older cloud indexes to a legacy media URL.
+func cachedOAuthURL(raw string, source CloudSource) string {
+	kind := source.EffectiveType()
+	var prefix, suffix string
+	switch kind {
+	case CloudTypeOneDrive:
+		prefix, suffix = oneDriveAPIBase+"/me/drive/items/", "/content"
+	case CloudTypeGoogleDrive:
+		prefix, suffix = googleDriveAPIBase+"/files/", "?alt=media"
+	default:
+		return raw
+	}
+	item, ok := strings.CutPrefix(raw, prefix)
+	if !ok {
+		return raw
+	}
+	item, ok = strings.CutSuffix(item, suffix)
+	if !ok || item == "" || strings.ContainsAny(item, "/?#") {
+		return raw
+	}
+	id, err := url.PathUnescape(item)
+	if err != nil {
+		return raw
+	}
+	return oauthVirtualURL(kind, source.ID, id)
+}
+
+func resolveOneDriveStream(ctx context.Context, cloudURL string) (string, map[string]string, error) {
+	return resolveOAuthStream(ctx, cloudURL, "onedrive://", CloudTypeOneDrive, func(itemID string) string {
+		return oneDriveAPIBase + "/me/drive/items/" + url.PathEscape(itemID) + "/content"
+	})
+}
+
+func resolveGoogleDriveStream(ctx context.Context, cloudURL string) (string, map[string]string, error) {
+	return resolveOAuthStream(ctx, cloudURL, "gdrive://", CloudTypeGoogleDrive, func(fileID string) string {
+		return googleDriveAPIBase + "/files/" + url.PathEscape(fileID) + "?alt=media"
+	})
+}
+
+func resolveOAuthStream(ctx context.Context, cloudURL, prefix, kind string, buildURL func(string) string) (string, map[string]string, error) {
+	rest := strings.TrimPrefix(cloudURL, prefix)
+	rawSrcID, rawItemID, ok := strings.Cut(rest, "/")
+	if !ok || rawSrcID == "" || rawItemID == "" {
+		return "", nil, errors.New("无效的云盘歌曲地址")
+	}
+	srcID, err := url.PathUnescape(rawSrcID)
+	if err != nil {
+		srcID = rawSrcID
+	}
+	itemID, err := url.PathUnescape(rawItemID)
+	if err != nil {
+		itemID = rawItemID
+	}
+	oauthRegistry.RLock()
+	entry := oauthRegistry.byID[srcID]
+	oauthRegistry.RUnlock()
+	if entry == nil {
+		return "", nil, errors.New("未找到对应的云盘配置")
+	}
+	entry.mu.Lock()
+	sourceKind := entry.source.EffectiveType()
+	entry.mu.Unlock()
+	if sourceKind != kind {
+		return "", nil, errors.New("未找到对应的云盘配置")
+	}
+	tok, err := entry.validAccessToken(ctx)
+	if err != nil || tok == "" {
+		if err != nil {
+			return "", nil, err
+		}
+		return "", nil, errors.New("云盘登录已失效，请重新授权")
+	}
+	return buildURL(itemID), map[string]string{"Authorization": "Bearer " + tok}, nil
 }
 
 func registerOAuthSources(sources []CloudSource) {
@@ -108,20 +231,31 @@ func registerOAuthSources(sources []CloudSource) {
 		}
 		if existing, ok := oauthRegistry.byID[s.ID]; ok {
 			existing.mu.Lock()
-			same := existing.refreshToken == s.RefreshToken && existing.source.ClientID == s.ClientID
-			if same {
+			sameClient := existing.source.EffectiveType() == kind && existing.source.ClientID == s.ClientID && existing.source.ClientSecret == s.ClientSecret
+			_, known := existing.knownRefreshes[s.RefreshToken]
+			sameCred := existing.refreshToken == s.RefreshToken || (s.RefreshToken != "" && known)
+			if sameClient && sameCred {
+				if existing.refreshToken != s.RefreshToken {
+					// Preserve the newest rotated refresh token already held in memory.
+					s.RefreshToken = existing.refreshToken
+				}
 				existing.source = s
 			}
 			existing.mu.Unlock()
-			if same {
+			if sameClient && sameCred {
 				nextByID[s.ID] = existing
 				nextByType[kind] = existing
 				continue
 			}
 		}
+		known := map[string]struct{}{}
+		if s.RefreshToken != "" {
+			known[s.RefreshToken] = struct{}{}
+		}
 		entry := &oauthTokenEntry{
-			source:       s,
-			refreshToken: s.RefreshToken,
+			source:         s,
+			knownRefreshes: known,
+			refreshToken:   s.RefreshToken,
 		}
 		nextByID[s.ID] = entry
 		nextByType[kind] = entry
@@ -184,9 +318,16 @@ func (e *oauthTokenEntry) validAccessToken(ctx context.Context) (string, error) 
 	}
 	e.expiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
 	if newRefresh != "" && newRefresh != e.refreshToken {
+		if e.knownRefreshes == nil {
+			e.knownRefreshes = map[string]struct{}{}
+		}
+		if e.refreshToken != "" {
+			e.knownRefreshes[e.refreshToken] = struct{}{}
+		}
+		e.knownRefreshes[newRefresh] = struct{}{}
 		e.refreshToken = newRefresh
-		if cb := OnCloudTokenRefresh; cb != nil && e.source.ID != "" {
-			go cb(e.source.ID, newRefresh)
+		if e.source.ID != "" {
+			notifyCloudTokenRefresh(e.source.ID, newRefresh)
 		}
 	}
 	return e.accessToken, nil
@@ -238,8 +379,8 @@ func AuthorizeCloudOAuth(ctx context.Context, provider, clientID, clientSecret s
 	done := make(chan callbackResult, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/favicon.ico" {
-			w.WriteHeader(http.StatusNoContent)
+		if r.Method != http.MethodGet || r.URL.Path != "/" {
+			http.NotFound(w, r)
 			return
 		}
 		q := r.URL.Query()
@@ -247,10 +388,6 @@ func AuthorizeCloudOAuth(ctx context.Context, provider, clientID, clientSecret s
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusBadRequest)
 			io.WriteString(w, oauthResultHTML(false, "授权状态校验失败，请返回 Sonora 重试。"))
-			select {
-			case done <- callbackResult{err: errors.New("授权状态校验失败")}:
-			default:
-			}
 			return
 		}
 		if errMsg := q.Get("error"); errMsg != "" {
@@ -388,7 +525,7 @@ func oauthResultHTML(ok bool, msg string) string {
 <style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#141416;color:#f5f5f7;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 .card{background:#1c1c1f;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:28px 34px;max-width:420px;text-align:center}
 h2{margin:0 0 10px;color:%s;font-size:18px}p{margin:0;color:rgba(235,235,245,.75);font-size:14px;line-height:1.5}</style>
-</head><body><div class="card"><h2>%s</h2><p>%s</p></div></body></html>`, title, color, title, msg)
+</head><body><div class="card"><h2>%s</h2><p>%s</p></div></body></html>`, title, color, title, html.EscapeString(msg))
 }
 
 func exchangeOAuthCode(ctx context.Context, provider, clientID, clientSecret, redirectURI, code, verifier string, consumers bool) (access, refresh string, expiresIn int, err error) {
@@ -547,7 +684,7 @@ type odItem struct {
 	} `json:"audio"`
 }
 
-func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader string, seenFiles map[string]bool) ([]davFile, bool) {
+func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader string, seenFiles map[string]bool) ([]davFile, bool, bool) {
 	deltaURL := oneDriveAPIBase + "/me/drive/root/delta?$select=id,name,size,eTag,lastModifiedDateTime,folder,audio,deleted,parentReference&$top=500"
 	if folder != "" {
 		deltaURL = oneDriveAPIBase + "/me/drive/root:/" + escapeOneDrivePath(folder) + ":/delta?$select=id,name,size,eTag,lastModifiedDateTime,folder,audio,deleted,parentReference&$top=500"
@@ -557,29 +694,29 @@ func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader 
 	nextURL := deltaURL
 	for page := 0; nextURL != "" && page < 100; page++ {
 		if ctx.Err() != nil {
-			break
+			return nil, false, false
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
 		if err != nil {
-			return nil, false
+			return nil, false, false
 		}
 		req.Header.Set("Authorization", authHeader)
 		res, err := cloudHTTPClient.Do(req)
 		if err != nil {
-			return nil, false
+			return nil, false, false
 		}
 		var body odListResp
 		err = json.NewDecoder(io.LimitReader(res.Body, 16<<20)).Decode(&body)
 		status := res.StatusCode
 		res.Body.Close()
 		if status != http.StatusOK || err != nil {
-			if page == 0 {
-				return nil, false
-			}
-			break
+			return nil, false, false
 		}
 		all = append(all, body.Value...)
 		nextURL = body.NextLink
+	}
+	if ctx.Err() != nil || nextURL != "" {
+		return nil, false, false
 	}
 
 	lrcByParentStem := map[string]string{}
@@ -591,7 +728,7 @@ func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader 
 		lower := strings.ToLower(it.Name)
 		if strings.HasSuffix(lower, ".lrc") {
 			stem := strings.TrimSuffix(lower, ".lrc")
-			lrcURL := oneDriveAPIBase + "/me/drive/items/" + url.PathEscape(it.ID) + "/content"
+			lrcURL := oauthVirtualURL(CloudTypeOneDrive, src.ID, it.ID)
 			if it.ParentReference != nil && it.ParentReference.ID != "" {
 				lrcByParentStem[it.ParentReference.ID+"\x00"+stem] = lrcURL
 			} else {
@@ -605,7 +742,7 @@ func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader 
 		if it.Deleted != nil || it.Folder != nil || !Supported(it.Name) {
 			continue
 		}
-		contentURL := oneDriveAPIBase + "/me/drive/items/" + url.PathEscape(it.ID) + "/content"
+		contentURL := oauthVirtualURL(CloudTypeOneDrive, src.ID, it.ID)
 		if seenFiles[contentURL] {
 			continue
 		}
@@ -638,10 +775,10 @@ func walkOneDriveDelta(ctx context.Context, src CloudSource, folder, authHeader 
 		}
 		files = append(files, df)
 		if len(files) >= maxCloudFiles {
-			break
+			return files, true, true
 		}
 	}
-	return files, true
+	return files, true, false
 }
 
 func walkOneDrive(ctx context.Context, src CloudSource, seenFiles map[string]bool) ([]davFile, []string) {
@@ -653,7 +790,10 @@ func walkOneDrive(ctx context.Context, src CloudSource, seenFiles map[string]boo
 	authHeader := "Bearer " + token
 
 	folder := strings.Trim(strings.TrimSpace(src.Folder), "/")
-	if files, ok := walkOneDriveDelta(ctx, src, folder, authHeader, seenFiles); ok {
+	if files, ok, truncated := walkOneDriveDelta(ctx, src, folder, authHeader, seenFiles); ok {
+		if truncated {
+			return files, []string{fmt.Sprintf("OneDrive「%s」曲目数量已达上限，部分文件未扫描", cmp.Or(src.Name, "OneDrive"))}
+		}
 		return files, nil
 	}
 
@@ -727,7 +867,7 @@ func walkOneDrive(ctx context.Context, src CloudSource, seenFiles map[string]boo
 						continue
 					}
 					lower := strings.ToLower(it.Name)
-					contentURL := oneDriveAPIBase + "/me/drive/items/" + url.PathEscape(it.ID) + "/content"
+					contentURL := oauthVirtualURL(CloudTypeOneDrive, src.ID, it.ID)
 					if dirCover == "" && (lower == "cover.jpg" || lower == "cover.png" || lower == "folder.jpg" || lower == "folder.png") && it.Size <= 10<<20 {
 						dirCover = contentURL
 					}
@@ -748,7 +888,7 @@ func walkOneDrive(ctx context.Context, src CloudSource, seenFiles map[string]boo
 					if !Supported(it.Name) {
 						continue
 					}
-					contentURL := oneDriveAPIBase + "/me/drive/items/" + url.PathEscape(it.ID) + "/content"
+					contentURL := oauthVirtualURL(CloudTypeOneDrive, src.ID, it.ID)
 					if seenFiles[contentURL] {
 						continue
 					}
@@ -785,6 +925,11 @@ func walkOneDrive(ctx context.Context, src CloudSource, seenFiles map[string]boo
 		}()
 	}
 	wg.Wait()
+	if ctx.Err() != nil {
+		warnings = append(warnings, fmt.Sprintf("OneDrive「%s」扫描超时或已取消", cmp.Or(src.Name, "OneDrive")))
+	} else if len(queue) > 0 {
+		warnings = append(warnings, fmt.Sprintf("OneDrive「%s」目录或曲目数量已达上限，部分文件未扫描", cmp.Or(src.Name, "OneDrive")))
+	}
 	return files, warnings
 }
 
@@ -843,18 +988,18 @@ func uploadOneDrive(ctx context.Context, localPath string, dst CloudSource) (str
 	authHeader := "Bearer " + token
 
 	folder := strings.Trim(strings.TrimSpace(dst.Folder), "/")
-	itemURL, err := uploadOneDriveFile(ctx, localPath, folder, authHeader)
+	itemURL, err := uploadOneDriveFile(ctx, dst.ID, localPath, folder, authHeader)
 	if err != nil {
 		return "", err
 	}
 	lrcPath := strings.TrimSuffix(localPath, filepath.Ext(localPath)) + ".lrc"
 	if info, err := os.Stat(lrcPath); err == nil && info.Mode().IsRegular() && info.Size() <= 2<<20 {
-		_, _ = uploadOneDriveFile(ctx, lrcPath, folder, authHeader)
+		_, _ = uploadOneDriveFile(ctx, dst.ID, lrcPath, folder, authHeader)
 	}
 	return itemURL, nil
 }
 
-func uploadOneDriveFile(ctx context.Context, localPath, folder, authHeader string) (string, error) {
+func uploadOneDriveFile(ctx context.Context, sourceID, localPath, folder, authHeader string) (string, error) {
 	f, err := os.Open(localPath)
 	if err != nil {
 		return "", err
@@ -890,7 +1035,7 @@ func uploadOneDriveFile(ctx context.Context, localPath, folder, authHeader strin
 			return "", fmt.Errorf("OneDrive 上传失败（HTTP %s）", res.Status)
 		}
 		if item.ID != "" {
-			return oneDriveAPIBase + "/me/drive/items/" + url.PathEscape(item.ID) + "/content", nil
+			return oauthVirtualURL(CloudTypeOneDrive, sourceID, item.ID), nil
 		}
 		return target, nil
 	}
@@ -918,7 +1063,8 @@ func uploadOneDriveFile(ctx context.Context, localPath, folder, authHeader strin
 		return "", fmt.Errorf("OneDrive 创建上传会话失败（HTTP %s）", statusText)
 	}
 
-	const chunkSize = 4 << 20
+	// Microsoft Graph requires chunk sizes to be exact multiples of 320 KiB.
+	const chunkSize = 16 * (320 << 10)
 	buf := make([]byte, chunkSize)
 	var itemID string
 	for offset := int64(0); offset < info.Size(); {
@@ -954,7 +1100,7 @@ func uploadOneDriveFile(ctx context.Context, localPath, folder, authHeader strin
 		offset += int64(n)
 	}
 	if itemID != "" {
-		return oneDriveAPIBase + "/me/drive/items/" + url.PathEscape(itemID) + "/content", nil
+		return oauthVirtualURL(CloudTypeOneDrive, sourceID, itemID), nil
 	}
 	return sess.UploadURL, nil
 }
@@ -1021,7 +1167,7 @@ func walkGoogleDrive(ctx context.Context, src CloudSource, seenFiles map[string]
 			}
 			lower := strings.ToLower(it.Name)
 			size, _ := strconv.ParseInt(it.Size, 10, 64)
-			mediaURL := googleDriveAPIBase + "/files/" + url.PathEscape(it.ID) + "?alt=media"
+			mediaURL := oauthVirtualURL(CloudTypeGoogleDrive, src.ID, it.ID)
 			if dirCover == "" && (lower == "cover.jpg" || lower == "cover.png" || lower == "folder.jpg" || lower == "folder.png") && size <= 10<<20 {
 				dirCover = mediaURL
 			}
@@ -1041,7 +1187,7 @@ func walkGoogleDrive(ctx context.Context, src CloudSource, seenFiles map[string]
 			if !Supported(it.Name) {
 				continue
 			}
-			mediaURL := googleDriveAPIBase + "/files/" + url.PathEscape(it.ID) + "?alt=media"
+			mediaURL := oauthVirtualURL(CloudTypeGoogleDrive, src.ID, it.ID)
 			if seenFiles[mediaURL] {
 				continue
 			}
@@ -1066,7 +1212,30 @@ func walkGoogleDrive(ctx context.Context, src CloudSource, seenFiles map[string]
 			}
 		}
 	}
+	if ctx.Err() != nil {
+		warnings = append(warnings, fmt.Sprintf("Google Drive「%s」扫描超时或已取消", cmp.Or(src.Name, "Google Drive")))
+	} else if len(queue) > 0 || len(files) >= maxCloudFiles {
+		warnings = append(warnings, fmt.Sprintf("Google Drive「%s」目录或曲目数量已达上限，部分文件未扫描", cmp.Or(src.Name, "Google Drive")))
+	}
 	return files, warnings
+}
+
+func escapeDriveQuery(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, "'", `\'`)
+}
+
+func isLikelyGoogleDriveID(s string) bool {
+	if len(s) < 10 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveGoogleDriveFolder(ctx context.Context, folder, authHeader string) (string, error) {
@@ -1074,11 +1243,11 @@ func resolveGoogleDriveFolder(ctx context.Context, folder, authHeader string) (s
 	if folder == "" {
 		return "root", nil
 	}
-	// Walk path segments like "Music/Lossless" from root; if not found and single segment, treat as folder ID.
+	// Walk path segments like "Music/Lossless" from root; if not found and single segment looks like a Drive ID, treat as folder ID.
 	segments := strings.Split(folder, "/")
 	parentID := "root"
 	for _, seg := range segments {
-		escaped := strings.ReplaceAll(seg, "'", `\'`)
+		escaped := escapeDriveQuery(seg)
 		q := fmt.Sprintf("name = '%s' and '%s' in parents and mimeType = '%s' and trashed = false", escaped, parentID, gdriveFolderMIME)
 		u := googleDriveAPIBase + "/files?q=" + url.QueryEscape(q) + "&fields=files(id,name)&pageSize=5"
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -1094,11 +1263,17 @@ func resolveGoogleDriveFolder(ctx context.Context, folder, authHeader string) (s
 		err = json.NewDecoder(io.LimitReader(res.Body, 256<<10)).Decode(&list)
 		status := res.StatusCode
 		res.Body.Close()
-		if status == http.StatusOK && err == nil && len(list.Files) > 0 {
+		if status != http.StatusOK {
+			return "", fmt.Errorf("Google Drive HTTP %d", status)
+		}
+		if err != nil {
+			return "", err
+		}
+		if len(list.Files) > 0 {
 			parentID = list.Files[0].ID
 			continue
 		}
-		if len(segments) == 1 {
+		if len(segments) == 1 && isLikelyGoogleDriveID(folder) {
 			// Allow passing a raw Google Drive folder ID directly.
 			return folder, nil
 		}
@@ -1110,7 +1285,7 @@ func resolveGoogleDriveFolder(ctx context.Context, folder, authHeader string) (s
 func listGoogleDriveDir(ctx context.Context, folderID, authHeader string) ([]gdFile, error) {
 	var all []gdFile
 	pageToken := ""
-	q := fmt.Sprintf("'%s' in parents and trashed = false", strings.ReplaceAll(folderID, "'", `\'`))
+	q := fmt.Sprintf("'%s' in parents and trashed = false", escapeDriveQuery(folderID))
 	for page := 0; page < 50; page++ {
 		params := url.Values{
 			"q":        {q},
@@ -1161,18 +1336,18 @@ func uploadGoogleDrive(ctx context.Context, localPath string, dst CloudSource) (
 	if err != nil {
 		return "", err
 	}
-	mediaURL, err := uploadGoogleDriveFile(ctx, localPath, folderID, authHeader)
+	mediaURL, err := uploadGoogleDriveFile(ctx, dst.ID, localPath, folderID, authHeader)
 	if err != nil {
 		return "", err
 	}
 	lrcPath := strings.TrimSuffix(localPath, filepath.Ext(localPath)) + ".lrc"
 	if info, err := os.Stat(lrcPath); err == nil && info.Mode().IsRegular() && info.Size() <= 2<<20 {
-		_, _ = uploadGoogleDriveFile(ctx, lrcPath, folderID, authHeader)
+		_, _ = uploadGoogleDriveFile(ctx, dst.ID, lrcPath, folderID, authHeader)
 	}
 	return mediaURL, nil
 }
 
-func uploadGoogleDriveFile(ctx context.Context, localPath, folderID, authHeader string) (string, error) {
+func uploadGoogleDriveFile(ctx context.Context, sourceID, localPath, folderID, authHeader string) (string, error) {
 	f, err := os.Open(localPath)
 	if err != nil {
 		return "", err
@@ -1223,7 +1398,7 @@ func uploadGoogleDriveFile(ctx context.Context, localPath, folderID, authHeader 
 		return "", fmt.Errorf("Google Drive 上传失败（HTTP %s）", putRes.Status)
 	}
 	if created.ID != "" {
-		return googleDriveAPIBase + "/files/" + url.PathEscape(created.ID) + "?alt=media", nil
+		return oauthVirtualURL(CloudTypeGoogleDrive, sourceID, created.ID), nil
 	}
 	return uploadLoc, nil
 }

@@ -2,6 +2,7 @@ package app
 
 import (
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -11,6 +12,17 @@ import (
 
 // Radios play on without end, from a song or an artist, as Spotify's own:
 // "radio:<its URI>#<its name>", which the session keeps.
+
+var (
+	radioContextMu   sync.Mutex
+	radioContextURIs = map[string]string{}
+)
+
+func radioContextURI(seed string) string {
+	radioContextMu.Lock()
+	defer radioContextMu.Unlock()
+	return radioContextURIs[seed]
+}
 
 func radioName(uri, label string) string { return "radio:" + uri + "#" + label }
 
@@ -31,6 +43,9 @@ var radioTracks = func(seed string) ([]spotify.Track, error) {
 	if err != nil {
 		return nil, err
 	}
+	radioContextMu.Lock()
+	radioContextURIs[seed] = uri
+	radioContextMu.Unlock()
 	var out []spotify.Track
 	for _, t := range pl.Tracks {
 		if t.Playable() {
@@ -80,15 +95,23 @@ func (a *app) smartShuffleFeed() func(seed spotify.Track, got func([]spotify.Tra
 // startRadio plays Spotify's radio of uri, a song's or an artist's, named
 // label: from the song playing, if it is the radio's.
 func (a *app) startRadio(uri, label string) {
+	if !a.canPlay() {
+		return
+	}
 	name := radioName(uri, label)
 	if a.pl.Radio() == name {
 		a.nowPlaying = true
 		return
 	}
 	a.radioStarting = name
+	gen := a.accountGen
 	go func() {
 		tracks, err := radioTracks(uri)
-		a.post(func() { a.radioLoaded(name, uri, tracks, err) })
+		a.post(func() {
+			if gen == a.accountGen && !a.quitting {
+				a.radioLoaded(name, uri, tracks, err)
+			}
+		})
 	}()
 }
 
@@ -103,10 +126,16 @@ func (a *app) radioLoaded(name, uri string, tracks []spotify.Track, err error) {
 		a.toast = "电台暂时无法开启，请稍后再试"
 		return
 	}
+	ctxURI := radioContextURI(uri)
 	if cur := a.pl.Current(); cur != nil && cur.URI() == uri {
 		a.pl.RadioFrom(name, tracks, a.radioFeed())
-	} else {
-		a.playRadio(name, tracks)
+		a.pl.SetContextURI(ctxURI)
+		if a.connect != nil && !a.pl.IsRemote() {
+			a.connect.localQueue = true
+			a.connect.contextURI = ctxURI
+		}
+	} else if !a.playRadioWithContext(name, ctxURI, tracks) {
+		return
 	}
 	a.toast = "已开启" + radioLabel(name)
 }

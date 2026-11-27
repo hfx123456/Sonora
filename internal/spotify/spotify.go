@@ -12,11 +12,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 // pathfinderURL is where the GraphQL queries go; tests swap it.
@@ -29,10 +32,40 @@ const (
 	UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0"
 )
 
+func sameSiteRedirectHost(a, b string) bool {
+	a, b = strings.ToLower(a), strings.ToLower(b)
+	if a == b {
+		return a != ""
+	}
+	if net.ParseIP(a) != nil || net.ParseIP(b) != nil {
+		return false
+	}
+	da, errA := publicsuffix.EffectiveTLDPlusOne(a)
+	db, errB := publicsuffix.EffectiveTLDPlusOne(b)
+	return errA == nil && errB == nil && da == db
+}
+
 // Client is the HTTP client of every request to Spotify and its CDNs.
 var Client = &http.Client{
 	Timeout:   30 * time.Second,
 	Transport: &http.Transport{Proxy: Proxy, ForceAttemptHTTP2: true, MaxIdleConnsPerHost: 8, IdleConnTimeout: 90 * time.Second},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if len(via) > 0 && via[0].URL != nil && req.URL != nil {
+			orig := via[0].URL
+			sameScheme := strings.EqualFold(req.URL.Scheme, orig.Scheme)
+			sameHost := strings.EqualFold(req.URL.Host, orig.Host)
+			if !sameScheme || !sameHost {
+				req.Header.Del("Authorization")
+			}
+			if !sameScheme || (!sameHost && !sameSiteRedirectHost(req.URL.Hostname(), orig.Hostname())) {
+				req.Header.Del("Cookie")
+			}
+		}
+		return nil
+	},
 }
 
 // Reachable reports whether Spotify answers, whatever it says short of a
@@ -251,6 +284,19 @@ func SetIdentity(id Identity) {
 // is about to run out.
 func CurrentIdentity() (Identity, error) { return identity(false) }
 
+// CachedIdentity returns the latest in-memory signed-in identity without
+// triggering a renewal, so shutdown/sign-out cleanup never blocks or deadlocks
+// waiting on the UI thread.
+func CachedIdentity() Identity {
+	idMu.Lock()
+	id := current
+	idMu.Unlock()
+	if id.Anonymous {
+		return Identity{}
+	}
+	return id
+}
+
 // RenewedIdentity renews the identity now, as the service turned the
 // current one down, and returns it.
 func RenewedIdentity() (Identity, error) { return identity(true) }
@@ -292,7 +338,7 @@ func renewFullIdentity() (Identity, error) {
 // renewIdentityWith runs renewFn under idMu (already held), coalescing
 // concurrent calls.
 func renewIdentityWith(renewFn func() (Identity, error), markFull bool) (Identity, error) {
-	if markFull && renewing != nil && !renewing.full {
+	for markFull && renewing != nil && !renewing.full {
 		wait := renewing.done
 		idMu.Unlock()
 		<-wait
@@ -361,15 +407,22 @@ func renewIdentityWith(renewFn func() (Identity, error), markFull bool) (Identit
 // do sends the request build makes as the web player, renewing the
 // identity once if the service turns it down, and returns the body of a 200.
 func do(build func() (*http.Request, error)) ([]byte, error) {
+	retryGuest := false
 	for attempt := 0; ; attempt++ {
-		id, err := identity(attempt > 0)
-		asGuest := false
-		if errors.Is(err, ErrSignedOut) {
-			// Nobody is signed in: browse as nobody, which is what the web
-			// player shows a visitor who has not signed in either. Only the
-			// pages that want a listener's own things are left out.
+		var id Identity
+		var err error
+		asGuest := retryGuest
+		if retryGuest {
 			id, err = guestIdentity()
-			asGuest = true
+		} else {
+			id, err = identity(attempt > 0)
+			if errors.Is(err, ErrSignedOut) {
+				// Nobody is signed in: browse as nobody, which is what the web
+				// player shows a visitor who has not signed in either. Only the
+				// pages that want a listener's own things are left out.
+				id, err = guestIdentity()
+				asGuest = true
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -399,11 +452,14 @@ func do(build func() (*http.Request, error)) ([]byte, error) {
 			return body, nil
 		case res.StatusCode == http.StatusUnauthorized && attempt == 0:
 			if asGuest {
-				// The guest ask itself was turned down: forget it, so that
-				// the retry gets a new one.
+				// The guest ask itself was turned down: forget only this token
+				// (not a newer one refreshed concurrently) and retry as guest.
 				guestMu.Lock()
-				guest = Identity{}
+				if guest.Token == id.Token {
+					guest = Identity{}
+				}
 				guestMu.Unlock()
+				retryGuest = true
 			}
 			continue
 		case res.StatusCode == http.StatusNotFound:
@@ -524,6 +580,13 @@ func queryAs(op, h string, vars map[string]any, out any) error {
 			}
 		}
 		if len(res.Data) == 0 || string(res.Data) == "null" {
+			if op == "fetchLibraryTracks" {
+				for _, e := range res.Errors {
+					if strings.Contains(strings.ToLower(e.Message), "not authorized") {
+						return fmt.Errorf("%s: %w", op, errNotAuthorized)
+					}
+				}
+			}
 			return fmt.Errorf("%s: %s", op, res.Errors[0].Message)
 		}
 	}

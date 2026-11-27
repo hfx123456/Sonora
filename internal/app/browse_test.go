@@ -9,6 +9,25 @@ import (
 	"vinyl/internal/spotify"
 )
 
+// A podcast search without song results still opens the matching podcast.
+func TestSearchWithoutSongsOpensPodcast(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.route = route{page: pageSearch}
+	a.searched = "访谈"
+	const id = "spotify:show:interview"
+	a.foundShows = []spotify.Playlist{{ID: id, Name: "深夜访谈"}}
+	a.playlists[id] = &a.foundShows[0]
+	tt := ui.NewTester(a.view, 1200, 900)
+	if err := tt.Click("深夜访谈"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.route != (route{page: pagePlaylist, playlist: id}) {
+		t.Fatalf("podcast opened the wrong page: %+v", a.route)
+	}
+}
+
 // A tile of the browse page opens its category, whose rows show a row of
 // cards each, all of them on asking.
 func TestBrowseCategory(t *testing.T) {

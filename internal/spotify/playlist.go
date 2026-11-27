@@ -72,7 +72,7 @@ func FollowPlaylist(user, uri string, follow bool) error {
 
 // RenamePlaylist names the playlist uri name.
 func RenamePlaylist(uri, name string) error {
-	_, err := spPost(playlistURL+"/playlist/"+idOf(uri)+"/changes", changes(attributes(name)))
+	_, err := spPost(playlistURL+"/playlist/"+url.PathEscape(idOf(uri))+"/changes", changes(attributes(name)))
 	return err
 }
 
@@ -120,7 +120,7 @@ func spPost(url string, body any) ([]byte, error) {
 // Radio returns the playlist of Spotify's radio of seed, a track's or an
 // artist's URI: songs like it, fifty of them.
 func Radio(seed string) (string, error) {
-	raw, err := spGet("/inspiredby-mix/v2/seed_to_playlist/"+seed+"?response-format=json", "application/json")
+	raw, err := spGet("/inspiredby-mix/v2/seed_to_playlist/"+url.PathEscape(seed)+"?response-format=json", "application/json")
 	if err != nil {
 		return "", err
 	}

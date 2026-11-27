@@ -162,6 +162,11 @@ func walkBaidu(ctx context.Context, src CloudSource, seenFiles map[string]bool) 
 			}
 		}
 	}
+	if ctx.Err() != nil {
+		warnings = append(warnings, fmt.Sprintf("百度网盘「%s」扫描超时或已取消", cmp.Or(src.Name, "百度网盘")))
+	} else if len(queue) > 0 {
+		warnings = append(warnings, fmt.Sprintf("百度网盘「%s」目录或曲目数量已达上限，部分文件未扫描", cmp.Or(src.Name, "百度网盘")))
+	}
 	return files, warnings
 }
 
@@ -558,7 +563,25 @@ func walkQuark(ctx context.Context, src CloudSource, seenFiles map[string]bool) 
 			}
 		}
 	}
+	if ctx.Err() != nil {
+		warnings = append(warnings, fmt.Sprintf("夸克网盘「%s」扫描超时或已取消", cmp.Or(src.Name, "夸克网盘")))
+	} else if len(queue) > 0 {
+		warnings = append(warnings, fmt.Sprintf("夸克网盘「%s」目录或曲目数量已达上限，部分文件未扫描", cmp.Or(src.Name, "夸克网盘")))
+	}
 	return files, warnings
+}
+
+func isLikelyQuarkFID(s string) bool {
+	if len(s) < 16 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveQuarkFolder(ctx context.Context, folder, cookie string) (string, error) {
@@ -581,7 +604,7 @@ func resolveQuarkFolder(ctx context.Context, folder, cookie string) (string, err
 			}
 		}
 		if found == "" {
-			if len(segments) == 1 && len(seg) >= 16 {
+			if len(segments) == 1 && isLikelyQuarkFID(seg) {
 				// Allow passing a raw Quark folder FID directly.
 				return seg, nil
 			}
@@ -849,6 +872,11 @@ func walk115(ctx context.Context, src CloudSource, seenFiles map[string]bool) ([
 				break
 			}
 		}
+	}
+	if ctx.Err() != nil {
+		warnings = append(warnings, fmt.Sprintf("115网盘「%s」扫描超时或已取消", cmp.Or(src.Name, "115网盘")))
+	} else if len(queue) > 0 {
+		warnings = append(warnings, fmt.Sprintf("115网盘「%s」目录或曲目数量已达上限，部分文件未扫描", cmp.Or(src.Name, "115网盘")))
 	}
 	return files, warnings
 }

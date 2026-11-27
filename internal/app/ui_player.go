@@ -18,10 +18,17 @@ type scrubState struct {
 	v float64
 	// held is set while the pointer pressed on the bar is down, wherever
 	// it has gone since: Pressed is false off the bar, which is thin.
-	held   bool
-	active bool           // dragged since the last frame, to seek once let go
-	track  *spotify.Track // the track on which the drag began
-	level  barState
+	held     bool
+	active   bool   // dragged since the last frame, to seek once let go
+	trackURI string // the track URI on which the drag began
+	level    barState
+}
+
+func trackURIOf(tr *spotify.Track) string {
+	if tr == nil {
+		return ""
+	}
+	return tr.URI()
 }
 
 func secs(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
@@ -49,16 +56,17 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 		}
 		switch ev.Kind {
 		case ui.InputPointerDown:
-			st.held, st.track = true, pl.Current()
+			st.held, st.trackURI = true, trackURIOf(pl.Current())
 		case ui.InputPointerUp:
 			st.held = false
 			if ev.Canceled {
-				st.active, st.track = false, nil
+				st.active, st.trackURI = false, ""
 			}
 		}
 		return false
 	})
 	pressed := st.held
+	curURI := trackURIOf(pl.Current())
 	switch {
 	case pressed:
 		st.active = true
@@ -66,14 +74,14 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 		// Let go: there, but not right at the end, which would end the
 		// song as it begins to play. A new track has its own playhead.
 		st.active = false
-		if st.track != nil && st.track == pl.Current() {
+		if st.trackURI != "" && st.trackURI == curURI {
 			pl.Seek(secs(min(st.v, max(0, dur-1))))
 		}
-		st.track = nil
+		st.trackURI = ""
 	case s.Changed():
 		pl.Seek(secs(min(st.v, max(0, dur-1))))
 	}
-	scrubbing := pressed && st.track == pl.Current()
+	scrubbing := pressed && st.trackURI != "" && st.trackURI == curURI
 	hot := s.Hovered() || scrubbing
 	thick := float32(4)
 	if hot {
@@ -132,8 +140,12 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 		case pl.Playing() && !scrubbing && dur > 0:
 			// Again when the fill has moved a pixel of the screen, which
 			// takes a good part of a second, rather than every frame.
-			perPixel := dur / float64(r.W*p.Scale())
-			p.After(max(16*time.Millisecond, secs(perPixel)))
+			if px := float64(r.W * p.Scale()); px > 0 {
+				perPixel := dur / px
+				p.After(max(16*time.Millisecond, secs(perPixel)))
+			} else {
+				p.After(250 * time.Millisecond)
+			}
 		}
 	})
 	return s
@@ -515,13 +527,18 @@ func (a *app) ensureBarCredits(tr *spotify.Track) {
 	if a.barCredits == nil {
 		a.barCredits = map[string][]spotify.Credit{}
 		a.barCreditsLoading = map[string]bool{}
+		a.barCreditsRetry = map[string]time.Time{}
 	}
 	if _, ok := a.barCredits[tr.ID]; ok || a.barCreditsLoading[tr.ID] {
+		return
+	}
+	if until, ok := a.barCreditsRetry[tr.ID]; ok && time.Now().Before(until) {
 		return
 	}
 	// Reuse already-loaded TrackPage credits if present.
 	if pg := a.tracks[tr.ID]; pg != nil && len(pg.Credits) > 0 {
 		a.barCredits[tr.ID] = pg.Credits
+		delete(a.barCreditsRetry, tr.ID)
 		return
 	}
 	id := tr.ID
@@ -532,8 +549,9 @@ func (a *app) ensureBarCredits(tr *spotify.Track) {
 			delete(a.barCreditsLoading, id)
 			if err == nil {
 				a.barCredits[id] = credits
+				delete(a.barCreditsRetry, id)
 			} else {
-				a.barCredits[id] = nil
+				a.barCreditsRetry[id] = time.Now().Add(30 * time.Second)
 			}
 		})
 	}()

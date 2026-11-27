@@ -26,10 +26,35 @@ jobs:
           CGO_ENABLED: '0'
         run: go test ./internal/...
 
+      - name: Cache NSIS for Windows installer
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\mygo\nsis-*
+          key: nsis-${{ hashFiles('go.sum') }}
+
+      - name: Prepare Windows Authenticode certificate (optional)
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: |
+          if ($env:WINDOWS_CERTIFICATE) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'code-signing.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            $cfg = Get-Content mygo.json -Raw | ConvertFrom-Json
+            if ($cfg.PSObject.Properties['windows'] -and $cfg.windows) {
+              $cfg.windows | Add-Member -NotePropertyName certificate -NotePropertyValue $pfx -Force
+            } else {
+              $cfg | Add-Member -NotePropertyName windows -NotePropertyValue ([pscustomobject]@{ certificate = $pfx }) -Force
+            }
+            [IO.File]::WriteAllText((Resolve-Path mygo.json), ($cfg | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding($false)))
+          }
+
       - name: Build Windows installer & binary
         env:
           CGO_ENABLED: '0'
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          MYGO_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
           go tool mygo build -platform windows/amd64
           $ver = (Get-Content mygo.json | ConvertFrom-Json).version

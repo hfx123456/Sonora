@@ -347,13 +347,15 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 }
 
 func (a *app) searchPage(c *ui.Context) {
-	if len(a.results) == 0 && a.searching {
+	hasOtherResults := len(a.found)+len(a.foundAlbums)+len(a.foundLists)+len(a.foundShows) > 0
+	empty := len(a.results) == 0 && !hasOtherResults
+	if empty && a.searching {
 		a.trackSkeleton(c, a.pageShimmer(c), true, func(c *ui.Context) {
 			a.heading(c, "“"+a.searched+"”", "搜索")
 		})
 		return
 	}
-	if len(a.results) == 0 {
+	if empty {
 		msg := a.searchErr
 		if msg == "" {
 			msg = "没有找到相关歌曲"
@@ -367,7 +369,7 @@ func (a *app) searchPage(c *ui.Context) {
 	}
 	a.trackRows(c, a.results, a.settings.PlaylistTrackCovers, func(c *ui.Context) {
 		a.heading(c, "“"+a.searched+"”", "搜索")
-		if len(a.found)+len(a.foundAlbums)+len(a.foundLists)+len(a.foundShows) == 0 {
+		if !hasOtherResults {
 			return
 		}
 		ui.Column(c).PaddingX(12).Margin(0, 0, 8, 0).Children(func() {
@@ -407,7 +409,9 @@ func (a *app) searchPage(c *ui.Context) {
 				})
 			}
 			a.setPageTint(c, pageSearch, cmp.Or(hoveredTint, fallbackTint))
-			ui.Text(c, "歌曲").FontSize(19).FontWeight(700).LetterSpacing(-0.3).Margin(4, 0, 6, 0)
+			if len(a.results) > 0 {
+				ui.Text(c, "歌曲").FontSize(19).FontWeight(700).LetterSpacing(-0.3).Margin(4, 0, 6, 0)
+			}
 		})
 	}, nil)
 }

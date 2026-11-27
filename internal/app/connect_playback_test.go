@@ -45,9 +45,9 @@ func TestConnectLocalPauseAndSpace(t *testing.T) {
 	old := connectReport
 	defer func() { connectReport = old }()
 	called := false
-	connectReport = func(_ *spotify.Connect, _ any, _, _ int64, paused bool) error {
+	connectReport = func(_ *spotify.Connect, report spotify.ConnectStateReport) error {
 		called = true
-		if !paused {
+		if !report.Paused {
 			t.Error("reported an older play intent instead of the latest pause")
 		}
 		return nil
@@ -145,7 +145,7 @@ func TestConnectSlowReportDoesNotBlockPlay(t *testing.T) {
 	oldReport, oldCommand := connectReport, connectCommand
 	defer func() { connectReport, connectCommand = oldReport, oldCommand }()
 	started, release, sent := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	connectReport = func(*spotify.Connect, any, int64, int64, bool) error {
+	connectReport = func(*spotify.Connect, spotify.ConnectStateReport) error {
 		close(started)
 		<-release
 		return nil

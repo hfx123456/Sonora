@@ -6,24 +6,33 @@ import (
 )
 
 type QueueRequest struct {
-	Tracks []spotify.Track
-	Start  int
+	Tracks     []spotify.Track
+	Start      int
+	ContextURI string
 }
 
 func (p *Player) ConnectQueue(tracks []spotify.Track) {
 	if len(tracks) == 0 || p.track == nil || p.track.URI() != tracks[0].URI() {
 		return
 	}
+	prevDur := p.track.Duration
 	renamed := p.track.ArtistNames() != tracks[0].ArtistNames()
 	p.queue = append([]spotify.Track(nil), tracks...)
+	if p.queue[0].Duration == 0 && prevDur > 0 {
+		p.queue[0].Duration = prevDur
+	}
+	durChanged := prevDur == 0 && p.queue[0].Duration > 0
 	p.order = make([]int, len(tracks))
 	for index := range p.order {
 		p.order[index] = index
 	}
 	p.at = 0
 	p.track = &p.queue[0]
-	if renamed {
-		// Its artist named only now: the system, and what was played, hear.
+	if out, ok := p.out.(*remoteOutput); ok && p.track.Length() > 0 {
+		out.duration = p.track.Length()
+	}
+	if renamed || durChanged {
+		// Its artist or duration known only now: the system, and what was played, hear.
 		p.announce(p.track, p.cover)
 		p.sync()
 	}
@@ -116,6 +125,16 @@ func (p *Player) MirrorConnect(track spotify.Track, position time.Duration, play
 		p.smartShuffle = smart
 		output = &remoteOutput{duration: track.Length()}
 		p.out = output
+	} else if track.Length() > 0 {
+		prevDur := p.track.Duration
+		output.duration = track.Length()
+		p.track.Duration = track.Duration
+		if len(p.queue) > 0 && p.queue[0].URI() == track.URI() {
+			p.queue[0].Duration = track.Duration
+		}
+		if prevDur == 0 {
+			p.announce(p.track, p.cover)
+		}
 	}
 	output.position, output.at, output.playing = position, time.Now(), playing
 	p.playing, p.loading = playing, false
@@ -145,5 +164,8 @@ func (o *remoteOutput) Position() time.Duration {
 	if o.playing {
 		position += time.Since(o.at)
 	}
-	return min(max(0, position), o.duration)
+	if o.duration > 0 {
+		return min(max(0, position), o.duration)
+	}
+	return max(0, position)
 }

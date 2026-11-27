@@ -2,6 +2,7 @@ package spotify
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,11 +21,21 @@ func SetProxy(u *url.URL) {
 	}
 }
 
+func isLoopbackHost(h string) bool {
+	if strings.EqualFold(h, "localhost") || h == "127.0.0.1" || h == "::1" {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 // Proxy is the proxy Client's requests take: the listener's, else the
 // system's. The app's requests that go through another client take it too:
 // MyGo's updater asks GitHub with http.DefaultClient.
 func Proxy(req *http.Request) (*url.URL, error) {
-	if h := req.URL.Hostname(); h == "localhost" || h == "127.0.0.1" {
+	if req != nil && req.URL != nil && isLoopbackHost(req.URL.Hostname()) {
 		return nil, nil
 	}
 	if u := custom.Load(); u != nil {

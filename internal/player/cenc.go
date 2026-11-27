@@ -109,7 +109,7 @@ func boxOf(moov []byte, typ string) []byte {
 		start := i - 4
 		size := int(binary.BigEndian.Uint32(moov[start:i]))
 		if size < 8 || start+size > len(moov) {
-			return nil
+			continue
 		}
 		return moov[start : start+size]
 	}

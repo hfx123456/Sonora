@@ -47,6 +47,9 @@ func unsealCloudSecret(sealed, plain string) string {
 			if opened, err := unseal(raw); err == nil {
 				return string(opened)
 			}
+			if opened, err := unsealLegacyVinyl(raw); err == nil {
+				return string(opened)
+			}
 		}
 	}
 	return plain
@@ -98,19 +101,19 @@ func (s *settings) allCloudSources() []localmusic.CloudSource {
 // settings are the listener's choices, kept in settings.json in the user
 // data directory.
 type settings struct {
-	FusionPanel           bool              `json:"fusionPanel,omitempty"`
-	FusionMode            string            `json:"fusionMode,omitempty"`
-	FusionOffset          int64             `json:"fusionOffset,omitempty"`
-	FusionPositions       map[string][2]int `json:"fusionPositions,omitempty"`
-	FusionHideTranslation bool              `json:"fusionHideTranslation,omitempty"`
-	FusionFloatingIsland  bool              `json:"fusionFloatingIsland,omitempty"`
-	FusionLocked          bool              `json:"fusionLocked,omitempty"`
-	FusionScale           int               `json:"fusionScale,omitempty"`
-	FusionFont            string            `json:"fusionFont,omitempty"`
-	FusionChineseFont     string            `json:"fusionChineseFont,omitempty"`
-	FusionIslandWidth     int               `json:"fusionIslandWidth,omitempty"`
-	FusionStatic          bool              `json:"fusionStatic,omitempty"`
-	FusionNoAvoid         bool              `json:"fusionNoAvoid,omitempty"`
+	FusionPanel           bool                 `json:"fusionPanel,omitempty"`
+	FusionMode            string               `json:"fusionMode,omitempty"`
+	FusionOffset          int64                `json:"fusionOffset,omitempty"`
+	FusionPositions       map[string][2]int    `json:"fusionPositions,omitempty"`
+	FusionHideTranslation bool                 `json:"fusionHideTranslation,omitempty"`
+	FusionFloatingIsland  bool                 `json:"fusionFloatingIsland,omitempty"`
+	FusionLocked          bool                 `json:"fusionLocked,omitempty"`
+	FusionScale           int                  `json:"fusionScale,omitempty"`
+	FusionFont            string               `json:"fusionFont,omitempty"`
+	FusionChineseFont     string               `json:"fusionChineseFont,omitempty"`
+	FusionIslandWidth     int                  `json:"fusionIslandWidth,omitempty"`
+	FusionStatic          bool                 `json:"fusionStatic,omitempty"`
+	FusionNoAvoid         bool                 `json:"fusionNoAvoid,omitempty"`
 	LocalSources          []string             `json:"localSources,omitempty"`
 	CloudSources          []cloudSourceSetting `json:"cloudSources,omitempty"`
 	HiddenLocalIDs        []string             `json:"hiddenLocalIds,omitempty"`
@@ -175,8 +178,10 @@ type settings struct {
 	// it as music plays on.
 	QuitOnClose bool `json:"quitOnClose"`
 
-	// MiniPlayer shows a compact floating desktop playback controller.
-	MiniPlayer bool `json:"miniPlayer,omitempty"`
+	// MiniPlayer tracks whether the app is currently in floating mini-player
+	// mode during this session (never persisted across restarts so cold launch
+	// and the startup animation always open cleanly into the main window).
+	MiniPlayer bool `json:"-"`
 	// MiniStyle picks the mini player layout: "bar" (Apple Music compact bar) or "card" (split cover card).
 	MiniStyle string `json:"miniStyle,omitempty"`
 	// MiniAlwaysOnTop keeps the mini player floating above other windows.
@@ -285,10 +290,7 @@ func (s settings) save() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0o600)
+	return writeAtomic(path, b)
 }
 
 var setThemeSource = func(s mygo.ThemeSource) {

@@ -31,13 +31,13 @@ func (a *app) songItems(tr *spotify.Track, pid string) func(m *ui.Menu) {
 			// when Spotify Connect could not take it and said why, such as
 			// while it reconnects: saying it was queued hid that it was not.
 			queued := a.pl.Current() != nil
-			if m.Item("下一首播放").Chosen() {
+			if m.Item("下一首播放").Chosen() && (tr.Local() || a.canPlay()) {
 				a.pl.PlayNext(*tr)
 				if queued && a.toast == "" {
 					a.toast = "将在下一首播放"
 				}
 			}
-			if m.Item("添加到待播清单").Chosen() {
+			if m.Item("添加到待播清单").Chosen() && (tr.Local() || a.canPlay()) {
 				switch {
 				case !a.pl.AddToQueue(*tr):
 					a.toast = "歌曲已在待播清单中"
@@ -57,6 +57,9 @@ func (a *app) songItems(tr *spotify.Track, pid string) func(m *ui.Menu) {
 			copyText(tr.Name + " - " + tr.ArtistNames())
 		}
 		if tr.Cloud() {
+			if tr.UID != "" && a.editable(pid) != nil && m.Item("从歌单中移除").Chosen() {
+				a.removeFrom(pid, tr)
+			}
 			if tr.CloudURL != "" && m.Item("复制云盘链接").Chosen() {
 				copyText(tr.CloudURL)
 			}
@@ -67,6 +70,9 @@ func (a *app) songItems(tr *spotify.Track, pid string) func(m *ui.Menu) {
 			return
 		}
 		if tr.Local() {
+			if tr.UID != "" && a.editable(pid) != nil && m.Item("从歌单中移除").Chosen() {
+				a.removeFrom(pid, tr)
+			}
 			if tr.LocalPath != "" && m.Item("复制文件路径").Chosen() {
 				copyText(tr.LocalPath)
 			}

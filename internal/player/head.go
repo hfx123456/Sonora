@@ -159,7 +159,7 @@ func (w *Web) Prefetch(m *spotify.Media) {
 	}
 	total := meta.total
 	if total == "" {
-		total = strconv.FormatInt(n, 10)
+		total = "*"
 	}
 	// What the file says it is encrypted with against what the key system
 	// here plays: a track in the other scheme plays as a still picture with

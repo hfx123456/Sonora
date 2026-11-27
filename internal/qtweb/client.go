@@ -150,19 +150,23 @@ func start(command *exec.Cmd) (*Client, error) {
 	}
 	c := &Client{command: command, input: input, done: make(chan struct{}), pending: map[int]chan reply{}, watch: map[int]func(){}}
 	go func() {
-		scanner := bufio.NewScanner(output)
-		scanner.Buffer(make([]byte, 4096), 2<<20)
-		for scanner.Scan() {
-			var r reply
-			if json.Unmarshal(scanner.Bytes(), &r) != nil || r.ID <= 0 {
-				continue
+		reader := bufio.NewReaderSize(output, 16<<10)
+		for {
+			line, readErr := reader.ReadBytes('\n')
+			if len(line) > 0 {
+				var r reply
+				if json.Unmarshal(line, &r) == nil && r.ID > 0 {
+					c.mu.Lock()
+					waiting := c.pending[r.ID]
+					delete(c.pending, r.ID)
+					c.mu.Unlock()
+					if waiting != nil {
+						waiting <- r
+					}
+				}
 			}
-			c.mu.Lock()
-			waiting := c.pending[r.ID]
-			delete(c.pending, r.ID)
-			c.mu.Unlock()
-			if waiting != nil {
-				waiting <- r
+			if readErr != nil {
+				break
 			}
 		}
 		// EOF also stops a host whose protocol reader has failed.

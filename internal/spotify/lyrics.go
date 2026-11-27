@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -11,7 +12,7 @@ import (
 // Lyrics returns track id's lyrics as LRC, or "" if it has no timed
 // lyrics.
 func Lyrics(id string) (string, error) {
-	raw, err := spGet("/color-lyrics/v2/track/"+id+"?format=json&vocalRemoval=false&market=from_token", "application/json")
+	raw, err := spGet("/color-lyrics/v2/track/"+url.PathEscape(id)+"?format=json&vocalRemoval=false&market=from_token", "application/json")
 	if errors.Is(err, ErrNotFound) {
 		return "", nil
 	}

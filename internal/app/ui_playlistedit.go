@@ -207,6 +207,7 @@ func (a *app) addTo(pid string, tr *spotify.Track) {
 	}
 	id, gen := tr.ID, a.accountGen
 	added := *tr
+	added.UID = "" // The destination assigns its own item UID.
 	go func() {
 		err := addToPlaylist(pid, id)
 		a.post(func() {
@@ -237,12 +238,18 @@ func (a *app) addTo(pid string, tr *spotify.Track) {
 // back then.
 func (a *app) removeFrom(pid string, tr *spotify.Track) {
 	uid, gen := tr.UID, a.accountGen
+	if uid == "" {
+		return
+	}
 	pl := a.playlists[pid]
-	var before []spotify.Track
+	index := -1
+	removed := *tr
 	if pl != nil {
-		// A new list: the player may be playing the old one.
-		before = pl.Tracks
-		pl.Tracks = slices.DeleteFunc(slices.Clone(before), func(t spotify.Track) bool { return t.UID == uid })
+		index = slices.IndexFunc(pl.Tracks, func(t spotify.Track) bool { return t.UID == uid })
+		if index >= 0 {
+			// A new list: the player may be playing the old one.
+			pl.Tracks = slices.Delete(slices.Clone(pl.Tracks), index, index+1)
+		}
 	}
 	go func() {
 		err := removeFromPlaylist(pid, uid)
@@ -251,8 +258,9 @@ func (a *app) removeFrom(pid string, tr *spotify.Track) {
 				return
 			}
 			if err != nil {
-				if pl != nil && a.playlists[pid] == pl {
-					pl.Tracks = before
+				if index >= 0 && a.playlists[pid] == pl &&
+					!slices.ContainsFunc(pl.Tracks, func(t spotify.Track) bool { return t.UID == uid }) {
+					pl.Tracks = slices.Insert(slices.Clone(pl.Tracks), min(index, len(pl.Tracks)), removed)
 				}
 				a.toast = "移除失败，请稍后再试"
 				return

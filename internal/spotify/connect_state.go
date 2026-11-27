@@ -110,7 +110,7 @@ func (t ConnectTrack) track() Track {
 		if meta["artist_name"+key] == "" {
 			break
 		}
-		track.Artists = append(track.Artists, Artist{Name: meta["artist_name"+key], ID: meta["artist_uri"+key]})
+		track.Artists = append(track.Artists, Artist{Name: meta["artist_name"+key], ID: idOf(meta["artist_uri"+key])})
 	}
 	return track
 }
@@ -223,7 +223,7 @@ func (m ConnectMachine) Track(index int) (Track, error) {
 		track.Album.PicURL = safeRemoteCoverURL(meta.Images[0].URL)
 	}
 	for _, artist := range meta.Authors {
-		track.Artists = append(track.Artists, Artist{Name: artist.Name, ID: artist.URI})
+		track.Artists = append(track.Artists, Artist{Name: artist.Name, ID: idOf(artist.URI)})
 	}
 	return track, nil
 }

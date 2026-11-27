@@ -340,7 +340,7 @@ func (a *app) dailyPlayButton(c *ui.Context, songs []spotify.Track, ours, playin
 		if ours {
 			a.pl.TogglePlay()
 		} else {
-			a.playQueue(songs, firstPlayable(songs))
+			a.playQueueWithContext(songs, firstPlayable(songs), a.dailyURI)
 		}
 	}
 }
@@ -374,7 +374,7 @@ func (a *app) dailyPicks(c *ui.Context, songs []spotify.Track, ours bool) {
 				})
 			})
 			if a.rowDoubleClicked(c, row, cur != nil && cur.ID == tr.ID) {
-				a.playQueue(songs, i)
+				a.playQueueWithContext(songs, i, a.dailyURI)
 			}
 		}
 	})
@@ -504,11 +504,11 @@ func (a *app) dailyPage(c *ui.Context) {
 				ui.Text(c, fmt.Sprintf("%d 首 · %s", len(songs), a.dailyBlurb())).FontSize(13).TextColor(p.muted)
 				ui.Row(c).Gap(10).Margin(8, 0, 0, 0).Children(func() {
 					if pillButton(c.Key("play"), iconPlay, "播放全部", p.accent, p.onAccent).Clicked() {
-						a.playQueue(songs, firstPlayable(songs))
+						a.playQueueWithContext(songs, firstPlayable(songs), a.dailyURI)
 					}
 					if a.secondaryPillButton(c.Key("shuffle"), iconShuffle, "随机播放").Clicked() {
 						a.enableShuffle()
-						a.playQueue(songs, randomPlayable(songs))
+						a.playQueueWithContext(songs, randomPlayable(songs), a.dailyURI)
 					}
 				})
 			})

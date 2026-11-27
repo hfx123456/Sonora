@@ -290,7 +290,7 @@ func (a *app) fusionLines(c *ui.Context) {
 					}
 				})
 				if button.Clicked() && !line.Unsynced {
-					a.pl.Seek(max(0, line.At-time.Duration(a.settings.FusionOffset)*time.Millisecond))
+					a.pl.Seek(max(0, line.At-time.Duration(a.settings.FusionOffset)*time.Millisecond+a.pl.VideoLead()))
 					a.redraw()
 				}
 			}

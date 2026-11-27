@@ -176,32 +176,60 @@ func hasRealTranslation(lines []lyrics.Line) bool {
 }
 
 func betterResult(cand, cur Result) bool {
-	score := func(r Result) [4]int {
-		var synced, trans, words int
+	type resultScore struct {
+		hasSynced      int
+		hasSubstantive int
+		trans          int
+		words          int
+		substantive    int
+		synced         int
+	}
+	score := func(r Result) resultScore {
+		var s resultScore
 		for _, l := range r.Lines {
 			if !l.Unsynced {
-				synced++
+				s.synced++
 				if !lyrics.IsCredit(l.Text) {
+					s.substantive++
 					if tr := strings.TrimSpace(l.Translation); tr != "" && tr != "//" {
-						trans++
+						s.trans++
+					}
+					if len(l.Words) > 0 {
+						s.words++
 					}
 				}
 			}
-			if len(l.Words) > 0 {
-				words++
-			}
 		}
-		hasSynced := 0
-		if synced >= 2 {
-			hasSynced = 1
+		if s.synced >= 2 {
+			s.hasSynced = 1
 		}
-		return [4]int{hasSynced, trans, words, synced}
+		if s.substantive >= 5 {
+			s.hasSubstantive = 1
+		}
+		return s
 	}
 	a, b := score(cand), score(cur)
-	for i := range a {
-		if a[i] != b[i] {
-			return a[i] > b[i]
-		}
+	if a.hasSynced != b.hasSynced {
+		return a.hasSynced > b.hasSynced
+	}
+	if a.hasSubstantive != b.hasSubstantive {
+		return a.hasSubstantive > b.hasSubstantive
+	}
+	if a.trans != b.trans {
+		return a.trans > b.trans
+	}
+	// Do not let a sparse/partial word-timed snippet beat a much more complete synced lyric.
+	if a.substantive >= b.substantive*2 && a.substantive-b.substantive >= 5 {
+		return true
+	}
+	if b.substantive >= a.substantive*2 && b.substantive-a.substantive >= 5 {
+		return false
+	}
+	if a.words != b.words {
+		return a.words > b.words
+	}
+	if a.synced != b.synced {
+		return a.synced > b.synced
 	}
 	return len(cand.Lines) > len(cur.Lines)
 }

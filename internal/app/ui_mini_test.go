@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -92,6 +93,41 @@ func TestMiniSettingsDefaults(t *testing.T) {
 	s.MiniStyle = miniStyleCard
 	if s.effectiveMiniStyle() != miniStyleCard {
 		t.Fatalf("card style=%q, want %q", s.effectiveMiniStyle(), miniStyleCard)
+	}
+}
+
+func TestMiniPlayerNeverPersistsOrShowsDuringSplash(t *testing.T) {
+	// Legacy settings.json files with `"miniPlayer": true` must not re-open the
+	// mini window on cold launch (or ahead of the startup splash animation).
+	s := defaultSettings()
+	raw := []byte(`{"miniPlayer":true,"miniStyle":"card","miniAlwaysOnTop":false,"miniPosition":[120,240],"miniPositionSet":true}`)
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatalf("unmarshal legacy settings: %v", err)
+	}
+	if s.MiniPlayer {
+		t.Fatal("MiniPlayer must not load as true from settings.json on startup")
+	}
+	if s.MiniStyle != miniStyleCard || s.MiniAlwaysOnTop || !s.MiniPositionSet || s.MiniPosition != [2]int{120, 240} {
+		t.Fatalf("persistent mini preferences were lost: %+v", s)
+	}
+
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.splash.start(time.Now())
+	if !a.miniSplashActive() {
+		t.Fatal("miniSplashActive should be true while cold-start splash is running")
+	}
+	a.splash.done = true
+	if a.miniSplashActive() {
+		t.Fatal("miniSplashActive should be false once splash finishes")
+	}
+
+	// Restoring the main window (from tray / shortcut / menu) must exit mini mode
+	// so main window and mini window do not stay open simultaneously.
+	a.settings.MiniPlayer = true
+	a.showMain()
+	if a.settings.MiniPlayer {
+		t.Fatal("showMain should clear MiniPlayer mode")
 	}
 }
 

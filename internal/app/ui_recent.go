@@ -113,7 +113,7 @@ type queued struct {
 // podcast: once a song of them plays, from goes first among what was
 // played lately, which Spotify hears nothing of.
 func (a *app) playFrom(from spotify.HomeItem, tracks []spotify.Track, start int) {
-	a.playQueue(tracks, start)
+	a.playQueueWithContext(tracks, start, a.contextURIFor(from))
 	a.queuedFrom = nil
 	if from.ID() != "" && len(tracks) > 0 {
 		if from.List != nil {

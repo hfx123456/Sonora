@@ -1,6 +1,8 @@
 package app
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -40,6 +42,7 @@ func migrateLegacyVinylData(userDir, cacheDir string) {
 	for _, name := range []string{"settings.json", "played.json", "played-from.json", "session.json", "home.json", "queries.json"} {
 		copyFileIfMissing(filepath.Join(legacyUser, name), filepath.Join(userDir, name))
 	}
+	migrateCloudSecrets(filepath.Join(userDir, "settings.json"), unseal, unsealLegacyVinyl, seal)
 	for _, dir := range []string{"playlist-cache-v1", "lyrics-cache-v1"} {
 		copyDirIfMissing(filepath.Join(legacyUser, dir), filepath.Join(userDir, dir))
 	}
@@ -81,6 +84,68 @@ func migrateAccountCookies(src, dst string) {
 	}
 	_ = os.MkdirAll(filepath.Dir(dst), 0o700)
 	_ = os.WriteFile(dst, sealed, 0o600)
+}
+
+// migrateCloudSecrets re-seals any legacy Vinyl DPAPI/keychain cloud source
+// credentials inside settingsPath under Sonora's own key.
+func migrateCloudSecrets(settingsPath string, openCurrent, openLegacy, resealSecret func([]byte) ([]byte, error)) {
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return
+	}
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(raw, &doc) != nil {
+		return
+	}
+	sourcesRaw, ok := doc["cloudSources"]
+	if !ok || len(sourcesRaw) == 0 {
+		return
+	}
+	var sources []cloudSourceSetting
+	if json.Unmarshal(sourcesRaw, &sources) != nil {
+		return
+	}
+	changed := false
+	reseal := func(sealed, plain *string) {
+		if *sealed == "" {
+			return
+		}
+		buf, err := base64.StdEncoding.DecodeString(*sealed)
+		if err != nil {
+			return
+		}
+		if _, err := openCurrent(buf); err == nil {
+			return
+		}
+		opened, err := openLegacy(buf)
+		if err != nil || len(opened) == 0 {
+			return
+		}
+		newSealed, err := resealSecret(opened)
+		if err != nil || len(newSealed) == 0 {
+			return
+		}
+		*sealed, *plain = base64.StdEncoding.EncodeToString(newSealed), ""
+		changed = true
+	}
+	for i := range sources {
+		reseal(&sources[i].SealedPass, &sources[i].PlainPass)
+		reseal(&sources[i].SealedSecret, &sources[i].PlainSecret)
+		reseal(&sources[i].SealedRefresh, &sources[i].PlainRefresh)
+	}
+	if !changed {
+		return
+	}
+	updatedSources, err := json.Marshal(sources)
+	if err != nil {
+		return
+	}
+	doc["cloudSources"] = updatedSources
+	out, err := json.MarshalIndent(doc, "", "\t")
+	if err != nil {
+		return
+	}
+	_ = writeAtomic(settingsPath, out)
 }
 
 func copyFileIfMissing(src, dst string) {
