@@ -32,8 +32,8 @@ func TestResumePositionIgnoresPreSeekEvents(t *testing.T) {
 	}
 	output.event("seeked", 90*time.Second, "", 0)
 	output.event("time", 91*time.Second, "", 0)
-	if output.Position() != 91*time.Second || output.seekPending != nil {
-		t.Fatal("seek confirmation did not restore normal progress")
+	if output.pos != 91*time.Second || output.Position() < 91*time.Second || output.Position() > 92*time.Second || output.seekPending != nil {
+		t.Fatalf("seek confirmation did not restore normal progress: pos=%v position=%v pending=%v", output.pos, output.Position(), output.seekPending)
 	}
 }
 
