@@ -140,6 +140,12 @@ type settings struct {
 	// MyPlaylistGrid shows the listener's own and saved playlists in the
 	// sidebar as a two-column grid of covers rather than a list.
 	MyPlaylistGrid bool `json:"myPlaylistGrid"`
+	// SidebarCollapsed remembers which sidebar library sections are collapsed
+	// (keyed by section id: "pinned", "mine", "saved", "followed").
+	SidebarCollapsed map[string]bool `json:"sidebarCollapsed,omitempty"`
+	// PinnedPlaylists holds playlist/album/show IDs pinned to the dedicated
+	// sidebar section above "我的歌单", in display order.
+	PinnedPlaylists []string `json:"pinnedPlaylists,omitempty"`
 	// PlaylistTrackCovers shows per-row album thumbnails in playlists, Liked
 	// Songs, and Local/Cloud music lists.
 	PlaylistTrackCovers bool `json:"playlistTrackCovers"`

@@ -380,7 +380,9 @@ func (a *app) followedArtists(c *ui.Context) {
 		return
 	}
 	p := a.pal
-	ui.Text(c, "关注的艺人").FontSize(11.5).FontWeight(600).TextColor(p.faint).Margin(18, 4, 6, 10)
+	if a.sidebarSectionHeader(c, sidebarSectionFollowed, "关注的艺人", len(a.followed), nil) {
+		return
+	}
 	for i := range a.followed {
 		ar := &a.followed[i]
 		selected := a.route.page == pageArtist && a.route.artist == ar.ID && !a.nowPlaying

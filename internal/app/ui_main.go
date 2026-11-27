@@ -345,8 +345,9 @@ func (a *app) sidebar(c *ui.Context) {
 			if a.searched != "" {
 				a.navItem(c, iconSearch, "搜索结果", route{page: pageSearch})
 			}
-			a.myPlaylists(c, "我的歌单", a.mine, true)
-			a.myPlaylists(c, "我的收藏", a.saved, false)
+			a.pinnedPlaylistSection(c)
+			a.myPlaylists(c, sidebarSectionMine, "我的歌单", a.mine, true)
+			a.myPlaylists(c, sidebarSectionSaved, "我的收藏", a.saved, false)
 			a.followedArtists(c)
 		})
 

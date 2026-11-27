@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -850,47 +851,260 @@ func (a *app) scheduleMine() {
 	})
 }
 
-// myPlaylists lists the listener's playlists in the sidebar: those they
-// made, if mine, with a button to make one and a menu to rename them.
-func (a *app) myPlaylists(c *ui.Context, title string, lists []spotify.Playlist, mine bool) {
-	if len(lists) == 0 {
+const (
+	sidebarSectionPinned   = "pinned"
+	sidebarSectionMine     = "mine"
+	sidebarSectionSaved    = "saved"
+	sidebarSectionFollowed = "followed"
+)
+
+type pinnedEntry struct {
+	pl   *spotify.Playlist
+	mine bool
+}
+
+func (a *app) sidebarCollapsed(section string) bool {
+	return a.settings.SidebarCollapsed[section]
+}
+
+func (a *app) toggleSidebarSection(section string) {
+	if a.settings.SidebarCollapsed == nil {
+		a.settings.SidebarCollapsed = map[string]bool{}
+	}
+	if a.settings.SidebarCollapsed[section] {
+		delete(a.settings.SidebarCollapsed, section)
+	} else {
+		a.settings.SidebarCollapsed[section] = true
+	}
+	a.settings.save()
+}
+
+func (a *app) expandSidebarSection(section string) {
+	if !a.settings.SidebarCollapsed[section] {
 		return
 	}
+	delete(a.settings.SidebarCollapsed, section)
+	a.settings.save()
+}
+
+func (a *app) isPlaylistPinned(id string) bool {
+	return slices.Contains(a.settings.PinnedPlaylists, id)
+}
+
+func (a *app) inLibrary(id string) bool {
+	return slices.ContainsFunc(a.mine, func(pl spotify.Playlist) bool { return pl.ID == id }) ||
+		slices.ContainsFunc(a.saved, func(pl spotify.Playlist) bool { return pl.ID == id })
+}
+
+func (a *app) togglePlaylistPinned(id string) {
+	if i := slices.Index(a.settings.PinnedPlaylists, id); i >= 0 {
+		a.settings.PinnedPlaylists = slices.Delete(slices.Clone(a.settings.PinnedPlaylists), i, i+1)
+		a.settings.save()
+		a.toast = "已取消置顶"
+		return
+	}
+	a.settings.PinnedPlaylists = append(slices.Clone(a.settings.PinnedPlaylists), id)
+	if a.settings.SidebarCollapsed[sidebarSectionPinned] {
+		delete(a.settings.SidebarCollapsed, sidebarSectionPinned)
+	}
+	a.settings.save()
+	a.toast = "已置顶歌单"
+}
+
+func (a *app) unpinPlaylist(id string) int {
+	i := slices.Index(a.settings.PinnedPlaylists, id)
+	if i < 0 {
+		return -1
+	}
+	a.settings.PinnedPlaylists = slices.Delete(slices.Clone(a.settings.PinnedPlaylists), i, i+1)
+	a.settings.save()
+	return i
+}
+
+func (a *app) restorePinnedPlaylist(id string, idx int) {
+	if idx < 0 || a.isPlaylistPinned(id) {
+		return
+	}
+	pos := min(idx, len(a.settings.PinnedPlaylists))
+	a.settings.PinnedPlaylists = slices.Insert(slices.Clone(a.settings.PinnedPlaylists), pos, id)
+	a.settings.save()
+}
+
+func (a *app) movePinnedPlaylist(id string, delta int) {
+	visible := a.pinnedPlaylists()
+	vi := slices.IndexFunc(visible, func(e pinnedEntry) bool { return e.pl.ID == id })
+	vj := vi + delta
+	if vi < 0 || vj < 0 || vj >= len(visible) {
+		return
+	}
+	i := slices.Index(a.settings.PinnedPlaylists, visible[vi].pl.ID)
+	j := slices.Index(a.settings.PinnedPlaylists, visible[vj].pl.ID)
+	if i < 0 || j < 0 {
+		return
+	}
+	next := slices.Clone(a.settings.PinnedPlaylists)
+	next[i], next[j] = next[j], next[i]
+	a.settings.PinnedPlaylists = next
+	a.settings.save()
+}
+
+func (a *app) pinnedPlaylists() []pinnedEntry {
+	if len(a.settings.PinnedPlaylists) == 0 {
+		return nil
+	}
+	out := make([]pinnedEntry, 0, len(a.settings.PinnedPlaylists))
+	seen := make(map[string]bool, len(a.settings.PinnedPlaylists))
+	for _, id := range a.settings.PinnedPlaylists {
+		if id == "" || seen[id] {
+			continue
+		}
+		if i := slices.IndexFunc(a.mine, func(pl spotify.Playlist) bool { return pl.ID == id }); i >= 0 {
+			seen[id] = true
+			out = append(out, pinnedEntry{pl: &a.mine[i], mine: true})
+			continue
+		}
+		if i := slices.IndexFunc(a.saved, func(pl spotify.Playlist) bool { return pl.ID == id }); i >= 0 {
+			seen[id] = true
+			out = append(out, pinnedEntry{pl: &a.saved[i], mine: false})
+		}
+	}
+	return out
+}
+
+// sidebarSectionHeader renders a collapsible sidebar section title with a
+// chevron, an item count badge while collapsed, and optional trailing actions.
+func (a *app) sidebarSectionHeader(c *ui.Context, section, title string, count int, trailing func()) bool {
 	p := a.pal
-	ui.Row(c.Key(title)).AlignItems(ui.Center).Margin(18, 4, 6, 10).Children(func() {
-		ui.Text(c, title).FontSize(11.5).FontWeight(600).TextColor(p.faint).Grow(1)
-		if mine && iconButton(c.Key("new"), iconPlus, 13, p.faint, "新建歌单").Clicked() {
-			a.newPlaylist(nil)
+	collapsed := a.sidebarCollapsed(section)
+	ui.Row(c.Key("sec-" + section)).AlignItems(ui.Center).Gap(4).Margin(16, 4, 4, 4).Children(func() {
+		tip := "折叠" + title
+		rot := float32(0)
+		if collapsed {
+			tip = "展开" + title
+			rot = -90
+		}
+		b := ui.ButtonBase(c.Key("toggle")).Grow(1).Shrink(1).MinWidth(0).Height(24).Padding(0, 6).Gap(5).Radius(6).
+			AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(title).Tooltip(tip)
+		fg := p.faint
+		if b.Hovered() {
+			b.Background(p.hover)
+			fg = p.text
+		}
+		b.Children(func() {
+			ui.Icon(c.Key("chev"), iconDown).Size(11, 11).TextColor(fg).Shrink(0).
+				AnimatePose(ui.Pose{Rotate: rot}, ui.Snappy)
+			ui.Text(c, title).FontSize(11.5).FontWeight(600).TextColor(fg).SingleLine().Shrink(1).MinWidth(0)
+			if collapsed && count > 0 {
+				ui.Textf(c, "%d", count).FontSize(11).FontFeatures("tnum").TextColor(p.faint).Shrink(0)
+			}
+		})
+		if b.Clicked() {
+			a.toggleSidebarSection(section)
+			collapsed = a.sidebarCollapsed(section)
+		}
+		if trailing != nil {
+			trailing()
 		}
 	})
+	return collapsed
+}
+
+// pinnedPlaylistSection lists playlists the listener pinned above "我的歌单".
+func (a *app) pinnedPlaylistSection(c *ui.Context) {
+	entries := a.pinnedPlaylists()
+	if len(entries) == 0 {
+		return
+	}
+	if a.sidebarSectionHeader(c, sidebarSectionPinned, "置顶歌单", len(entries), nil) {
+		return
+	}
 	if a.settings.MyPlaylistGrid {
-		ui.Grid(c.Key(title + "-grid")).Columns(2).Gap(6).Children(func() {
-			for i := range lists {
-				a.myPlaylist(c, &lists[i], mine, true)
+		ui.Grid(c.Key("pinned-grid")).Columns(2).Gap(6).Children(func() {
+			for i, e := range entries {
+				a.myPlaylist(c, e.pl, e.mine, true, true, i, len(entries))
 			}
 		})
 		return
 	}
+	for i, e := range entries {
+		a.myPlaylist(c, e.pl, e.mine, false, true, i, len(entries))
+	}
+}
+
+// myPlaylists lists the listener's playlists in the sidebar: those they
+// made, if mine, with a button to make one and a menu to rename them.
+func (a *app) myPlaylists(c *ui.Context, section, title string, lists []spotify.Playlist, mine bool) {
+	if len(lists) == 0 {
+		return
+	}
+	visible := make([]*spotify.Playlist, 0, len(lists))
 	for i := range lists {
-		a.myPlaylist(c, &lists[i], mine, false)
+		if !a.isPlaylistPinned(lists[i].ID) {
+			visible = append(visible, &lists[i])
+		}
+	}
+	if len(visible) == 0 && !mine {
+		return
+	}
+	var trailing func()
+	if mine {
+		trailing = func() {
+			if iconButton(c.Key("new"), iconPlus, 13, a.pal.faint, "新建歌单").Clicked() {
+				a.newPlaylist(nil)
+			}
+		}
+	}
+	if a.sidebarSectionHeader(c, section, title, len(visible), trailing) {
+		return
+	}
+	if len(visible) == 0 {
+		ui.Text(c, "全部歌单已置顶").FontSize(12).TextColor(a.pal.faint).Margin(2, 10, 4, 10)
+		return
+	}
+	if a.settings.MyPlaylistGrid {
+		ui.Grid(c.Key(title + "-grid")).Columns(2).Gap(6).Children(func() {
+			for _, pl := range visible {
+				a.myPlaylist(c, pl, mine, true, false, -1, 0)
+			}
+		})
+		return
+	}
+	for _, pl := range visible {
+		a.myPlaylist(c, pl, mine, false, false, -1, 0)
 	}
 }
 
 // myPlaylist is one of the listener's lists in the sidebar: a row, or in the
 // grid a cover over its name.
-func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid bool) {
+func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid, pinned bool, pinIdx, pinCount int) {
+	p := a.pal
 	selected := a.route.page == pagePlaylist && a.route.playlist == pl.ID && !a.nowPlaying
-	b := ui.ButtonBase(c.Key(pl.ID)).Radius(10).FocusRing(false).Label(pl.Name)
+	key := pl.ID
+	if pinned {
+		key = "pinned-" + pl.ID
+	}
+	b := ui.ButtonBase(c.Key(key)).Radius(10).FocusRing(false).Label(pl.Name)
 	if grid {
 		b.Column().Padding(6).Gap(6).AlignItems(ui.Stretch)
 	} else {
 		b.Height(34).PaddingX(8).Gap(10).AlignItems(ui.Center).Justify(ui.Start)
 	}
 	a.styleSidebarItem(b, selected, b.Hovered())
+	pinColor := p.faint
+	if selected {
+		pinColor = p.accent
+	}
 	b.Children(func() {
 		if grid {
 			ui.Box(c).AspectRatio(1).Radius(6).Children(func() { a.listArt(c, pl, 200, 6) })
-			ui.Text(c, pl.Name).FontSize(12.5).SingleLine()
+			if pinned {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, iconPin).Size(10.5, 10.5).TextColor(pinColor).Shrink(0)
+					ui.Text(c, pl.Name).FontSize(12.5).SingleLine().Shrink(1).MinWidth(0)
+				})
+			} else {
+				ui.Text(c, pl.Name).FontSize(12.5).SingleLine()
+			}
 			return
 		}
 		if pl.Liked() {
@@ -898,11 +1112,34 @@ func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid bool) {
 		} else {
 			a.cover(c, pl.Cover(), 80, 22, 5)
 		}
-		ui.Text(c, pl.Name).FontSize(13).SingleLine().Shrink(1).MinWidth(0)
+		ui.Text(c, pl.Name).FontSize(13).SingleLine().Grow(1).Shrink(1).MinWidth(0)
+		if pinned {
+			ui.Icon(c, iconPin).Size(11.5, 11.5).TextColor(pinColor).Shrink(0)
+		}
 	})
-	switch {
-	case mine && !pl.Liked():
-		b.ContextMenu(func(m *ui.Menu) {
+	b.ContextMenu(func(m *ui.Menu) {
+		if pinned {
+			if m.Item("取消置顶").Chosen() {
+				a.togglePlaylistPinned(pl.ID)
+			}
+			if pinIdx > 0 {
+				if m.Item("上移").Chosen() {
+					a.movePinnedPlaylist(pl.ID, -1)
+				}
+			}
+			if pinIdx >= 0 && pinIdx < pinCount-1 {
+				if m.Item("下移").Chosen() {
+					a.movePinnedPlaylist(pl.ID, 1)
+				}
+			}
+		} else {
+			if m.Item("置顶歌单").Chosen() {
+				a.togglePlaylistPinned(pl.ID)
+			}
+		}
+		switch {
+		case mine && !pl.Liked():
+			m.Separator()
 			if m.Item("重命名…").Chosen() {
 				a.startRename(pl)
 			}
@@ -910,14 +1147,13 @@ func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid bool) {
 			if m.Item("删除歌单…").Chosen() {
 				a.confirmDelete(pl)
 			}
-		})
-	case !mine:
-		b.ContextMenu(func(m *ui.Menu) {
+		case !mine:
+			m.Separator()
 			if m.Item("取消收藏").Chosen() {
 				a.toggleSaved(pl)
 			}
-		})
-	}
+		}
+	})
 	if b.Clicked() {
 		a.open(route{page: pagePlaylist, playlist: pl.ID})
 	}

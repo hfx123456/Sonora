@@ -329,15 +329,26 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 						a.toggleSaved(pl)
 					}
 				}
-				if mine := a.editable(pl.ID); mine != nil {
+				mine := a.editable(pl.ID)
+				if mine != nil || a.inLibrary(pl.ID) {
 					more := iconButton(c.Key("more"), iconMore, 18, p.muted, "更多")
 					more.Menu(func(m *ui.Menu) {
-						if m.Item("重命名…").Chosen() {
-							a.startRename(mine)
+						pinLabel := "置顶歌单"
+						if a.isPlaylistPinned(pl.ID) {
+							pinLabel = "取消置顶"
 						}
-						m.Separator()
-						if m.Item("删除歌单…").Chosen() {
-							a.confirmDelete(mine)
+						if m.Item(pinLabel).Chosen() {
+							a.togglePlaylistPinned(pl.ID)
+						}
+						if mine != nil {
+							m.Separator()
+							if m.Item("重命名…").Chosen() {
+								a.startRename(mine)
+							}
+							m.Separator()
+							if m.Item("删除歌单…").Chosen() {
+								a.confirmDelete(mine)
+							}
 						}
 					})
 				}

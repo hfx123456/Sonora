@@ -322,3 +322,115 @@ func TestMiniViewsRenderAndInteractions(t *testing.T) {
 		saveSnap("prog-"+opt.id+".png", tb)
 	}
 }
+
+func TestMiniMorphMathStageAndRender(t *testing.T) {
+	primary := mygo.Display{
+		Primary:  true,
+		Bounds:   mygo.Rectangle{X: 0, Y: 0, Width: 1920, Height: 1080},
+		WorkArea: mygo.Rectangle{X: 0, Y: 0, Width: 1920, Height: 1040},
+	}
+	secondary := mygo.Display{
+		Bounds:   mygo.Rectangle{X: 1920, Y: 0, Width: 1920, Height: 1080},
+		WorkArea: mygo.Rectangle{X: 1920, Y: 0, Width: 1920, Height: 1040},
+	}
+
+	// Easing endpoints & monotonicity.
+	if e0, e1 := miniMorphEase(0), miniMorphEase(1); e0 != 0 || e1 != 1 {
+		t.Fatalf("miniMorphEase endpoints: (0)=%v (1)=%v", e0, e1)
+	}
+	if prev := float32(-1); func() bool {
+		for i := 0; i <= 20; i++ {
+			cur := miniMorphEase(float32(i) / 20)
+			if cur < prev {
+				return true
+			}
+			prev = cur
+		}
+		return false
+	}() {
+		t.Fatal("miniMorphEase must be monotonically increasing")
+	}
+
+	// Opacity handoff curves for both directions.
+	ov0, main0 := miniMorphOpacities(miniMorphToMini, 0)
+	ov1, main1 := miniMorphOpacities(miniMorphToMini, 1)
+	if ov0 != 1 || main0 != 1 || ov1 != 0 || main1 != 0 {
+		t.Fatalf("ToMini opacities: start=(%v,%v) end=(%v,%v)", ov0, main0, ov1, main1)
+	}
+	ov0, main0 = miniMorphOpacities(miniMorphToMain, 0)
+	ov1, main1 = miniMorphOpacities(miniMorphToMain, 1)
+	if ov0 != 1 || main0 != 0 || ov1 != 0 || main1 != 1 {
+		t.Fatalf("ToMain opacities: start=(%v,%v) end=(%v,%v)", ov0, main0, ov1, main1)
+	}
+
+	// Same-display stage covers both main window and mini card cleanly inside display.
+	mainRect := mygo.Rectangle{X: 200, Y: 100, Width: 1180, Height: 780}
+	miniCard := mygo.Rectangle{X: 1520, Y: 940, Width: 360, Height: 56}
+	stage, f, to := miniMorphStageBounds(mainRect, miniCard, []mygo.Display{primary}, primary)
+	if stage.X < 0 || stage.Y < 0 || stage.X+stage.Width > 1920 || stage.Y+stage.Height > 1080 {
+		t.Fatalf("stage escaped display: %+v", stage)
+	}
+	if f.X < stage.X || to.X+to.Width > stage.X+stage.Width {
+		t.Fatalf("stage %+v does not cover from=%+v to=%+v", stage, f, to)
+	}
+
+	// Cross-display stage stays confined to destination display (no cross-DPI span).
+	mainOnRight := mygo.Rectangle{X: 2100, Y: 100, Width: 1180, Height: 780}
+	stage2, f2, to2 := miniMorphStageBounds(mainOnRight, miniCard, []mygo.Display{primary, secondary}, primary)
+	if stage2.X < 0 || stage2.X+stage2.Width > 1920 {
+		t.Fatalf("cross-display stage must stay on destination display: %+v", stage2)
+	}
+	if f2.X < stage2.X || to2.X+to2.Width > stage2.X+stage2.Width {
+		t.Fatalf("cross-display stage %+v missing projected rects from=%+v to=%+v", stage2, f2, to2)
+	}
+
+	// Render miniMorphView headless in both directions and both styles without panics.
+	a := newTestApp()
+	a.settings = defaultSettings()
+	coverURL := "https://example.invalid/cover.png"
+	bmp := testCoverBitmap(t)
+	a.art.art[spotify.Sized(coverURL, 240)] = &artwork{bmp: bmp, tint: ui.Hex("#e5484d"), used: time.Now()}
+	a.art.art[spotify.Sized(coverURL, 120)] = &artwork{bmp: bmp, tint: ui.Hex("#e5484d"), used: time.Now()}
+	a.pl.Cue([]spotify.Track{{ID: "t1", Name: "Song", Artists: []spotify.Artist{{Name: "Artist"}}, Album: spotify.Album{PicURL: coverURL}, Duration: 240000}})
+
+	for _, tc := range []struct {
+		dir   miniMorphDir
+		style string
+	}{
+		{miniMorphToMini, miniStyleBar},
+		{miniMorphToMini, miniStyleCard},
+		{miniMorphToMain, miniStyleBar},
+		{miniMorphToMain, miniStyleCard},
+	} {
+		a.mini.morph = miniMorphState{
+			dir:       tc.dir,
+			style:     tc.style,
+			startedAt: time.Now().Add(-miniMorphDuration / 2),
+			stage:     mygo.Rectangle{X: 0, Y: 0, Width: 1200, Height: 800},
+			from:      mygo.Rectangle{X: 60, Y: 40, Width: 900, Height: 600},
+			to:        mygo.Rectangle{X: 800, Y: 680, Width: 360, Height: 56},
+		}
+		if tc.dir == miniMorphToMain {
+			a.mini.morph.from, a.mini.morph.to = a.mini.morph.to, a.mini.morph.from
+		}
+		tm := ui.NewTester(a.miniMorphView, 1200, 800)
+		tm.Frame()
+		tm.SetDark(true)
+		tm.Frame()
+	}
+
+	// Verify expired morph finishes cleanly.
+	a.mini.morph = miniMorphState{
+		dir:       miniMorphToMini,
+		style:     miniStyleBar,
+		startedAt: time.Now().Add(-miniMorphDuration * 2),
+		stage:     mygo.Rectangle{X: 0, Y: 0, Width: 1200, Height: 800},
+		from:      mainRect,
+		to:        miniCard,
+	}
+	tm := ui.NewTester(a.miniMorphView, 1200, 800)
+	tm.Frame()
+	if a.mini.morph.active() {
+		t.Fatal("expired morph should auto-finish on render")
+	}
+}

@@ -29,10 +29,12 @@ func (a *app) toggleSaved(pl *spotify.Playlist) {
 	uri, user, gen := pl.ID, a.profile.UserID, a.accountGen
 	kept := *pl
 	kept.Tracks = nil
+	pinnedAt := -1
 	if save {
 		a.saved = append([]spotify.Playlist{kept}, a.saved...)
 	} else {
 		a.saved = slices.DeleteFunc(slices.Clone(a.saved), func(p spotify.Playlist) bool { return p.ID == uri })
+		pinnedAt = a.unpinPlaylist(uri)
 	}
 	go func() {
 		var err error
@@ -50,6 +52,7 @@ func (a *app) toggleSaved(pl *spotify.Playlist) {
 					a.saved = slices.DeleteFunc(slices.Clone(a.saved), func(p spotify.Playlist) bool { return p.ID == uri })
 				} else if !a.isSaved(uri) {
 					a.saved = append([]spotify.Playlist{kept}, a.saved...)
+					a.restorePinnedPlaylist(uri, pinnedAt)
 				}
 				a.toast = "操作失败，请稍后再试"
 				return

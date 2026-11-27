@@ -132,6 +132,7 @@ func (a *app) submitName() {
 				at = 1
 			}
 			a.mine = slices.Insert(a.mine, at, *pl)
+			a.expandSidebarSection(sidebarSectionMine)
 			pl.Tracks = nil
 			a.playlists[pl.ID] = pl
 			a.cachePlaylistSoon(pl.ID)
@@ -160,6 +161,7 @@ func (a *app) deleteChosen() {
 	}
 	pl, user := a.mine[i], a.profile.UserID
 	a.mine = slices.Delete(slices.Clone(a.mine), i, i+1)
+	pinnedAt := a.unpinPlaylist(id)
 	// Leave no way back to its page, and leave it for the page before.
 	gone := func(r route) bool { return r.page == pagePlaylist && r.playlist == id }
 	a.history = slices.DeleteFunc(a.history, gone)
@@ -180,6 +182,7 @@ func (a *app) deleteChosen() {
 			}
 			if err != nil {
 				a.mine = slices.Insert(a.mine, min(i, len(a.mine)), pl)
+				a.restorePinnedPlaylist(id, pinnedAt)
 				a.toast = "删除失败，请稍后再试"
 				return
 			}
