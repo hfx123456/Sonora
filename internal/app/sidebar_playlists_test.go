@@ -2,6 +2,9 @@ package app
 
 import (
 	"encoding/json"
+	"image"
+	"image/png"
+	"os"
 	"slices"
 	"testing"
 
@@ -244,5 +247,53 @@ func TestPinLikedSongsAndDetailMenuAndGridAndPersistence(t *testing.T) {
 	}
 	if !slices.Equal(loaded.PinnedPlaylists, []string{pl10, spotify.LikedURI, pl11}) {
 		t.Fatalf("PinnedPlaylists JSON round-trip = %v", loaded.PinnedPlaylists)
+	}
+}
+
+func TestSidebarSectionAlignmentAndCompactCollapsedSpacing(t *testing.T) {
+	a := editTestApp()
+	a.route = route{page: pageHome}
+	a.homeLoading = true
+	a.followed = []spotify.ArtistCard{{ID: "ar1", Name: "陶喆"}}
+	a.settings.PinnedPlaylists = []string{spotify.LikedURI}
+	a.settings.SidebarCollapsed = map[string]bool{
+		sidebarSectionMine:     true,
+		sidebarSectionSaved:    true,
+		sidebarSectionFollowed: true,
+	}
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Frame()
+
+	// Section headers and playlist rows share the same horizontal container edge.
+	pinHdr, ok1 := tt.Find("置顶歌单")
+	likedRow, ok2 := tt.Find("我喜欢的音乐")
+	mineHdr, ok3 := tt.Find("我的歌单")
+	savedHdr, ok4 := tt.Find("我的收藏")
+	followedHdr, ok5 := tt.Find("关注的艺人")
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
+		t.Fatalf("missing elements: %v %v %v %v %v", ok1, ok2, ok3, ok4, ok5)
+	}
+	if pinHdr.X != likedRow.X || mineHdr.X != likedRow.X || savedHdr.X != likedRow.X {
+		t.Fatalf("left edges misaligned: pinHdr.X=%v likedRow.X=%v mineHdr.X=%v savedHdr.X=%v",
+			pinHdr.X, likedRow.X, mineHdr.X, savedHdr.X)
+	}
+	// Collapsed consecutive headers must stay compact (<= 8px gap, not 24px).
+	gap1 := savedHdr.Y - (mineHdr.Y + mineHdr.H)
+	gap2 := followedHdr.Y - (savedHdr.Y + savedHdr.H)
+	if gap1 < 0 || gap1 > 8 || gap2 < 0 || gap2 > 8 {
+		t.Fatalf("collapsed section spacing too large: gap1=%v gap2=%v", gap1, gap2)
+	}
+
+	if out := os.Getenv("SIDEBAR_SNAP"); out != "" {
+		img := tt.Image()
+		crop := img.SubImage(image.Rect(0, 220, int(sidebarWidth), 560))
+		f, err := os.Create(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, crop); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

@@ -375,18 +375,18 @@ func (a *app) artistsFrom(c *ui.Context, artists []spotify.Artist, i int, size f
 }
 
 // followedArtists lists the artists the listener follows, in the sidebar.
-func (a *app) followedArtists(c *ui.Context) {
+func (a *app) followedArtists(c *ui.Context, prevHadItems bool) {
 	if len(a.followed) == 0 {
 		return
 	}
 	p := a.pal
-	if a.sidebarSectionHeader(c, sidebarSectionFollowed, "关注的艺人", len(a.followed), nil) {
+	if a.sidebarSectionHeader(c, sidebarSectionFollowed, "关注的艺人", len(a.followed), prevHadItems, nil) {
 		return
 	}
 	for i := range a.followed {
 		ar := &a.followed[i]
 		selected := a.route.page == pageArtist && a.route.artist == ar.ID && !a.nowPlaying
-		b := ui.ButtonBase(c.Key(ar.ID)).Height(34).PaddingX(8).Gap(10).Radius(10).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(ar.Name)
+		b := ui.ButtonBase(c.Key(ar.ID)).Height(34).PaddingX(10).Gap(10).Radius(10).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(ar.Name)
 		a.styleSidebarItem(b, selected, b.Hovered())
 		b.Children(func() {
 			a.avatar(c, ar.Avatar, 22, p.press)

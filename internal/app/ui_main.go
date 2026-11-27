@@ -345,10 +345,17 @@ func (a *app) sidebar(c *ui.Context) {
 			if a.searched != "" {
 				a.navItem(c, iconSearch, "搜索结果", route{page: pageSearch})
 			}
-			a.pinnedPlaylistSection(c)
-			a.myPlaylists(c, sidebarSectionMine, "我的歌单", a.mine, true)
-			a.myPlaylists(c, sidebarSectionSaved, "我的收藏", a.saved, false)
-			a.followedArtists(c)
+			prevHadItems := true // top nav items sit directly above the first section
+			if shown, expanded := a.pinnedPlaylistSection(c, prevHadItems); shown {
+				prevHadItems = expanded
+			}
+			if shown, expanded := a.myPlaylists(c, sidebarSectionMine, "我的歌单", a.mine, true, prevHadItems); shown {
+				prevHadItems = expanded
+			}
+			if shown, expanded := a.myPlaylists(c, sidebarSectionSaved, "我的收藏", a.saved, false, prevHadItems); shown {
+				prevHadItems = expanded
+			}
+			a.followedArtists(c, prevHadItems)
 		})
 
 		a.updateBadge(c)

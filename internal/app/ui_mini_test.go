@@ -351,16 +351,38 @@ func TestMiniMorphMathStageAndRender(t *testing.T) {
 		t.Fatal("miniMorphEase must be monotonically increasing")
 	}
 
-	// Opacity handoff curves for both directions.
-	ov0, main0 := miniMorphOpacities(miniMorphToMini, 0)
-	ov1, main1 := miniMorphOpacities(miniMorphToMini, 1)
-	if ov0 != 1 || main0 != 1 || ov1 != 0 || main1 != 0 {
-		t.Fatalf("ToMini opacities: start=(%v,%v) end=(%v,%v)", ov0, main0, ov1, main1)
+	// Crossfade & overlay handoff curves for both directions.
+	ov0, mix0 := miniMorphCrossfade(miniMorphToMini, 0)
+	ov1, mix1 := miniMorphCrossfade(miniMorphToMini, 1)
+	if ov0 != 1 || mix0 != 0 || ov1 != 0 || mix1 != 1 {
+		t.Fatalf("ToMini crossfade: start=(%v,%v) end=(%v,%v)", ov0, mix0, ov1, mix1)
 	}
-	ov0, main0 = miniMorphOpacities(miniMorphToMain, 0)
-	ov1, main1 = miniMorphOpacities(miniMorphToMain, 1)
-	if ov0 != 1 || main0 != 0 || ov1 != 0 || main1 != 1 {
-		t.Fatalf("ToMain opacities: start=(%v,%v) end=(%v,%v)", ov0, main0, ov1, main1)
+	ov0, mix0 = miniMorphCrossfade(miniMorphToMain, 0)
+	ov1, mix1 = miniMorphCrossfade(miniMorphToMain, 1)
+	if ov0 != 1 || mix0 != 1 || ov1 != 0 || mix1 != 0 {
+		t.Fatalf("ToMain crossfade: start=(%v,%v) end=(%v,%v)", ov0, mix0, ov1, mix1)
+	}
+
+	// Capture inset cropping removes exact DPI-scaled miniShadowPad.
+	src := image.NewRGBA(image.Rect(0, 0, 816, 208)) // 2x DPI of 408x104 mini bar window
+	cropped := cropCaptureInset(src, miniShadowPad, mygo.Rectangle{Width: 408, Height: 104})
+	if cb := cropped.Bounds(); cb.Dx() != 720 || cb.Dy() != 112 {
+		t.Fatalf("cropCaptureInset = %dx%d, want 720x112", cb.Dx(), cb.Dy())
+	}
+
+	// Frame 0 holds at t=0 so the overlay presents over the source window first;
+	// frame 1 arms startedAt so no opening frames are skipped and no blink occurs.
+	var st miniMorphState
+	st.dir = miniMorphToMini
+	now := time.Now()
+	if t0, active := st.progress(now); !active || t0 != 0 || !st.startedAt.IsZero() {
+		t.Fatalf("frame 0 progress = (%v, %v, started=%v), want (0, true, zero)", t0, active, st.startedAt)
+	}
+	if t1, active := st.progress(now.Add(16 * time.Millisecond)); !active || t1 != 0 || st.startedAt.IsZero() {
+		t.Fatalf("frame 1 progress = (%v, %v, started=%v), want (0, true, armed)", t1, active, st.startedAt)
+	}
+	if tMid, active := st.progress(now.Add(16*time.Millisecond + miniMorphDuration/2)); !active || tMid < 0.45 || tMid > 0.55 {
+		t.Fatalf("mid frame progress = (%v, %v), want (~0.5, true)", tMid, active)
 	}
 
 	// Same-display stage covers both main window and mini card cleanly inside display.
@@ -384,7 +406,7 @@ func TestMiniMorphMathStageAndRender(t *testing.T) {
 		t.Fatalf("cross-display stage %+v missing projected rects from=%+v to=%+v", stage2, f2, to2)
 	}
 
-	// Render miniMorphView headless in both directions and both styles without panics.
+	// Render miniMorphView headless with real snapshot bitmaps in both directions & styles.
 	a := newTestApp()
 	a.settings = defaultSettings()
 	coverURL := "https://example.invalid/cover.png"
@@ -409,6 +431,8 @@ func TestMiniMorphMathStageAndRender(t *testing.T) {
 			stage:     mygo.Rectangle{X: 0, Y: 0, Width: 1200, Height: 800},
 			from:      mygo.Rectangle{X: 60, Y: 40, Width: 900, Height: 600},
 			to:        mygo.Rectangle{X: 800, Y: 680, Width: 360, Height: 56},
+			mainShot:  bmp,
+			miniShot:  bmp,
 		}
 		if tc.dir == miniMorphToMain {
 			a.mini.morph.from, a.mini.morph.to = a.mini.morph.to, a.mini.morph.from

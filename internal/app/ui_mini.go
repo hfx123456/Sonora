@@ -35,7 +35,6 @@ type miniState struct {
 	saveTimer *time.Timer
 	scrub     scrubState
 	morph     miniMorphState
-	revealAt  time.Time
 }
 
 // titlebarMiniButton renders the top-right window-mode button beside the native
@@ -77,16 +76,9 @@ func (a *app) titlebarMiniButton(c *ui.Context, darkOnOverlay bool) {
 	case b.Hovered():
 		bg = fore.Alpha(0.10)
 	}
-	b.Background(b.AnimateColor("mini-btn-bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
-	iconPose := ui.Pose{Scale: 1}
-	switch {
-	case b.Pressed():
-		iconPose = ui.Pose{Scale: 0.84, Y: 1}
-	case b.Hovered():
-		iconPose = ui.Pose{Scale: 1.08}
-	}
+	b.Background(b.AnimateColor("mini-btn-bg", bg, ui.Animation{Duration: 110 * time.Millisecond}))
 	b.Children(func() {
-		ui.Icon(c.Key("mini-btn-icon"), iconMiniCaption).Size(13, 13).AnimatePose(iconPose, ui.Snappy)
+		ui.Icon(c.Key("mini-btn-icon"), iconMiniCaption).Size(13, 13)
 	})
 	if b.Clicked() {
 		a.enterMiniMode()
@@ -94,7 +86,7 @@ func (a *app) titlebarMiniButton(c *ui.Context, darkOnOverlay bool) {
 }
 
 // enterMiniMode switches directly from the full main window to the floating
-// mini player with a smooth shrink-to-mini window morph animation.
+// mini player with a smooth real-snapshot shrink-to-mini window morph animation.
 func (a *app) enterMiniMode() {
 	if a.splash.win != nil && !a.splash.done {
 		a.finishSplash()
@@ -110,16 +102,26 @@ func (a *app) enterMiniMode() {
 		}
 		return
 	}
-	style := a.settings.effectiveMiniStyle()
-	miniRect := miniBounds(style, a.settings.MiniPosition, a.settings.MiniPositionSet, mygo.Screen.Displays(), mygo.Screen.PrimaryDisplay())
-	mainRect := a.mainWindowMorphBounds()
-	// Pre-create and position the hidden mini window before starting the morph
-	// timer so GPU surface creation never causes a mid-flight hitch.
-	a.ensureMiniWindow(miniRect, style)
+	if a.mini.morph.active() {
+		return
+	}
 	a.settings.MiniPlayer = true
 	a.settings.save()
 	a.redraw()
-	a.startMiniMorph(miniMorphToMini, mainRect, insetRect(miniRect, miniShadowPad), miniRect, style)
+	// Defer snapshot capture + overlay creation to the next main-loop turn so
+	// we are cleanly outside a.view()'s active frame.
+	a.post(func() {
+		if a.quitting || !a.settings.MiniPlayer || a.win == nil {
+			return
+		}
+		style := a.settings.effectiveMiniStyle()
+		miniRect := miniBounds(style, a.settings.MiniPosition, a.settings.MiniPositionSet, mygo.Screen.Displays(), mygo.Screen.PrimaryDisplay())
+		mainRect := a.mainWindowMorphBounds()
+		mainShot := captureWindowBitmap(a.win, 0, mainRect)
+		a.ensureMiniWindow(miniRect, style)
+		miniShot := captureWindowBitmap(a.mini.win, miniShadowPad, miniRect)
+		a.startMiniMorph(miniMorphToMini, mainRect, insetRect(miniRect, miniShadowPad), miniRect, style, mainShot, miniShot)
+	})
 }
 
 // miniSmokeColor ensures the comet progress bar & smoke stay luminous and
@@ -402,21 +404,32 @@ func (a *app) setMiniPlayerEnabled(on bool) {
 }
 
 // restoreMainFromMini switches back from mini mode to the normal main window
-// with a smooth expand-to-main window morph animation.
+// with a smooth real-snapshot expand-to-main window morph animation.
 func (a *app) restoreMainFromMini() {
 	if !a.canAnimateMiniMorph() || a.mini.win == nil {
 		a.setMiniPlayerEnabled(false)
 		a.showMain()
 		return
 	}
+	if a.mini.morph.active() {
+		return
+	}
 	a.keepMiniPosition()
-	miniWinRect := a.mini.win.Bounds()
-	style := a.settings.effectiveMiniStyle()
-	mainRect := a.mainWindowMorphBounds()
 	a.settings.MiniPlayer = false
 	a.settings.save()
 	a.redraw()
-	a.startMiniMorph(miniMorphToMain, insetRect(miniWinRect, miniShadowPad), mainRect, miniWinRect, style)
+	a.post(func() {
+		if a.quitting || a.settings.MiniPlayer || a.win == nil || a.mini.win == nil {
+			a.showMain()
+			return
+		}
+		miniWinRect := a.mini.win.Bounds()
+		style := a.settings.effectiveMiniStyle()
+		mainRect := a.mainWindowMorphBounds()
+		miniShot := captureWindowBitmap(a.mini.win, miniShadowPad, miniWinRect)
+		mainShot := captureWindowBitmap(a.win, 0, mainRect)
+		a.startMiniMorph(miniMorphToMain, insetRect(miniWinRect, miniShadowPad), mainRect, miniWinRect, style, mainShot, miniShot)
+	})
 }
 
 // closeMiniWindow handles closing the frameless mini window consistently
@@ -522,9 +535,6 @@ func (a *app) miniView(c *ui.Context) {
 	c.Root().Background(ui.Transparent)
 
 	root := ui.Box(c.Key("mini-root")).Fill().Padding(miniShadowPad)
-	if alpha := a.miniRevealAlpha(c); alpha < 1 {
-		root.Opacity(alpha)
-	}
 	root.Children(func() {
 		if a.settings.effectiveMiniStyle() == miniStyleCard {
 			a.miniCardView(c, pal)
@@ -967,13 +977,10 @@ func miniActionBtn(c *ui.Context, icon *ui.SVG, iconSize, boxSize float32, col, 
 		curCol = hoverCol
 		bg = hoverBG
 	}
-	b.TextColor(curCol).Background(b.AnimateColor("mini-act-bg", bg, ui.Animation{Duration: 120 * time.Millisecond}))
-	pose := ui.Pose{Scale: 1}
-	switch {
-	case b.Pressed():
-		pose.Scale = 0.86
-	case b.Hovered():
-		pose.Scale = 1.08
+	b.TextColor(curCol).Background(b.AnimateColor("mini-act-bg", bg, ui.Animation{Duration: 110 * time.Millisecond}))
+	pose := ui.Pose{}
+	if b.Pressed() {
+		pose.Scale = 0.90
 	}
 	b.AnimatePose(pose, ui.Snappy)
 	b.Children(func() { ui.Icon(c, icon).Size(iconSize, iconSize) })

@@ -972,18 +972,29 @@ func (a *app) pinnedPlaylists() []pinnedEntry {
 }
 
 // sidebarSectionHeader renders a collapsible sidebar section title with a
-// chevron, an item count badge while collapsed, and optional trailing actions.
-func (a *app) sidebarSectionHeader(c *ui.Context, section, title string, count int, trailing func()) bool {
+// chevron aligned to the x=10 left axis of nav/playlist icons, a compact count
+// badge while collapsed, and optional trailing actions aligned to right-16.
+func (a *app) sidebarSectionHeader(c *ui.Context, section, title string, count int, prevHadItems bool, trailing func()) bool {
 	p := a.pal
 	collapsed := a.sidebarCollapsed(section)
-	ui.Row(c.Key("sec-" + section)).AlignItems(ui.Center).Gap(4).Margin(16, 4, 4, 4).Children(func() {
+	topMargin := float32(0)
+	if prevHadItems {
+		topMargin = 10
+	}
+	bottomMargin := float32(0)
+	if !collapsed {
+		bottomMargin = 2
+	}
+	ui.Row(c.Key("sec-" + section)).AlignItems(ui.Center).Gap(4).Margin(topMargin, 0, bottomMargin, 0).Children(func() {
 		tip := "折叠" + title
 		rot := float32(0)
 		if collapsed {
 			tip = "展开" + title
 			rot = -90
 		}
-		b := ui.ButtonBase(c.Key("toggle")).Grow(1).Shrink(1).MinWidth(0).Height(24).Padding(0, 6).Gap(5).Radius(6).
+		// PaddingLeft=7.5 + iconDown's ~2.5px internal glyph inset aligns the
+		// chevron's left stroke cleanly on x=10 with nav icons and covers below.
+		b := ui.ButtonBase(c.Key("toggle")).Grow(1).Shrink(1).MinWidth(0).Height(26).Padding(0, 6, 0, 7.5).Gap(6).Radius(8).
 			AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(title).Tooltip(tip)
 		fg := p.faint
 		if b.Hovered() {
@@ -993,7 +1004,7 @@ func (a *app) sidebarSectionHeader(c *ui.Context, section, title string, count i
 		b.Children(func() {
 			ui.Icon(c.Key("chev"), iconDown).Size(11, 11).TextColor(fg).Shrink(0).
 				AnimatePose(ui.Pose{Rotate: rot}, ui.Snappy)
-			ui.Text(c, title).FontSize(11.5).FontWeight(600).TextColor(fg).SingleLine().Shrink(1).MinWidth(0)
+			ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(fg).SingleLine().Shrink(1).MinWidth(0)
 			if collapsed && count > 0 {
 				ui.Textf(c, "%d", count).FontSize(11).FontFeatures("tnum").TextColor(p.faint).Shrink(0)
 			}
@@ -1010,13 +1021,13 @@ func (a *app) sidebarSectionHeader(c *ui.Context, section, title string, count i
 }
 
 // pinnedPlaylistSection lists playlists the listener pinned above "我的歌单".
-func (a *app) pinnedPlaylistSection(c *ui.Context) {
+func (a *app) pinnedPlaylistSection(c *ui.Context, prevHadItems bool) (shown, expanded bool) {
 	entries := a.pinnedPlaylists()
 	if len(entries) == 0 {
-		return
+		return false, false
 	}
-	if a.sidebarSectionHeader(c, sidebarSectionPinned, "置顶歌单", len(entries), nil) {
-		return
+	if a.sidebarSectionHeader(c, sidebarSectionPinned, "置顶歌单", len(entries), prevHadItems, nil) {
+		return true, false
 	}
 	if a.settings.MyPlaylistGrid {
 		ui.Grid(c.Key("pinned-grid")).Columns(2).Gap(6).Children(func() {
@@ -1024,18 +1035,19 @@ func (a *app) pinnedPlaylistSection(c *ui.Context) {
 				a.myPlaylist(c, e.pl, e.mine, true, true, i, len(entries))
 			}
 		})
-		return
+		return true, true
 	}
 	for i, e := range entries {
 		a.myPlaylist(c, e.pl, e.mine, false, true, i, len(entries))
 	}
+	return true, true
 }
 
 // myPlaylists lists the listener's playlists in the sidebar: those they
 // made, if mine, with a button to make one and a menu to rename them.
-func (a *app) myPlaylists(c *ui.Context, section, title string, lists []spotify.Playlist, mine bool) {
+func (a *app) myPlaylists(c *ui.Context, section, title string, lists []spotify.Playlist, mine, prevHadItems bool) (shown, expanded bool) {
 	if len(lists) == 0 {
-		return
+		return false, false
 	}
 	visible := make([]*spotify.Playlist, 0, len(lists))
 	for i := range lists {
@@ -1044,22 +1056,33 @@ func (a *app) myPlaylists(c *ui.Context, section, title string, lists []spotify.
 		}
 	}
 	if len(visible) == 0 && !mine {
-		return
+		return false, false
 	}
 	var trailing func()
 	if mine {
 		trailing = func() {
-			if iconButton(c.Key("new"), iconPlus, 13, a.pal.faint, "新建歌单").Clicked() {
+			p := a.pal
+			// 24x24 button with MarginRight(4) centers "+" at right-16, matching
+			// the trailing pin icon on pinned playlist rows.
+			add := ui.ButtonBase(c.Key("new")).Size(24, 24).Margin(0, 4, 0, 0).Shrink(0).Center().Radius(7).
+				FocusRing(false).Label("新建歌单").Tooltip("新建歌单")
+			fg := p.faint
+			if add.Hovered() {
+				add.Background(p.hover)
+				fg = p.text
+			}
+			add.Children(func() { ui.Icon(c, iconPlus).Size(13, 13).TextColor(fg) })
+			if add.Clicked() {
 				a.newPlaylist(nil)
 			}
 		}
 	}
-	if a.sidebarSectionHeader(c, section, title, len(visible), trailing) {
-		return
+	if a.sidebarSectionHeader(c, section, title, len(visible), prevHadItems, trailing) {
+		return true, false
 	}
 	if len(visible) == 0 {
-		ui.Text(c, "全部歌单已置顶").FontSize(12).TextColor(a.pal.faint).Margin(2, 10, 4, 10)
-		return
+		ui.Text(c, "全部歌单已置顶").FontSize(12).TextColor(a.pal.faint).Margin(2, 10, 2, 10)
+		return true, true
 	}
 	if a.settings.MyPlaylistGrid {
 		ui.Grid(c.Key(title + "-grid")).Columns(2).Gap(6).Children(func() {
@@ -1067,11 +1090,12 @@ func (a *app) myPlaylists(c *ui.Context, section, title string, lists []spotify.
 				a.myPlaylist(c, pl, mine, true, false, -1, 0)
 			}
 		})
-		return
+		return true, true
 	}
 	for _, pl := range visible {
 		a.myPlaylist(c, pl, mine, false, false, -1, 0)
 	}
+	return true, true
 }
 
 // myPlaylist is one of the listener's lists in the sidebar: a row, or in the
@@ -1087,7 +1111,9 @@ func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid, pinned
 	if grid {
 		b.Column().Padding(6).Gap(6).AlignItems(ui.Stretch)
 	} else {
-		b.Height(34).PaddingX(8).Gap(10).AlignItems(ui.Center).Justify(ui.Start)
+		// PaddingX(10) aligns covers cleanly with navItem icons (x=10) and
+		// aligns the trailing 12px pin icon center at right-16.
+		b.Height(34).PaddingX(10).Gap(10).AlignItems(ui.Center).Justify(ui.Start)
 	}
 	a.styleSidebarItem(b, selected, b.Hovered())
 	pinColor := p.faint
@@ -1108,13 +1134,13 @@ func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid, pinned
 			return
 		}
 		if pl.Liked() {
-			ui.Box(c).Size(22, 22).Children(func() { likedArt(c, 5, 12) })
+			ui.Box(c).Size(22, 22).Shrink(0).Children(func() { likedArt(c, 5, 12) })
 		} else {
-			a.cover(c, pl.Cover(), 80, 22, 5)
+			a.cover(c, pl.Cover(), 80, 22, 5).Shrink(0)
 		}
 		ui.Text(c, pl.Name).FontSize(13).SingleLine().Grow(1).Shrink(1).MinWidth(0)
 		if pinned {
-			ui.Icon(c, iconPin).Size(11.5, 11.5).TextColor(pinColor).Shrink(0)
+			ui.Icon(c, iconPin).Size(12, 12).TextColor(pinColor).Shrink(0)
 		}
 	})
 	b.ContextMenu(func(m *ui.Menu) {
