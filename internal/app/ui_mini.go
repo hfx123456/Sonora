@@ -86,7 +86,7 @@ func (a *app) titlebarMiniButton(c *ui.Context, darkOnOverlay bool) {
 }
 
 // enterMiniMode switches directly from the full main window to the floating
-// mini player with a smooth real-snapshot shrink-to-mini window morph animation.
+// mini player with a zero-hitch GPU shrink-to-mini morph animation.
 func (a *app) enterMiniMode() {
 	if a.splash.win != nil && !a.splash.done {
 		a.finishSplash()
@@ -106,22 +106,13 @@ func (a *app) enterMiniMode() {
 		return
 	}
 	a.settings.MiniPlayer = true
-	a.settings.save()
-	a.redraw()
-	// Defer snapshot capture + overlay creation to the next main-loop turn so
-	// we are cleanly outside a.view()'s active frame.
-	a.post(func() {
-		if a.quitting || !a.settings.MiniPlayer || a.win == nil {
-			return
-		}
-		style := a.settings.effectiveMiniStyle()
-		miniRect := miniBounds(style, a.settings.MiniPosition, a.settings.MiniPositionSet, mygo.Screen.Displays(), mygo.Screen.PrimaryDisplay())
-		mainRect := a.mainWindowMorphBounds()
-		mainShot := captureWindowBitmap(a.win, 0, mainRect)
-		a.ensureMiniWindow(miniRect, style)
-		miniShot := captureWindowBitmap(a.mini.win, miniShadowPad, miniRect)
-		a.startMiniMorph(miniMorphToMini, mainRect, insetRect(miniRect, miniShadowPad), miniRect, style, mainShot, miniShot)
-	})
+	style := a.settings.effectiveMiniStyle()
+	miniRect := miniBounds(style, a.settings.MiniPosition, a.settings.MiniPositionSet, mygo.Screen.Displays(), mygo.Screen.PrimaryDisplay())
+	mainRect := a.mainWindowMorphBounds()
+	// Ensure mini window exists (hidden) before flight starts; zero disk I/O
+	// and zero CapturePage CPU stalls on click.
+	a.ensureMiniWindow(miniRect, style)
+	a.startMiniMorph(miniMorphToMini, mainRect, insetRect(miniRect, miniShadowPad), miniRect, style)
 }
 
 // miniSmokeColor ensures the comet progress bar & smoke stay luminous and
@@ -404,7 +395,7 @@ func (a *app) setMiniPlayerEnabled(on bool) {
 }
 
 // restoreMainFromMini switches back from mini mode to the normal main window
-// with a smooth real-snapshot expand-to-main window morph animation.
+// with a zero-hitch GPU expand-to-main morph animation.
 func (a *app) restoreMainFromMini() {
 	if !a.canAnimateMiniMorph() || a.mini.win == nil {
 		a.setMiniPlayerEnabled(false)
@@ -415,21 +406,12 @@ func (a *app) restoreMainFromMini() {
 		return
 	}
 	a.keepMiniPosition()
+	miniWinRect := a.mini.win.Bounds()
+	style := a.settings.effectiveMiniStyle()
+	mainRect := a.mainWindowMorphBounds()
 	a.settings.MiniPlayer = false
-	a.settings.save()
-	a.redraw()
-	a.post(func() {
-		if a.quitting || a.settings.MiniPlayer || a.win == nil || a.mini.win == nil {
-			a.showMain()
-			return
-		}
-		miniWinRect := a.mini.win.Bounds()
-		style := a.settings.effectiveMiniStyle()
-		mainRect := a.mainWindowMorphBounds()
-		miniShot := captureWindowBitmap(a.mini.win, miniShadowPad, miniWinRect)
-		mainShot := captureWindowBitmap(a.win, 0, mainRect)
-		a.startMiniMorph(miniMorphToMain, insetRect(miniWinRect, miniShadowPad), mainRect, miniWinRect, style, mainShot, miniShot)
-	})
+	go a.settings.save()
+	a.startMiniMorph(miniMorphToMain, insetRect(miniWinRect, miniShadowPad), mainRect, miniWinRect, style)
 }
 
 // closeMiniWindow handles closing the frameless mini window consistently

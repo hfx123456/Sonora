@@ -363,11 +363,15 @@ func TestMiniMorphMathStageAndRender(t *testing.T) {
 		t.Fatalf("ToMain crossfade: start=(%v,%v) end=(%v,%v)", ov0, mix0, ov1, mix1)
 	}
 
-	// Capture inset cropping removes exact DPI-scaled miniShadowPad.
-	src := image.NewRGBA(image.Rect(0, 0, 816, 208)) // 2x DPI of 408x104 mini bar window
-	cropped := cropCaptureInset(src, miniShadowPad, mygo.Rectangle{Width: 408, Height: 104})
-	if cb := cropped.Bounds(); cb.Dx() != 720 || cb.Dy() != 112 {
-		t.Fatalf("cropCaptureInset = %dx%d, want 720x112", cb.Dx(), cb.Dy())
+	// Hero cover rect stays strictly bounded & undistorted between main player bar and mini bar/card.
+	rBarStart, _ := miniMorphHeroCoverRect(ui.Rect{W: 1180, H: 780}, 0, miniStyleBar, 8)
+	rBarEnd, _ := miniMorphHeroCoverRect(ui.Rect{W: 360, H: 56}, 1, miniStyleBar, 16)
+	if rBarStart.W != 48 || rBarStart.H != 48 || rBarEnd.W != 40 || rBarEnd.H != 40 {
+		t.Fatalf("hero bar cover rect mismatch: start=%+v end=%+v", rBarStart, rBarEnd)
+	}
+	rCardEnd, _ := miniMorphHeroCoverRect(ui.Rect{W: 232, H: 324}, 1, miniStyleCard, 18)
+	if rCardEnd.W != 232 || rCardEnd.H <= 180 {
+		t.Fatalf("hero card cover rect mismatch: %+v", rCardEnd)
 	}
 
 	// Frame 0 holds at t=0 so the overlay presents over the source window first;
@@ -406,7 +410,7 @@ func TestMiniMorphMathStageAndRender(t *testing.T) {
 		t.Fatalf("cross-display stage %+v missing projected rects from=%+v to=%+v", stage2, f2, to2)
 	}
 
-	// Render miniMorphView headless with real snapshot bitmaps in both directions & styles.
+	// Render miniMorphView headless in both directions & styles (zero CapturePage).
 	a := newTestApp()
 	a.settings = defaultSettings()
 	coverURL := "https://example.invalid/cover.png"
@@ -427,12 +431,11 @@ func TestMiniMorphMathStageAndRender(t *testing.T) {
 		a.mini.morph = miniMorphState{
 			dir:       tc.dir,
 			style:     tc.style,
+			frames:    2,
 			startedAt: time.Now().Add(-miniMorphDuration / 2),
 			stage:     mygo.Rectangle{X: 0, Y: 0, Width: 1200, Height: 800},
 			from:      mygo.Rectangle{X: 60, Y: 40, Width: 900, Height: 600},
 			to:        mygo.Rectangle{X: 800, Y: 680, Width: 360, Height: 56},
-			mainShot:  bmp,
-			miniShot:  bmp,
 		}
 		if tc.dir == miniMorphToMain {
 			a.mini.morph.from, a.mini.morph.to = a.mini.morph.to, a.mini.morph.from

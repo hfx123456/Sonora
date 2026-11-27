@@ -1,10 +1,6 @@
 package app
 
 import (
-	"bytes"
-	"image"
-	"image/draw"
-	"image/png"
 	"math"
 	"time"
 
@@ -23,30 +19,30 @@ const (
 )
 
 const (
-	miniMorphDuration   = 360 * time.Millisecond
-	miniMorphStagePad   = 36
+	miniMorphDuration   = 280 * time.Millisecond
+	miniMorphStagePad   = 32
 	miniMorphMainRadius = 8
+	miniMorphIdleClose  = 15 * time.Second
 )
 
-// miniMorphState drives a zero-twitch GPU-composited morph overlay between the
-// real main window snapshot and the real mini player snapshot without resizing
-// a.win or toggling WS_EX_LAYERED on Windows.
+// miniMorphState drives a zero-hitch, GPU-rendered morph overlay between the
+// main window and the floating mini player. It never calls CapturePage on click
+// (avoiding CPU raster/PNG stalls) and never toggles WS_EX_LAYERED on a.win.
 type miniMorphState struct {
 	win        *mygo.Window
 	dir        miniMorphDir
 	style      string
-	frames     int       // frame 0 paints over the live source; frame 1 hides source & arms startedAt
+	frames     int       // frame 0 paints over live source; frame 1 hides source & arms startedAt
 	startedAt  time.Time // armed on frame 1 so frame 0 is already composited on screen
 	stage      mygo.Rectangle
 	from       mygo.Rectangle // visible screen rect at t=0
 	to         mygo.Rectangle // visible screen rect at t=1
 	miniTarget mygo.Rectangle // full mini window bounds (including shadow pad)
-	mainShot   *ui.Bitmap     // real snapshot of main window client area
-	miniShot   *ui.Bitmap     // real snapshot of mini card (shadow pad cropped out)
 	sourceHid  bool
 	targetShow bool
 	done       bool
 	guard      *time.Timer
+	idleTimer  *time.Timer
 }
 
 func (m *miniMorphState) active() bool {
@@ -54,9 +50,8 @@ func (m *miniMorphState) active() bool {
 }
 
 // progress returns normalized animation time t in [0, 1]. Frame 0 holds at t=0
-// so the overlay presents pixel-for-pixel over the live source window first;
-// frame 1 arms startedAt and kicks off the glide with zero skipped frames and
-// zero 1-frame desktop flash.
+// so the overlay presents over the live source window first; frame 1 arms
+// startedAt and kicks off the glide with zero skipped frames and zero blink.
 func (m *miniMorphState) progress(now time.Time) (float32, bool) {
 	if !m.active() {
 		return 1, false
@@ -81,44 +76,59 @@ func (m *miniMorphState) progress(now time.Time) (float32, bool) {
 	return dt, true
 }
 
-// miniMorphEase uses an Apple-style ease-out quintic curve: instant effortless
-// launch from the user's click with a silky, unhurried landing.
+// miniMorphEase evaluates Apple's fluid container-transform cubic-bezier
+// (0.32, 0.72, 0, 1): smooth acceleration off the starting frame and velvety
+// deceleration into the resting target without snapping or bouncing.
 func miniMorphEase(t float32) float32 {
 	t = splashClamp01(t)
-	inv := 1 - t
-	return 1 - inv*inv*inv*inv*inv
+	if t == 0 || t == 1 {
+		return t
+	}
+	const x1, y1, x2, y2 = 0.32, 0.72, 0.0, 1.0
+	// Solve B_x(u) = t via 5 Newton-Raphson iterations.
+	u := float64(t)
+	for range 5 {
+		inv := 1 - u
+		bx := 3*inv*inv*u*x1 + 3*inv*u*u*x2 + u*u*u
+		dbx := 3*inv*inv*x1 + 6*inv*u*(x2-x1) + 3*u*u*(1-x2)
+		if math.Abs(dbx) < 1e-6 {
+			break
+		}
+		u -= (bx - float64(t)) / dbx
+		if u < 0 {
+			u = 0
+		} else if u > 1 {
+			u = 1
+		}
+	}
+	inv := 1 - u
+	by := 3*inv*inv*u*y1 + 3*inv*u*u*y2 + u*u*u
+	return splashClamp01(float32(by))
 }
 
-// miniMorphRect interpolates from -> to using an ease-out motion curve, adding
-// a subtle organic vertical arc so diagonal main<->mini flights feel fluid
-// rather than linear and robotic.
 func miniMorphRect(from, to mygo.Rectangle, p float32) ui.Rect {
 	x := splashLerp(float32(from.X), float32(to.X), p)
 	y := splashLerp(float32(from.Y), float32(to.Y), p)
 	w := splashLerp(float32(from.Width), float32(to.Width), p)
 	h := splashLerp(float32(from.Height), float32(to.Height), p)
-	// Gentle arc peaking at mid-flight proportional to horizontal travel.
-	dx := float32(to.X+to.Width/2 - (from.X + from.Width/2))
-	arc := min(float32(18), float32(math.Abs(float64(dx)))*0.03)
-	y -= arc * 4 * p * (1 - p)
 	return ui.Rect{X: x, Y: y, W: max(1, w), H: max(1, h)}
 }
 
 // miniMorphCrossfade returns:
-//   - overlayAlpha: overall opacity of the morph overlay (stays 1 during flight
-//     and dissolves cleanly over the final handoff once the real destination
-//     window is visible underneath).
-//   - miniMix: blend factor from main-window visual (0) to mini-card visual (1).
+//   - overlayAlpha: overall opacity of the morph overlay (solid during flight,
+//     fading smoothly over the final ~22% once the real destination window is
+//     visible underneath).
+//   - miniMix: blend factor from main-window styling (0) to mini-card styling (1).
 func miniMorphCrossfade(dir miniMorphDir, t float32) (overlayAlpha, miniMix float32) {
 	t = splashClamp01(t)
 	switch dir {
 	case miniMorphToMini:
-		overlayAlpha = 1 - splashEaseInOutCubic(splashProgress(t, 0.84, 1.0))
-		miniMix = splashEaseInOutCubic(splashProgress(t, 0.28, 0.78))
+		overlayAlpha = 1 - splashEaseInOutCubic(splashProgress(t, 0.78, 1.0))
+		miniMix = splashEaseInOutCubic(splashProgress(t, 0.15, 0.75))
 		return overlayAlpha, miniMix
 	case miniMorphToMain:
-		overlayAlpha = 1 - splashEaseInOutCubic(splashProgress(t, 0.82, 1.0))
-		miniMix = 1 - splashEaseInOutCubic(splashProgress(t, 0.16, 0.68))
+		overlayAlpha = 1 - splashEaseInOutCubic(splashProgress(t, 0.76, 1.0))
+		miniMix = 1 - splashEaseInOutCubic(splashProgress(t, 0.12, 0.65))
 		return overlayAlpha, miniMix
 	default:
 		return 0, 0
@@ -202,49 +212,6 @@ func miniMorphStageBounds(from, to mygo.Rectangle, displays []mygo.Display, prim
 	return stage, adjFrom, adjTo
 }
 
-// cropCaptureInset crops a DIP-unit margin (such as miniShadowPad) from a
-// captured window image using its actual DPI scale ratio.
-func cropCaptureInset(src image.Image, insetDIP int, winRect mygo.Rectangle) image.Image {
-	if src == nil || insetDIP <= 0 || winRect.Width <= 0 || winRect.Height <= 0 {
-		return src
-	}
-	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
-	padX := int(math.Round(float64(insetDIP) * float64(w) / float64(winRect.Width)))
-	padY := int(math.Round(float64(insetDIP) * float64(h) / float64(winRect.Height)))
-	if padX <= 0 || padY <= 0 || 2*padX >= w || 2*padY >= h {
-		return src
-	}
-	crop := image.Rect(0, 0, w-2*padX, h-2*padY)
-	dst := image.NewRGBA(crop)
-	draw.Draw(dst, crop, src, image.Point{X: b.Min.X + padX, Y: b.Min.Y + padY}, draw.Src)
-	return dst
-}
-
-// captureWindowBitmap captures the live rendered content of w as a GPU-ready
-// *ui.Bitmap, optionally cropping an outer transparent shadow margin.
-func captureWindowBitmap(w *mygo.Window, insetDIP int, winRect mygo.Rectangle) *ui.Bitmap {
-	if w == nil {
-		return nil
-	}
-	raw, err := w.CapturePage()
-	if err != nil || len(raw) == 0 {
-		return nil
-	}
-	if insetDIP <= 0 {
-		bmp, err := ui.DecodeBitmap(raw)
-		if err != nil {
-			return nil
-		}
-		return bmp
-	}
-	img, err := png.Decode(bytes.NewReader(raw))
-	if err != nil {
-		return nil
-	}
-	return ui.NewBitmap(cropCaptureInset(img, insetDIP, winRect))
-}
-
 func (a *app) canAnimateMiniMorph() bool {
 	return a.win != nil && !a.quitting && shotHook == nil && !a.miniSplashActive()
 }
@@ -266,49 +233,64 @@ func (a *app) mainWindowMorphBounds() mygo.Rectangle {
 	return b
 }
 
-// startMiniMorph launches the transparent morph overlay between from and to.
-func (a *app) startMiniMorph(dir miniMorphDir, from, to, miniTarget mygo.Rectangle, style string, mainShot, miniShot *ui.Bitmap) {
-	a.cancelMiniMorph()
+// startMiniMorph launches (or reuses) the transparent morph overlay between
+// from and to with zero blocking screenshot work.
+func (a *app) startMiniMorph(dir miniMorphDir, from, to, miniTarget mygo.Rectangle, style string) {
+	m := &a.mini.morph
+	if m.guard != nil {
+		m.guard.Stop()
+		m.guard = nil
+	}
+	if m.idleTimer != nil {
+		m.idleTimer.Stop()
+		m.idleTimer = nil
+	}
 
 	stage, adjFrom, adjTo := miniMorphStageBounds(from, to, mygo.Screen.Displays(), mygo.Screen.PrimaryDisplay())
-	m := &a.mini.morph
+	existingWin := m.win
 	*m = miniMorphState{
+		win:        existingWin,
 		dir:        dir,
 		style:      style,
 		stage:      stage,
 		from:       adjFrom,
 		to:         adjTo,
 		miniTarget: miniTarget,
-		mainShot:   mainShot,
-		miniShot:   miniShot,
 	}
 
-	w := mygo.NewWindow(mygo.WindowOptions{
-		Title:         appName,
-		Frameless:     true,
-		Transparent:   true,
-		DisableShadow: true,
-		DisableResize: true,
-		DisableMove:   true,
-		AlwaysOnTop:   true,
-		SkipTaskbar:   true,
-		X:             stage.X,
-		Y:             stage.Y,
-		Width:         stage.Width,
-		Height:        stage.Height,
-		Content:       ui.View(a.miniMorphView),
-	})
-	w.SetIgnoreMouseEvents(true)
-	m.win = w
-	w.ShowInactive()
+	if m.win == nil {
+		w := mygo.NewWindow(mygo.WindowOptions{
+			Title:         appName,
+			Hidden:        true,
+			Frameless:     true,
+			Transparent:   true,
+			DisableShadow: true,
+			DisableResize: true,
+			DisableMove:   true,
+			AlwaysOnTop:   true,
+			SkipTaskbar:   true,
+			X:             stage.X,
+			Y:             stage.Y,
+			Width:         stage.Width,
+			Height:        stage.Height,
+			Content:       ui.View(a.miniMorphView),
+		})
+		w.SetIgnoreMouseEvents(true)
+		m.win = w
+	} else {
+		m.win.SetBounds(stage)
+	}
+	m.win.ShowInactive()
+	m.win.Invalidate()
 
-	m.guard = time.AfterFunc(miniMorphDuration+600*time.Millisecond, func() {
+	m.guard = time.AfterFunc(miniMorphDuration+500*time.Millisecond, func() {
 		a.post(func() { a.finishMiniMorph() })
 	})
 }
 
-// finishMiniMorph completes the active morph transition and leaves the target
-// window visible while closing the temporary overlay and releasing snapshots.
+// finishMiniMorph completes the active morph transition, hides the overlay
+// (keeping it warm briefly for instant back-and-forth toggles, then closing it
+// on idle), and guarantees final window visibility.
 func (a *app) finishMiniMorph() {
 	m := &a.mini.morph
 	if m.guard != nil {
@@ -318,13 +300,17 @@ func (a *app) finishMiniMorph() {
 	dir := m.dir
 	m.dir = miniMorphNone
 	m.done = true
+	m.frames = 0
 	m.startedAt = time.Time{}
-	m.mainShot = nil
-	m.miniShot = nil
 
-	if w := m.win; w != nil {
-		m.win = nil
-		w.Close()
+	if m.win != nil {
+		m.win.Hide()
+		if m.idleTimer != nil {
+			m.idleTimer.Stop()
+		}
+		m.idleTimer = time.AfterFunc(miniMorphIdleClose, func() {
+			a.post(func() { a.closeIdleMiniMorph() })
+		})
 	}
 
 	switch dir {
@@ -349,19 +335,33 @@ func (a *app) finishMiniMorph() {
 	}
 }
 
-// cancelMiniMorph aborts any in-flight morph immediately without overriding
-// subsequent window visibility decisions.
+func (a *app) closeIdleMiniMorph() {
+	m := &a.mini.morph
+	m.idleTimer = nil
+	if m.active() {
+		return
+	}
+	if w := m.win; w != nil {
+		m.win = nil
+		w.Close()
+	}
+}
+
+// cancelMiniMorph aborts any in-flight morph and closes the overlay window.
 func (a *app) cancelMiniMorph() {
 	m := &a.mini.morph
 	if m.guard != nil {
 		m.guard.Stop()
 		m.guard = nil
 	}
+	if m.idleTimer != nil {
+		m.idleTimer.Stop()
+		m.idleTimer = nil
+	}
 	m.dir = miniMorphNone
 	m.done = true
+	m.frames = 0
 	m.startedAt = time.Time{}
-	m.mainShot = nil
-	m.miniShot = nil
 	if w := m.win; w != nil {
 		m.win = nil
 		w.Close()
@@ -370,8 +370,6 @@ func (a *app) cancelMiniMorph() {
 
 func (a *app) stepMiniMorphWindows(t float32) {
 	m := &a.mini.morph
-	// Wait until frame 0 has been presented to DWM (m.frames >= 2) before
-	// hiding the source window so there is never a 1-frame desktop blink.
 	readyToHide := m.frames >= 2
 	switch m.dir {
 	case miniMorphToMini:
@@ -381,9 +379,7 @@ func (a *app) stepMiniMorphWindows(t float32) {
 				a.win.Hide()
 			}
 		}
-		// Reveal the real mini window once the morph card has already settled
-		// into miniShot at miniCardRect; the overlay then dissolves cleanly.
-		if t >= 0.84 && !m.targetShow {
+		if t >= 0.78 && !m.targetShow {
 			m.targetShow = true
 			if a.settings.MiniPlayer {
 				a.syncMiniPlayer()
@@ -396,10 +392,7 @@ func (a *app) stepMiniMorphWindows(t float32) {
 				a.mini.win.Hide()
 			}
 		}
-		// Show the real main window directly underneath the AlwaysOnTop overlay
-		// at t>=0.82 (no SetOpacity/WS_EX_LAYERED toggle!), then dissolve the
-		// pixel-identical overlay away over the final ~65ms.
-		if t >= 0.82 && !m.targetShow {
+		if t >= 0.76 && !m.targetShow {
 			m.targetShow = true
 			if a.win != nil {
 				a.win.Show()
@@ -410,6 +403,39 @@ func (a *app) stepMiniMorphWindows(t float32) {
 			}
 		}
 	}
+}
+
+// miniMorphHeroCoverRect computes the album cover's undistorted hero rectangle
+// inside localRect as it glides between the main player bar's bottom-left
+// artwork slot (48x48) and the mini player's exact cover slot.
+func miniMorphHeroCoverRect(localRect ui.Rect, miniMix float32, style string, cardRad float32) (rect ui.Rect, rad float32) {
+	// Main player bar bottom-left cover slot (anchored to bottom-left of localRect).
+	mainSz := min(float32(48), max(float32(28), min(localRect.W, localRect.H)*0.45))
+	mainRect := ui.Rect{
+		X: 20,
+		Y: max(8, localRect.H-playerBarHeight+(playerBarHeight-mainSz)/2),
+		W: mainSz,
+		H: mainSz,
+	}
+	var miniRect ui.Rect
+	var miniRad float32
+	if style == miniStyleCard {
+		artH := min(localRect.H*0.68, float32(miniCardArtH))
+		miniRect = ui.Rect{X: 0, Y: 0, W: localRect.W, H: artH}
+		miniRad = cardRad
+	} else {
+		sz := min(float32(40), max(float32(24), localRect.H-16))
+		miniRect = ui.Rect{X: 8, Y: (localRect.H - sz) / 2, W: sz, H: sz}
+		miniRad = 8
+	}
+	rect = ui.Rect{
+		X: splashLerp(mainRect.X, miniRect.X, miniMix),
+		Y: splashLerp(mainRect.Y, miniRect.Y, miniMix),
+		W: max(1, splashLerp(mainRect.W, miniRect.W, miniMix)),
+		H: max(1, splashLerp(mainRect.H, miniRect.H, miniMix)),
+	}
+	rad = splashLerp(8, miniRad, miniMix)
+	return rect, rad
 }
 
 func (a *app) miniMorphView(c *ui.Context) {
@@ -450,11 +476,13 @@ func (a *app) miniMorphView(c *ui.Context) {
 		rad = splashLerp(miniRad, miniMorphMainRadius, p)
 	}
 
-	var fallbackCover *ui.Bitmap
+	// Use already-cached artwork directly from memory (0ms latency).
+	var coverBmp *ui.Bitmap
 	var tint ui.Color
 	if cur := a.pl.Current(); cur != nil && cur.Album.PicURL != "" {
-		if m.miniShot == nil {
-			fallbackCover = bitmap(a.art.get(spotify.Sized(cur.Album.PicURL, 240), false))
+		coverBmp = bitmap(a.art.get(spotify.Sized(cur.Album.PicURL, 240), false))
+		if coverBmp == nil {
+			coverBmp = bitmap(a.art.get(spotify.Sized(cur.Album.PicURL, 160), false))
 		}
 		tint = a.coverTint(cur.Album.PicURL, 120)
 	}
@@ -466,74 +494,111 @@ func (a *app) miniMorphView(c *ui.Context) {
 		if overlayAlpha <= 0.005 || localRect.W < 2 || localRect.H < 2 {
 			return
 		}
-		shadowCol := ui.RGBA(0, 0, 0, 0.16*overlayAlpha)
+		shadowCol := ui.RGBA(0, 0, 0, 0.14*overlayAlpha)
 		if pal.dark {
-			shadowCol = ui.RGBA(0, 0, 0, 0.46*overlayAlpha)
+			shadowCol = ui.RGBA(0, 0, 0, 0.44*overlayAlpha)
 		}
 		shell := ui.Box(c.Key("mini-morph-shell")).Absolute().
 			Left(localRect.X).Top(localRect.Y).Size(localRect.W, localRect.H).
 			Radius(rad).
-			Shadow(0, splashLerp(14, 9, miniMix), splashLerp(32, 24, miniMix), -4, shadowCol)
+			Shadow(0, splashLerp(12, 8, miniMix), splashLerp(28, 22, miniMix), -4, shadowCol)
 		shell.Children(func() {
 			card := ui.Box(c.Key("mini-morph-card")).Fill().Radius(rad).Clip().
-				Background(pal.bg.Alpha(overlayAlpha))
+				Draw(func(pt *ui.Painter, r ui.Rect) {
+					drawMiniMorphSurface(pt, r, rad, overlayAlpha, miniMix, pal, tint)
+				})
 			card.Children(func() {
-				mainAlpha := (1 - miniMix) * overlayAlpha
-				miniAlpha := miniMix * overlayAlpha
-
-				// Layer 1: Real main-window screenshot smoothly scaling with the morph frame
-				// using ui.Cover (1:1 at main bounds, zero aspect-ratio distortion mid-flight).
-				if m.mainShot != nil && mainAlpha > 0.01 {
-					ui.Image(c.Key("morph-main-shot"), m.mainShot).Absolute().Fill().
-						Fit(ui.Cover).Radius(rad).Opacity(mainAlpha)
-				} else if mainAlpha > 0.01 {
-					ui.Box(c.Key("morph-main-fallback")).Absolute().Fill().Draw(func(pt *ui.Painter, r ui.Rect) {
-						drawMiniMorphFallbackMain(pt, r, rad, mainAlpha, pal, tint)
-					})
-				}
-
-				// Layer 2: Real mini-player screenshot smoothly emerging inside the same rounded frame.
-				if m.miniShot != nil && miniAlpha > 0.01 {
-					ui.Image(c.Key("morph-mini-shot"), m.miniShot).Absolute().Fill().
-						Fit(ui.Cover).Radius(rad).Opacity(miniAlpha)
-				} else if miniAlpha > 0.01 {
-					if fallbackCover != nil && m.style != miniStyleCard {
-						sz := min(float32(40), max(float32(16), localRect.H-16))
-						ui.Image(c.Key("morph-fallback-art"), fallbackCover).Absolute().
-							Left(8).Top((localRect.H-sz)/2).Size(sz, sz).
-							Fit(ui.Cover).Radius(8).Opacity(miniAlpha)
+				if coverBmp != nil {
+					artRect, artRad := miniMorphHeroCoverRect(localRect, miniMix, m.style, rad)
+					if m.style == miniStyleCard && miniMix > 0.35 {
+						ui.Box(c.Key("morph-hero-art")).Absolute().
+							Left(artRect.X).Top(artRect.Y).Size(artRect.W, artRect.H).
+							Radius(artRad, artRad, 0, 0).Clip().Children(func() {
+							ui.Image(c, coverBmp).Absolute().Fill().
+								Fit(ui.Cover).Radius(artRad, artRad, 0, 0).Opacity(overlayAlpha)
+							deckTop := ui.Hex("#ffffff")
+							if pal.dark {
+								deckTop = ui.Hex("#1e1e23")
+							}
+							featherH := min(artRect.H*0.42, 74)
+							ui.Box(c).Absolute().Left(0).Right(0).Bottom(0).Height(featherH).Draw(func(pt *ui.Painter, r ui.Rect) {
+								pt.FillGradient(r, ui.LinearGradient{
+									Angle: 180,
+									Oklab: true,
+									Stops: []ui.GradientStop{
+										{Color: deckTop.Alpha(0), At: 0},
+										{Color: deckTop.Alpha(0.65 * miniMix * overlayAlpha), At: 0.65},
+										{Color: deckTop.Alpha(miniMix * overlayAlpha), At: 1},
+									},
+								}, 0)
+							})
+						})
+					} else {
+						ui.Image(c.Key("morph-hero-art"), coverBmp).Absolute().
+							Left(artRect.X).Top(artRect.Y).Size(artRect.W, artRect.H).
+							Fit(ui.Cover).Radius(artRad).Opacity(overlayAlpha)
 					}
 				}
-
-				// Subtle hairline border framing the morphing card cleanly during flight.
-				rimAlpha := overlayAlpha * 4 * p * (1 - p)
-				if rimAlpha > 0.02 {
-					ui.Box(c.Key("morph-rim")).Absolute().Fill().PassThrough().Draw(func(pt *ui.Painter, r ui.Rect) {
-						in := ui.Rect{X: r.X + 0.5, Y: r.Y + 0.5, W: r.W - 1, H: r.H - 1}
-						rimCol := ui.RGBA(0, 0, 0, 0.08*rimAlpha)
-						if pal.dark {
-							rimCol = ui.RGBA(255, 255, 255, 0.14*rimAlpha)
-						}
-						pt.StrokePath(miniRoundedRectPath(in, max(rad-0.5, 0)), 1, rimCol)
-					})
-				}
+				// Crisp inset specular border framing the gliding window.
+				ui.Box(c.Key("morph-rim")).Absolute().Fill().PassThrough().Draw(func(pt *ui.Painter, r ui.Rect) {
+					drawMiniSoftRim(pt, r, rad, pal.dark, m.style == miniStyleCard && miniMix > 0.5)
+				})
 			})
 		})
 	})
 }
 
-func drawMiniMorphFallbackMain(pt *ui.Painter, r ui.Rect, rad, alpha float32, pal palette, tint ui.Color) {
-	pt.Fill(r, pal.bg.Alpha(alpha), rad)
-	sbW := min(r.W*0.24, float32(sidebarWidth))
-	if sbW > 24 {
-		pt.Fill(ui.Rect{X: r.X, Y: r.Y, W: sbW, H: r.H}, pal.sidebar.Alpha(0.95*alpha), 0)
+func drawMiniMorphSurface(pt *ui.Painter, r ui.Rect, rad, alpha, miniMix float32, pal palette, tint ui.Color) {
+	if alpha <= 0.005 || r.W < 2 || r.H < 2 {
+		return
 	}
-	washH := min(r.H*0.42, 240)
-	pt.FillGradient(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: washH}, ui.LinearGradient{
+	var surfTop, surfBot ui.Color
+	if pal.dark {
+		surfTop = pal.bg.Mix(ui.Hex("#222227"), miniMix)
+		surfBot = pal.bg.Mix(ui.Hex("#18181c"), miniMix)
+	} else {
+		surfTop = ui.Hex("#ffffff")
+		surfBot = pal.bg.Mix(ui.Hex("#f7f7fa"), miniMix)
+	}
+	pt.FillGradient(r, ui.LinearGradient{
 		Angle: 180,
+		From:  surfTop.Alpha(0.96 * alpha),
+		To:    surfBot.Alpha(0.96 * alpha),
+	}, rad)
+
+	// Subtle sidebar tint that dissolves cleanly as the window condenses.
+	mainVis := (1 - miniMix) * alpha
+	if mainVis > 0.02 {
+		sbW := min(r.W*0.24, float32(sidebarWidth))
+		if sbW > 32 {
+			pt.Fill(ui.Rect{X: r.X, Y: r.Y, W: sbW, H: r.H}, pal.sidebar.Alpha(0.85*mainVis), 0)
+			pt.Fill(ui.Rect{X: r.X + sbW - 1, Y: r.Y, W: 1, H: r.H}, pal.hairline.Alpha(mainVis), 0)
+		}
+		washH := min(r.H*0.45, 280)
+		washA := float32(0.12)
+		if pal.dark {
+			washA = 0.22
+		}
+		pt.FillGradient(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: washH}, ui.LinearGradient{
+			Angle: 180,
+			Stops: []ui.GradientStop{
+				{Color: tint.Alpha(washA * mainVis), At: 0},
+				{Color: tint.Alpha(0), At: 1},
+			},
+		}, 0)
+	}
+
+	// Cover-tinted soft radial aura matching the mini player card.
+	glowA := float32(0.06)
+	if pal.dark {
+		glowA = 0.14
+	}
+	pt.FillRadialGradient(r, ui.RadialGradient{
+		Center: ui.Point{X: 0.5, Y: 0.65},
+		Radius: max(r.W, r.H) * 0.65,
 		Stops: []ui.GradientStop{
-			{Color: tint.Alpha(0.16 * alpha), At: 0},
+			{Color: tint.Alpha(glowA * alpha), At: 0},
 			{Color: tint.Alpha(0), At: 1},
 		},
-	}, 0)
+	}, rad)
 }
