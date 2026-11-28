@@ -633,18 +633,53 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 
 		body.Children(func() {
 			ui.Row(c).Fill().AlignItems(ui.Center).Padding(0, 8, 0, 8).Gap(10).DragWindow().Children(func() {
-				// Left: 40×40 crisp rounded album artwork (click restores Sonora main window).
-				artBtn := ui.ButtonBase(c.Key("mini-cover")).Size(40, 40).Shrink(0).Radius(8).
-					Label("打开主窗口").Tooltip("点击返回 Sonora 主窗口")
-				if artBtn.Clicked() {
-					a.restoreMainFromMini()
+				// Left: 40×40 crisp rounded album artwork.
+				// Clicking toggles Like for Spotify tracks (since the right side already
+				// has a dedicated expand button), falling back to restoring the main window
+				// when no likeable track is playing.
+				canLike := cur != nil && !cur.Local() && !cur.Episode
+				liked := canLike && a.liked[libraryID(cur)]
+				artLabel, artTip := "打开主窗口", "点击返回 Sonora 主窗口"
+				if canLike {
+					if liked {
+						artLabel, artTip = "取消喜欢", "点击取消喜欢"
+					} else {
+						artLabel, artTip = "喜欢这首歌", "点击添加到我喜欢的音乐"
+					}
 				}
+				artBtn := ui.ButtonBase(c.Key("mini-cover")).Size(40, 40).Shrink(0).Radius(8).
+					Label(artLabel).Tooltip(artTip)
+				if artBtn.Clicked() {
+					if canLike {
+						a.toggleLike(cur)
+					} else {
+						a.restoreMainFromMini()
+					}
+				}
+				artHovered := artBtn.Hovered()
 				artBtn.Children(func() {
 					if cur != nil && cur.Album.PicURL != "" {
 						a.cover(c, cur.Album.PicURL, 160, 40, 8).Shadow(0, 2, 8, -2, ui.RGBA(0, 0, 0, 0.22))
 					} else {
 						ui.Box(c).Size(40, 40).Radius(8).Center().Background(pal.hover).Children(func() {
 							ui.Icon(c, iconNote).Size(18, 18).TextColor(pal.muted)
+						})
+					}
+					if canLike && artHovered {
+						heartIcon := iconHeart
+						heartCol := ui.RGB(255, 255, 255)
+						if liked {
+							heartIcon = iconHeartFill
+							heartCol = pal.accent
+						}
+						ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(8).Center().
+							Background(ui.RGBA(0, 0, 0, 0.44)).PassThrough().Children(func() {
+							ui.Icon(c, heartIcon).Size(18, 18).TextColor(heartCol)
+						})
+					} else if liked {
+						ui.Box(c).Absolute().Right(3).Bottom(3).Size(14, 14).Radius(7).Center().
+							Background(ui.RGBA(0, 0, 0, 0.56)).PassThrough().Children(func() {
+							ui.Icon(c, iconHeartFill).Size(8.5, 8.5).TextColor(pal.accent)
 						})
 					}
 					ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(pt *ui.Painter, r ui.Rect) {
