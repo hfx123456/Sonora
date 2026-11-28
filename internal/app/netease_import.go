@@ -59,6 +59,7 @@ type neteasePlaybackCache struct {
 	cachedCookie    string
 	cookieLoaded    bool
 	spotifyFallback map[int64]string // netease song ID -> resolved Spotify track URI
+	resolvedSource  map[int64]string // netease song ID -> human-readable active playback source
 }
 
 var neteaseCacheInitMu sync.Mutex
@@ -67,9 +68,46 @@ func (a *app) neteaseCache() *neteasePlaybackCache {
 	neteaseCacheInitMu.Lock()
 	defer neteaseCacheInitMu.Unlock()
 	if a.netease.cache == nil {
-		a.netease.cache = &neteasePlaybackCache{spotifyFallback: map[int64]string{}}
+		a.netease.cache = &neteasePlaybackCache{
+			spotifyFallback: map[int64]string{},
+			resolvedSource:  map[int64]string{},
+		}
 	}
 	return a.netease.cache
+}
+
+func (a *app) setNetEaseResolvedSource(id int64, source string) {
+	if id <= 0 {
+		return
+	}
+	c := a.neteaseCache()
+	c.mu.Lock()
+	if c.resolvedSource == nil {
+		c.resolvedSource = map[int64]string{}
+	}
+	c.resolvedSource[id] = source
+	c.mu.Unlock()
+}
+
+func (a *app) trackSourceDisplay(tr *spotify.Track) string {
+	if tr == nil {
+		return ""
+	}
+	if id := tr.NetEaseID(); id > 0 {
+		c := a.neteaseCache()
+		c.mu.RLock()
+		src := c.resolvedSource[id]
+		c.mu.RUnlock()
+		if src != "" {
+			return src
+		}
+		return "网易云"
+	}
+	label, cached := hybridTrackSourceLabel(tr)
+	if cached {
+		return label + "（已缓存）"
+	}
+	return label
 }
 
 func (a *app) syncNetEaseCookieCache(cookie string) {
@@ -155,6 +193,26 @@ func (a *app) loadNetEaseLibrary() {
 	a.rebuildNetEaseLists()
 	if a.settings.NetEaseUserID > 0 && cookie != "" {
 		a.loadNetEasePlaylists()
+		if a.settings.NetEaseAvatarURL == "" {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				acc, err := fetchNetEaseAccount(ctx, cookie)
+				if err != nil || acc == nil || acc.AvatarURL == "" {
+					return
+				}
+				a.post(func() {
+					if a.quitting || a.settings.NetEaseUserID != acc.UserID {
+						return
+					}
+					a.settings.NetEaseAvatarURL = acc.AvatarURL
+					if acc.Nickname != "" {
+						a.settings.NetEaseNickname = acc.Nickname
+					}
+					a.settings.save()
+				})
+			}()
+		}
 	}
 }
 
@@ -445,6 +503,7 @@ func (a *app) openNetEaseLogin() {
 				}
 				a.closeNetEaseLoginWindow()
 				a.settings.setNetEaseAccount(acc.UserID, acc.Nickname, cookie)
+				a.settings.NetEaseAvatarURL = acc.AvatarURL
 				a.settings.save()
 				a.syncNetEaseCookieCache(cookie)
 				a.netease.status = ""
@@ -643,6 +702,7 @@ func (a *app) resolveNetEasePlayback(ctx context.Context, tr spotify.Track) (*sp
 		if media.Duration <= 0 {
 			media.Duration = tr.Length()
 		}
+		a.setNetEaseResolvedSource(id, "网易云")
 		return media, nil
 	}
 
@@ -652,6 +712,8 @@ func (a *app) resolveNetEasePlayback(ctx context.Context, tr spotify.Track) (*sp
 	if localSnap := spotify.LocalTracksSnapshot(); len(localSnap) > 0 {
 		if hit, ok := spotify.MatchCandidateForNetEase(want, localSnap, false); ok {
 			if m, err := resolveLocalOrCloudFallback(ctx, hit); err == nil && m != nil {
+				src, _ := hybridTrackSourceLabel(&hit)
+				a.setNetEaseResolvedSource(id, "网易云（已切换 "+src+"）")
 				log.Printf("netease: %q (%d) unavailable (%v), playing local/cloud fallback %s", tr.Name, id, neErr, hit.ID)
 				return m, nil
 			}
@@ -665,6 +727,7 @@ func (a *app) resolveNetEasePlayback(ctx context.Context, tr spotify.Track) (*sp
 	cache.mu.RUnlock()
 	if cachedURI != "" {
 		if m, err := resolveSpotifyForNetEase(cachedURI); err == nil && m != nil {
+			a.setNetEaseResolvedSource(id, "网易云（已切换 Spotify）")
 			log.Printf("netease: %q (%d) unavailable (%v), playing cached Spotify fallback %s", tr.Name, id, neErr, cachedURI)
 			return m, nil
 		}
@@ -685,6 +748,7 @@ func (a *app) resolveNetEasePlayback(ctx context.Context, tr spotify.Track) (*sp
 				cache.mu.Lock()
 				cache.spotifyFallback[id] = uri
 				cache.mu.Unlock()
+				a.setNetEaseResolvedSource(id, "网易云（已切换 Spotify）")
 				log.Printf("netease: %q (%d) unavailable (%v), playing Spotify fallback %s (%s)", tr.Name, id, neErr, hit.Name, uri)
 				return m, nil
 			}

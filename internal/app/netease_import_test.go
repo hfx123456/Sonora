@@ -136,7 +136,7 @@ func TestNetEaseSidebarSectionSettingsAndHybridJoin(t *testing.T) {
 	a.netease.open = false
 	a.route = route{page: pageSettings}
 	tester.Frame()
-	if !tester.HasText("网易云音乐 · 测试用户") || !tester.HasText("刷新歌单") {
+	if !tester.HasText("测试用户") || !tester.HasText("网易云音乐 · 已同步 1 个歌单") || !tester.HasText("刷新歌单") {
 		t.Fatal("settings account section missing logged-in NetEase row")
 	}
 
@@ -154,5 +154,24 @@ func TestNetEaseSidebarSectionSettingsAndHybridJoin(t *testing.T) {
 	got := a.playlists[hyb.ID]
 	if len(got.Tracks) != 1 || got.Tracks[0].ID != "netease:777" || !got.Tracks[0].Playable() {
 		t.Fatalf("hybrid playlist tracks after importing NetEase playlist = %+v", got.Tracks)
+	}
+
+	// Importing the same song from Spotify upgrades the NetEase copy (Spotify > local > NetEase);
+	// importing a lower-priority NetEase copy of an existing Spotify song skips it.
+	added, skipped := a.addManyToHybrid(hyb.ID, []spotify.Track{
+		{ID: "sp-yequ", Name: "夜曲", Artists: []spotify.Artist{{Name: "周杰倫"}}, Duration: 226000},
+		{ID: "sp-qingtian", Name: "晴天", Artists: []spotify.Artist{{Name: "周杰伦"}}, Duration: 269000},
+	})
+	if added != 1 || skipped != 0 {
+		t.Fatalf("priority upgrade addManyToHybrid = added:%d skipped:%d, want 1/0", added, skipped)
+	}
+	if a.playlists[hyb.ID].Tracks[0].ID != "sp-yequ" {
+		t.Fatalf("expected Spotify to upgrade NetEase duplicate, got %+v", a.playlists[hyb.ID].Tracks[0])
+	}
+	added2, skipped2 := a.addManyToHybrid(hyb.ID, []spotify.Track{
+		(spotify.NetEasePlaylistTrack{ID: 888, Name: "晴天", Artists: []string{"周杰伦"}, Duration: 269000}).ToTrack(),
+	})
+	if added2 != 0 || skipped2 != 1 {
+		t.Fatalf("lower-priority NetEase duplicate should be skipped, got added:%d skipped:%d", added2, skipped2)
 	}
 }

@@ -102,3 +102,31 @@ func TestSmartShuffleInterleavesAndRemovesRecommendations(t *testing.T) {
 		t.Fatalf("turning off smart shuffle did not clean up recommendations: %v", got)
 	}
 }
+
+func TestShuffleSkipsDuplicateSongsAcrossSources(t *testing.T) {
+	p := New(func(fn func()) { fn() })
+	p.Cue([]spotify.Track{
+		{ID: "sp-start", Name: "开场曲", Artists: []spotify.Artist{{Name: "歌手A"}}},
+		{ID: "netease:100", Name: "说好不哭", Artists: []spotify.Artist{{Name: "周杰伦"}}},
+		{ID: "local:100", Name: "说好不哭", Artists: []spotify.Artist{{Name: "周杰伦"}}, LocalPath: "a.flac"},
+		{ID: "sp-cry", Name: "說好不哭", Artists: []spotify.Artist{{Name: "周杰倫"}}},
+		{ID: "netease:200", Name: "稻香", Artists: []spotify.Artist{{Name: "周杰伦"}}},
+		{ID: "local:200", Name: "稻香", Artists: []spotify.Artist{{Name: "周杰伦"}}, LocalPath: "b.flac"},
+	})
+	p.at, p.track = 0, &p.queue[0]
+
+	p.ToggleShuffle()
+	got := played(p)
+	if len(got) != 3 {
+		t.Fatalf("shuffled queue should skip duplicates, got %v", got)
+	}
+	// Spotify wins over local & NetEase; local wins over NetEase.
+	if !slices.Contains(got, "sp-cry") || !slices.Contains(got, "local:200") {
+		t.Fatalf("priority wrong (want sp-cry & local:200), got %v", got)
+	}
+	// Turning shuffle off restores the full sequential order safely.
+	p.ToggleShuffle()
+	if got := played(p); len(got) != 6 {
+		t.Fatalf("unshuffled queue should restore all tracks, got %v", got)
+	}
+}

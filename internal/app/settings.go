@@ -120,6 +120,7 @@ type settings struct {
 	HiddenLocalIDs        []string             `json:"hiddenLocalIds,omitempty"`
 	NetEaseUserID         int64                            `json:"neteaseUserId,omitempty"`
 	NetEaseNickname       string                           `json:"neteaseNickname,omitempty"`
+	NetEaseAvatarURL      string                           `json:"neteaseAvatarUrl,omitempty"`
 	NetEaseSealedCookie   string                           `json:"neteaseSealedCookie,omitempty"`
 	NetEasePlainCookie    string                           `json:"neteasePlainCookie,omitempty"`
 	NetEasePlaylists      []spotify.NetEasePlaylistSummary `json:"neteasePlaylists,omitempty"`
@@ -276,6 +277,7 @@ func (s *settings) setNetEaseAccount(userID int64, nickname, cookie string) {
 func (s *settings) clearNetEaseAccount() {
 	s.NetEaseUserID = 0
 	s.NetEaseNickname = ""
+	s.NetEaseAvatarURL = ""
 	s.NetEaseSealedCookie = ""
 	s.NetEasePlainCookie = ""
 }

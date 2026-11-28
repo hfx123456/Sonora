@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"vinyl/internal/lyrics"
 )
 
 type Artist struct {
@@ -63,6 +65,40 @@ func (t *Track) ArtistNames() string {
 		names[i] = a.Name
 	}
 	return strings.Join(names, ", ")
+}
+
+// DedupKey returns a normalized cross-source key (Simplified Chinese + folded
+// title and sorted artists) so the same song from Spotify, NetEase, local, or
+// cloud libraries is recognized as a duplicate.
+func (t *Track) DedupKey() string {
+	title := lyrics.FoldTitle(lyrics.SimplifyText(t.Name))
+	if title == "" {
+		return ""
+	}
+	artists := make([]string, 0, len(t.Artists))
+	for _, a := range t.Artists {
+		if norm := lyrics.FoldRaw(lyrics.SimplifyText(a.Name)); norm != "" {
+			artists = append(artists, norm)
+		}
+	}
+	if len(artists) == 0 {
+		return ""
+	}
+	sort.Strings(artists)
+	return title + "\n" + strings.Join(artists, ",")
+}
+
+// SourcePriority ranks track sources for cross-source deduplication:
+// Spotify (3) > local/cloud (2) > NetEase (1).
+func (t *Track) SourcePriority() int {
+	switch {
+	case !t.Local():
+		return 3
+	case !t.NetEase():
+		return 2
+	default:
+		return 1
+	}
 }
 
 func (t *Track) Playable() bool { return !t.Unplayable }

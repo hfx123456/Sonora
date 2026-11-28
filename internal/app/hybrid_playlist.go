@@ -122,6 +122,12 @@ func trackIdentityKey(name, artists string) string {
 	return n + "\n" + strings.ToLower(strings.TrimSpace(artists))
 }
 
+// hybridTrackDedupKey identifies the same song across different sources
+// (Spotify, NetEase, local, cloud) using Simplified Chinese + folded title & artists.
+func hybridTrackDedupKey(tr spotify.Track) string {
+	return tr.DedupKey()
+}
+
 type hybridHydrationIndex struct {
 	byID      map[string]spotify.Track
 	byPath    map[string]spotify.Track
@@ -364,9 +370,31 @@ func (a *app) addToHybrid(pid string, tr *spotify.Track) {
 		return
 	}
 	entry := &a.hybridStore.entries[i]
-	if slices.ContainsFunc(entry.Tracks, func(rec hybridTrackRecord) bool { return rec.Track.ID == tr.ID }) {
-		a.toast = "歌曲已在混合歌单中"
-		return
+	dk := hybridTrackDedupKey(*tr)
+	for idx, rec := range entry.Tracks {
+		if rec.Track.ID == tr.ID {
+			a.toast = "歌曲已在混合歌单中"
+			return
+		}
+		if dk != "" && hybridTrackDedupKey(rec.Track) == dk {
+			if tr.SourcePriority() > rec.Track.SourcePriority() {
+				snap := *tr
+				snap.UID = rec.UID
+				if snap.LocalError == "需登录 Spotify" || snap.LocalError == "云盘离线且未缓存" {
+					snap.LocalError = ""
+					snap.Unplayable = false
+				}
+				now := time.Now().Unix()
+				entry.Tracks[idx].Track = snap
+				entry.UpdatedAt = now
+				a.refreshHybridPlaylists()
+				a.saveHybridStore()
+				a.toast = "已替换为更高优先级音源"
+				return
+			}
+			a.toast = "歌曲已在混合歌单中"
+			return
+		}
 	}
 	snap := *tr
 	uid := "h-" + randomHexID(6)
@@ -475,10 +503,15 @@ func (a *app) addManyToHybrid(pid string, tracks []spotify.Track) (added, skippe
 	}
 	entry := &a.hybridStore.entries[i]
 	seen := make(map[string]bool, len(entry.Tracks)+len(tracks))
-	for _, rec := range entry.Tracks {
+	keyIndex := make(map[string]int, len(entry.Tracks)+len(tracks))
+	for idx, rec := range entry.Tracks {
 		seen[rec.Track.ID] = true
+		if k := hybridTrackDedupKey(rec.Track); k != "" {
+			keyIndex[k] = idx
+		}
 	}
 	now := time.Now().Unix()
+	upgraded := 0
 	for _, tr := range tracks {
 		if tr.Episode || tr.ID == "" {
 			continue
@@ -486,6 +519,26 @@ func (a *app) addManyToHybrid(pid string, tracks []spotify.Track) (added, skippe
 		if seen[tr.ID] {
 			skipped++
 			continue
+		}
+		dk := hybridTrackDedupKey(tr)
+		if dk != "" {
+			if existingIdx, exists := keyIndex[dk]; exists {
+				if tr.SourcePriority() > entry.Tracks[existingIdx].Track.SourcePriority() {
+					snap := tr
+					snap.UID = entry.Tracks[existingIdx].UID
+					if snap.LocalError == "需登录 Spotify" || snap.LocalError == "云盘离线且未缓存" {
+						snap.LocalError = ""
+						snap.Unplayable = false
+					}
+					delete(seen, entry.Tracks[existingIdx].Track.ID)
+					entry.Tracks[existingIdx].Track = snap
+					seen[tr.ID] = true
+					upgraded++
+				} else {
+					skipped++
+				}
+				continue
+			}
 		}
 		seen[tr.ID] = true
 		snap := tr
@@ -495,10 +548,13 @@ func (a *app) addManyToHybrid(pid string, tracks []spotify.Track) (added, skippe
 			snap.LocalError = ""
 			snap.Unplayable = false
 		}
+		if dk != "" {
+			keyIndex[dk] = len(entry.Tracks)
+		}
 		entry.Tracks = append(entry.Tracks, hybridTrackRecord{UID: uid, AddedAt: now, Track: snap})
 		added++
 	}
-	if added > 0 {
+	if added > 0 || upgraded > 0 {
 		entry.UpdatedAt = now
 		a.refreshHybridPlaylists()
 		a.saveHybridStore()
@@ -571,7 +627,33 @@ func (a *app) playHybridShuffled(pl *spotify.Playlist) {
 		a.toast = "当前没有可播放的歌曲"
 		return
 	}
-	shuffled := slices.Clone(playable)
+	shuffled := make([]spotify.Track, 0, len(playable))
+	seenID := make(map[string]bool, len(playable))
+	keyPos := make(map[string]int, len(playable))
+	for _, tr := range playable {
+		if tr.ID != "" && seenID[tr.ID] {
+			continue
+		}
+		dk := hybridTrackDedupKey(tr)
+		if dk != "" {
+			if pos, exists := keyPos[dk]; exists {
+				if tr.SourcePriority() > shuffled[pos].SourcePriority() {
+					shuffled[pos] = tr
+					if tr.ID != "" {
+						seenID[tr.ID] = true
+					}
+				}
+				continue
+			}
+		}
+		if tr.ID != "" {
+			seenID[tr.ID] = true
+		}
+		if dk != "" {
+			keyPos[dk] = len(shuffled)
+		}
+		shuffled = append(shuffled, tr)
+	}
 	if len(shuffled) >= 2 {
 		rand.Shuffle(len(shuffled), func(i, j int) {
 			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]

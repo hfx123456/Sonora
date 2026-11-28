@@ -85,8 +85,8 @@ func TestSidebarPinnedPlaylistsSectionAboveMine(t *testing.T) {
 	tt.Frame()
 
 	// No pinned section initially.
-	if _, ok := tt.Find("收藏歌单"); ok {
-		t.Fatal("收藏歌单 should not render when no playlists are pinned")
+	if _, ok := tt.Find("置顶歌单"); ok {
+		t.Fatal("置顶歌单 should not render when no playlists are pinned")
 	}
 
 	// Pin a user playlist ("睡前") and a saved playlist ("飙升榜") via context menu.
@@ -110,8 +110,8 @@ func TestSidebarPinnedPlaylistsSectionAboveMine(t *testing.T) {
 		t.Fatalf("PinnedPlaylists = %v, want [%s %s]", a.settings.PinnedPlaylists, pl11, pl20)
 	}
 
-	// "收藏歌单" section sits strictly above "Spotify 歌单", and pinned playlists sit above "Spotify 歌单".
-	pinHdr, ok1 := tt.Find("收藏歌单")
+	// "置顶歌单" section sits strictly above "Spotify 歌单", and pinned playlists sit above "Spotify 歌单".
+	pinHdr, ok1 := tt.Find("置顶歌单")
 	mineHdr, ok2 := tt.Find("Spotify 歌单")
 	pinnedItem, ok3 := tt.Find("睡前")
 	unpinnedItem, ok4 := tt.Find("通勤")
@@ -123,7 +123,7 @@ func TestSidebarPinnedPlaylistsSectionAboveMine(t *testing.T) {
 			pinHdr.Y, pinnedItem.Y, mineHdr.Y, unpinnedItem.Y)
 	}
 
-	// Collapsing "Spotify 歌单" keeps "收藏歌单" visible!
+	// Collapsing "Spotify 歌单" keeps "置顶歌单" visible!
 	if err := tt.Click("Spotify 歌单"); err != nil {
 		t.Fatal(err)
 	}
@@ -152,12 +152,12 @@ func TestSidebarPinnedPlaylistsSectionAboveMine(t *testing.T) {
 		t.Fatalf("after 上移 飙升榜.Y=%v should be above 睡前.Y=%v", b1.Y, b2.Y)
 	}
 
-	// Collapsing "收藏歌单" while "Spotify 歌单" is expanded proves pinned playlists
+	// Collapsing "置顶歌单" while "Spotify 歌单" is expanded proves pinned playlists
 	// STILL stay listed inside "Spotify 歌单" / "我的收藏" (not removed from them).
 	if err := tt.Click("Spotify 歌单"); err != nil { // re-expand Spotify 歌单
 		t.Fatal(err)
 	}
-	if err := tt.Click("收藏歌单"); err != nil { // collapse 收藏歌单
+	if err := tt.Click("置顶歌单"); err != nil { // collapse 置顶歌单
 		t.Fatal(err)
 	}
 	tt.Frame()
@@ -177,13 +177,13 @@ func TestSidebarPinnedPlaylistsSectionAboveMine(t *testing.T) {
 	if a.isPlaylistPinned(pl11) {
 		t.Fatal("睡前 remained pinned after 取消置顶")
 	}
-	// Re-expand "收藏歌单" (飙升榜 is still pinned).
-	if err := tt.Click("收藏歌单"); err != nil {
+	// Re-expand "置顶歌单" (飙升榜 is still pinned).
+	if err := tt.Click("置顶歌单"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
 	if _, ok := tt.Find("飙升榜"); !ok {
-		t.Fatal("飙升榜 missing after re-expanding 收藏歌单")
+		t.Fatal("飙升榜 missing after re-expanding 置顶歌单")
 	}
 }
 
@@ -267,7 +267,7 @@ func TestSidebarSectionAlignmentAndCompactCollapsedSpacing(t *testing.T) {
 	tt.Frame()
 
 	// Section headers and playlist rows share the same horizontal container edge.
-	pinHdr, ok1 := tt.Find("收藏歌单")
+	pinHdr, ok1 := tt.Find("置顶歌单")
 	likedRow, ok2 := tt.Find("我喜欢的音乐")
 	mineHdr, ok3 := tt.Find("Spotify 歌单")
 	neHdr, okN := tt.Find("网易云歌单")

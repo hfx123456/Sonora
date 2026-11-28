@@ -6,6 +6,8 @@ import (
 	"math"
 
 	"github.com/egoist/mygo/ui"
+
+	"vinyl/internal/spotify"
 )
 
 // openSettings goes to the settings page. The main window comes up first,
@@ -76,9 +78,19 @@ func (a *app) settingsPage(c *ui.Context) {
 			})
 		}
 
+		accountBadge := func(label string, primary bool) {
+			bg, fg := p.hover, p.muted
+			if primary {
+				bg, fg = p.accent.Alpha(0.14), p.accent
+			}
+			ui.Box(c).Padding(2, 7).Radius(999).Background(bg).Shrink(0).Children(func() {
+				ui.Text(c, label).FontSize(10.5).FontWeight(600).TextColor(fg).SingleLine()
+			})
+		}
+
 		group("账号", func() {
 			if a.profile == nil {
-				row("Spotify 未登录", "登录 Spotify 后可播放 Spotify 曲库，并作为网易云无版权曲目的自动回退", func() {
+				row("Spotify 未登录", "主账号 · 登录 Spotify 后可播放 Spotify 曲库，并作为网易云无版权曲目的自动回退", func() {
 					// In the main window already, which the login
 					// window opens over.
 					if ui.PrimaryButton(c.Key("login"), "登录").Clicked() {
@@ -90,8 +102,11 @@ func (a *app) settingsPage(c *ui.Context) {
 				ui.Row(c).Padding(12, 16).Gap(12).AlignItems(ui.Center).Children(func() {
 					a.profileAvatar(c, prof, 36)
 					ui.Column(c).Grow(1).Gap(2).Children(func() {
-						ui.Text(c, prof.Nickname).FontSize(13.5).FontWeight(600)
-						ui.Text(c, cmp.Or(prof.Email, "已登录 Spotify")).FontSize(12).TextColor(p.muted)
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, prof.Nickname).FontSize(13.5).FontWeight(600).SingleLine()
+							accountBadge("主账号", true)
+						})
+						ui.Text(c, cmp.Or(prof.Email, "Spotify")).FontSize(12).TextColor(p.muted)
 					})
 					if ui.Button(c.Key("logout"), "退出登录").Clicked() {
 						a.signOut()
@@ -101,30 +116,42 @@ func (a *app) settingsPage(c *ui.Context) {
 
 			neLoggedIn := a.settings.NetEaseUserID > 0 && a.settings.neteaseCookie() != ""
 			if !neLoggedIn {
-				desc := "扫码登录后自动同步你的网易云歌单到侧栏「网易云歌单」，也可随时加入混合歌单"
+				desc := "子账号 · 扫码登录后自动同步你的网易云歌单到侧栏「网易云歌单」，也可随时加入混合歌单"
 				if a.netease.err != "" {
 					desc = a.netease.err
 				} else if a.netease.logging && a.netease.status != "" {
 					desc = a.netease.status
 				}
-				row("网易云音乐", desc, func() {
-					label := "扫码登录"
+				row("网易云音乐未登录", desc, func() {
+					label := "登录"
 					if a.netease.logging {
 						label = "等待扫码…"
 					}
-					if ui.Button(c.Key("settings-netease-login"), label).Disabled(a.netease.logging).Clicked() {
+					if ui.PrimaryButton(c.Key("settings-netease-login"), label).Disabled(a.netease.logging).Clicked() {
 						a.openNetEaseLogin()
 					}
 				})
 			} else {
 				name := cmp.Or(a.settings.NetEaseNickname, "网易云用户")
-				sub := fmt.Sprintf("已登录网易云音乐 · 已同步 %d 个歌单", len(a.neteaseLists))
+				sub := fmt.Sprintf("网易云音乐 · 已同步 %d 个歌单", len(a.neteaseLists))
 				if a.netease.playlistsLoading {
-					sub = "正在同步网易云歌单…"
+					sub = "网易云音乐 · 正在同步歌单…"
 				} else if a.netease.playlistsErr != "" {
 					sub = a.netease.playlistsErr
 				}
-				row("网易云音乐 · "+name, sub, func() {
+				ui.Row(c).Padding(12, 16).Gap(12).AlignItems(ui.Center).Children(func() {
+					a.profileAvatar(c, &spotify.Profile{
+						Nickname:    name,
+						AvatarURL:   a.settings.NetEaseAvatarURL,
+						AvatarColor: 0xC20C0C,
+					}, 36)
+					ui.Column(c).Grow(1).Gap(2).Children(func() {
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, name).FontSize(13.5).FontWeight(600).SingleLine()
+							accountBadge("子账号", false)
+						})
+						ui.Text(c, sub).FontSize(12).TextColor(p.muted)
+					})
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 						if ui.Button(c.Key("settings-netease-refresh"), "刷新歌单").Disabled(a.netease.playlistsLoading).Clicked() {
 							a.loadNetEasePlaylists()

@@ -1041,7 +1041,7 @@ func (a *app) pinnedPlaylistSection(c *ui.Context, prevHadItems bool) (shown, ex
 	if len(entries) == 0 {
 		return false, false
 	}
-	if a.sidebarSectionHeader(c, sidebarSectionPinned, "收藏歌单", len(entries), prevHadItems, nil) {
+	if a.sidebarSectionHeader(c, sidebarSectionPinned, "置顶歌单", len(entries), prevHadItems, nil) {
 		return true, false
 	}
 	if a.settings.MyPlaylistGrid {

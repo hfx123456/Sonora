@@ -763,16 +763,26 @@ func (a *app) barCoverHoverCard(c *ui.Context, coverBox ui.Element, tr *spotify.
 				}
 				ui.Text(c, "暂无更多词曲信息").FontSize(11.5).TextColor(p.faint)
 			}
-			if tr.Album.Name != "" && len(rows) > 0 {
+			showAlbumFooter := tr.Album.Name != "" && len(rows) > 0
+			source := a.trackSourceDisplay(tr)
+			if showAlbumFooter || source != "" {
 				ui.Box(c).Height(0.5).Margin(2, 0, 0, 0).Background(pop.edge)
-				ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
-					label := "专辑"
-					if tr.Episode {
-						label = "节目"
-					}
-					ui.Text(c, label).FontSize(11.5).TextColor(p.faint).Width(60).Shrink(0).SingleLine()
-					ui.Text(c, tr.Album.Name).FontSize(11.5).TextColor(p.muted).Grow(1).Shrink(1).MinWidth(0).SingleLine()
-				})
+				if showAlbumFooter {
+					ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+						label := "专辑"
+						if tr.Episode {
+							label = "节目"
+						}
+						ui.Text(c, label).FontSize(11.5).TextColor(p.faint).Width(60).Shrink(0).SingleLine()
+						ui.Text(c, tr.Album.Name).FontSize(11.5).TextColor(p.muted).Grow(1).Shrink(1).MinWidth(0).SingleLine()
+					})
+				}
+				if source != "" {
+					ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
+						ui.Text(c, "来源").FontSize(11.5).TextColor(p.faint).Width(60).Shrink(0).SingleLine()
+						ui.Text(c, source).FontSize(11.5).TextColor(p.muted).Grow(1).Shrink(1).MinWidth(0).SingleLine()
+					})
+				}
 			}
 		})
 	})

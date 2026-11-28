@@ -781,14 +781,59 @@ func (p *Player) AddToQueue(tr spotify.Track) bool {
 	return true
 }
 
-// shuffleOrder shuffles the order, with first first.
+func shuffleTrackKey(tr spotify.Track) string {
+	return tr.DedupKey()
+}
+
+// shuffleOrder shuffles the order, with first first, skipping duplicate songs
+// (same ID or same normalized title+artist) so shuffle does not replay repeats.
 func (p *Player) shuffleOrder(first int) {
-	rand.Shuffle(len(p.order), func(i, j int) { p.order[i], p.order[j] = p.order[j], p.order[i] })
-	for i, v := range p.order {
+	if len(p.queue) == 0 {
+		p.order = nil
+		return
+	}
+	order := make([]int, len(p.queue))
+	for i := range order {
+		order[i] = i
+	}
+	rand.Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
+	for i, v := range order {
 		if v == first {
-			p.order[0], p.order[i] = p.order[i], p.order[0]
+			order[0], order[i] = order[i], order[0]
+			break
 		}
 	}
+	deduped := make([]int, 0, len(order))
+	seenID := make(map[string]bool, len(order))
+	keyPos := make(map[string]int, len(order))
+	for _, idx := range order {
+		tr := p.queue[idx]
+		if len(deduped) > 0 && tr.ID != "" && seenID[tr.ID] {
+			continue
+		}
+		dk := shuffleTrackKey(tr)
+		if len(deduped) > 0 && dk != "" {
+			if pos, exists := keyPos[dk]; exists {
+				// Never replace index 0 (the currently playing track); for
+				// upcoming duplicates, prefer Spotify > local/cloud > NetEase.
+				if pos > 0 && tr.SourcePriority() > p.queue[deduped[pos]].SourcePriority() {
+					deduped[pos] = idx
+					if tr.ID != "" {
+						seenID[tr.ID] = true
+					}
+				}
+				continue
+			}
+		}
+		if tr.ID != "" {
+			seenID[tr.ID] = true
+		}
+		if dk != "" {
+			keyPos[dk] = len(deduped)
+		}
+		deduped = append(deduped, idx)
+	}
+	p.order = deduped
 }
 
 func (p *Player) ToggleShuffle() {
@@ -813,6 +858,7 @@ func (p *Player) ToggleShuffle() {
 		p.shuffleOrder(cur)
 		p.at = 0
 	} else {
+		p.order = make([]int, len(p.queue))
 		for i := range p.order {
 			p.order[i] = i
 		}
