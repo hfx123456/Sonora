@@ -159,6 +159,20 @@ func buildHybridHydrationIndex(localTracks []spotify.Track) hybridHydrationIndex
 func hydrateHybridTrack(tr spotify.Track, idx hybridHydrationIndex, signedIn, cloudOffline bool) spotify.Track {
 	uid := tr.UID
 	switch {
+	case strings.HasPrefix(tr.ID, "netease:"):
+		// Unmatched NetEase placeholder: automatically revives if the user later
+		// adds a matching file to their local or cloud music library.
+		if nk := trackIdentityKey(tr.Name, tr.ArtistNames()); nk != "" && !idx.ambiguous[nk] {
+			if matched, ok := idx.byName[nk]; ok {
+				tr = matched
+			}
+		}
+		if strings.HasPrefix(tr.ID, "netease:") {
+			tr.Unplayable = true
+			if tr.LocalError == "" {
+				tr.LocalError = "未匹配到音源"
+			}
+		}
 	case tr.Cloud():
 		if live, ok := idx.byID[tr.ID]; ok {
 			tr = live
@@ -452,6 +466,8 @@ func countPlayableTracks(tracks []spotify.Track) int {
 
 func hybridTrackSourceLabel(tr *spotify.Track) (label string, offlineCached bool) {
 	switch {
+	case strings.HasPrefix(tr.ID, "netease:"):
+		return "网易云", false
 	case tr.Cloud():
 		return cmp.Or(strings.TrimSpace(tr.CloudSource), "云盘"), localmusic.CachedCloudAudio(tr.ID) != ""
 	case tr.Local():
@@ -690,7 +706,10 @@ func (a *app) tracksToHybridMenu(m *ui.Menu, defaultName string, tracks []spotif
 }
 
 func (a *app) hybridImportSourcesMenu(m *ui.Menu, dstHybridID string) {
-	addedAny := false
+	if m.Item("从网易云歌单导入…").Chosen() {
+		a.openNetEaseImport(dstHybridID)
+	}
+	addedAny := true
 	hasLocal, hasCloud := false, false
 	for _, tr := range a.localTracks {
 		if tr.Cloud() {
@@ -700,7 +719,7 @@ func (a *app) hybridImportSourcesMenu(m *ui.Menu, dstHybridID string) {
 		}
 	}
 	if hasLocal || hasCloud {
-		addedAny = true
+		m.Separator()
 		if hasLocal && hasCloud {
 			m.Submenu("本地与云盘音乐", func(m *ui.Menu) {
 				if m.Item("全部本地与云盘音乐").Chosen() {

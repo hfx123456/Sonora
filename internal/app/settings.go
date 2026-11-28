@@ -117,6 +117,10 @@ type settings struct {
 	LocalSources          []string             `json:"localSources,omitempty"`
 	CloudSources          []cloudSourceSetting `json:"cloudSources,omitempty"`
 	HiddenLocalIDs        []string             `json:"hiddenLocalIds,omitempty"`
+	NetEaseUserID         int64                `json:"neteaseUserId,omitempty"`
+	NetEaseNickname       string               `json:"neteaseNickname,omitempty"`
+	NetEaseSealedCookie   string               `json:"neteaseSealedCookie,omitempty"`
+	NetEasePlainCookie    string               `json:"neteasePlainCookie,omitempty"`
 	// Notch shows the quick player around the notch: the listener turns
 	// it on.
 	Notch bool `json:"notch"`
@@ -257,10 +261,33 @@ func loadSettings() settings {
 	return s
 }
 
+func (s *settings) neteaseCookie() string {
+	return unsealCloudSecret(s.NetEaseSealedCookie, s.NetEasePlainCookie)
+}
+
+func (s *settings) setNetEaseAccount(userID int64, nickname, cookie string) {
+	s.NetEaseUserID = userID
+	s.NetEaseNickname = nickname
+	s.NetEaseSealedCookie, s.NetEasePlainCookie = sealCloudPassword(cookie)
+}
+
+func (s *settings) clearNetEaseAccount() {
+	s.NetEaseUserID = 0
+	s.NetEaseNickname = ""
+	s.NetEaseSealedCookie = ""
+	s.NetEasePlainCookie = ""
+}
+
 // migratePlainCloudSecrets re-seals any legacy plaintext cloud credentials
 // once OS keystore encryption is available.
 func (s *settings) migratePlainCloudSecrets() bool {
 	migrated := false
+	if s.NetEasePlainCookie != "" {
+		if sealed, plain := sealCloudPassword(s.NetEasePlainCookie); sealed != "" && plain == "" {
+			s.NetEaseSealedCookie, s.NetEasePlainCookie = sealed, ""
+			migrated = true
+		}
+	}
 	for i := range s.CloudSources {
 		cs := &s.CloudSources[i]
 		if cs.PlainPass != "" {

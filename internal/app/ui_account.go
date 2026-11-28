@@ -1115,7 +1115,18 @@ func (a *app) hybridPlaylistsSection(c *ui.Context, prevHadItems bool) (shown, e
 		return true, false
 	}
 	if len(a.hybrids) == 0 {
-		ui.Text(c, "可混排 Spotify、本机与云盘歌曲").FontSize(11.5).TextColor(a.pal.faint).Padding(4, 10, 6, 10)
+		ui.Text(c, "可混排 Spotify、本机与云盘歌曲").FontSize(11.5).TextColor(a.pal.faint).Padding(4, 10, 2, 10)
+		imp := ui.ButtonBase(c.Key("sidebar-netease-import")).Height(28).PaddingX(10).Radius(8).
+			AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label("从网易云导入歌单…")
+		if imp.Hovered() {
+			imp.Background(a.pal.hover)
+		}
+		imp.Children(func() {
+			ui.Text(c, "从网易云导入歌单…").FontSize(12).FontWeight(500).TextColor(a.pal.accent).SingleLine()
+		})
+		if imp.Clicked() {
+			a.openNetEaseImport("")
+		}
 		return true, true
 	}
 	if a.settings.MyPlaylistGrid {
@@ -1202,6 +1213,9 @@ func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid, pinned
 		if !strings.HasPrefix(pl.ID, "spotify:show:") {
 			m.Separator()
 			if pl.Hybrid() {
+				if m.Item("从网易云歌单导入…").Chosen() {
+					a.openNetEaseImport(pl.ID)
+				}
 				if m.Item("打乱顺序").Chosen() {
 					a.shuffleHybridPlaylist(pl.ID)
 				}

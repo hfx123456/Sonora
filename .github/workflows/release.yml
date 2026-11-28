@@ -24,7 +24,7 @@ jobs:
       - name: Run Go tests
         env:
           CGO_ENABLED: '0'
-        run: go test ./internal/...
+        run: go test -short ./internal/...
 
       - name: Cache NSIS for Windows installer
         uses: actions/cache@v4
@@ -89,7 +89,7 @@ jobs:
       - name: Run Go tests
         env:
           CGO_ENABLED: '0'
-        run: go test ./internal/...
+        run: go test -short ./internal/...
 
       - name: Build macOS Universal (.app & .dmg)
         env:

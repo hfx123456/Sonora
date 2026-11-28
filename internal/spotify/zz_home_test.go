@@ -3,6 +3,9 @@ package spotify
 import "testing"
 
 func TestLiveGuestHome(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping live Spotify guest home probe in -short mode")
+	}
 	SetIdentity(Identity{})
 	SignOut()
 	RenewGuest = AnonymousIdentity

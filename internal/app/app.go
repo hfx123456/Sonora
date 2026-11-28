@@ -246,6 +246,7 @@ type app struct {
 	cloudFormOK          string
 	cloudLoginWin        *mygo.Window
 	cloudLoginGen        int
+	netease              neteaseImportState
 	cloudBrowseID        string
 	cloudBrowsePath      string
 	cloudBrowseSelected  string
@@ -591,6 +592,8 @@ func Run() error {
 		a.closeMiniPlayer()
 		a.closeSignin()
 		a.closeCloudLoginWindow()
+		a.closeNetEaseLoginWindow()
+		a.cancelNetEaseImport()
 		a.stopConnectWait(1500 * time.Millisecond)
 		if a.mineTimer != nil {
 			a.mineTimer.Stop()

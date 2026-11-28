@@ -54,7 +54,7 @@ func (a *app) view(c *ui.Context) {
 	}
 	root := ui.Box(c).Fill()
 	if !c.Focused(a.searchBox) && !c.Focused(a.localSearchBox) && !c.Focused(a.playlistSearchBox) &&
-		!a.naming.open && !a.cloudFormOpen && !a.proxyTyping && a.recording == "" {
+		!a.naming.open && !a.netease.open && !a.cloudFormOpen && !a.proxyTyping && a.recording == "" {
 		// Space plays and pauses wherever the focus is, as in Music. On
 		// the container around everything, it comes before a button the
 		// pointer focused, which would take Space as a click; on the
@@ -104,6 +104,7 @@ func (a *app) view(c *ui.Context) {
 		}
 		a.playlistNameDialog(c)
 		a.deletePlaylistDialog(c)
+		a.neteaseImportDialog(c)
 	})
 	if a.toast != "" {
 		c.Toast(a.toast)
