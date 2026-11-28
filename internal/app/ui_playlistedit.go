@@ -28,13 +28,15 @@ type nameDialog struct {
 	rename string         // the playlist renamed, or "" to make one
 	add    *spotify.Track // the song to add to the playlist made, if any
 	busy   bool           // Spotify is making the playlist
+	hybrid bool           // true for locally stored hybrid playlists
 }
 
 // deleteDialog asks whether to delete one of the listener's playlists.
 type deleteDialog struct {
-	open bool
-	id   string
-	name string
+	open   bool
+	id     string
+	name   string
+	hybrid bool
 }
 
 // editable returns the listener's playlist id if they may edit its songs
@@ -43,6 +45,11 @@ func (a *app) editable(id string) *spotify.Playlist {
 	for i := range a.mine {
 		if a.mine[i].ID == id && !a.mine[i].Liked() {
 			return &a.mine[i]
+		}
+	}
+	for i := range a.hybrids {
+		if a.hybrids[i].ID == id {
+			return &a.hybrids[i]
 		}
 	}
 	return nil
@@ -75,7 +82,7 @@ func (a *app) newPlaylist(tr *spotify.Track) {
 
 // startRename asks for a new name for the listener's playlist pl.
 func (a *app) startRename(pl *spotify.Playlist) {
-	a.naming = nameDialog{open: true, name: pl.Name, rename: pl.ID}
+	a.naming = nameDialog{open: true, name: pl.Name, rename: pl.ID, hybrid: pl.Hybrid()}
 }
 
 // submitName makes the playlist named, or renames one: at once in the app,
@@ -83,7 +90,20 @@ func (a *app) startRename(pl *spotify.Playlist) {
 func (a *app) submitName() {
 	d := &a.naming
 	name := strings.TrimSpace(d.name)
-	if name == "" || d.busy || a.profile == nil {
+	if name == "" || d.busy {
+		return
+	}
+	if d.hybrid {
+		rename, add := d.rename, d.add
+		d.open = false
+		if rename != "" {
+			a.renameHybridPlaylist(rename, name)
+		} else {
+			a.createHybridPlaylist(name, add)
+		}
+		return
+	}
+	if a.profile == nil {
 		return
 	}
 	if d.rename != "" {
@@ -146,15 +166,19 @@ func (a *app) submitName() {
 
 // confirmDelete asks whether to delete the listener's playlist pl.
 func (a *app) confirmDelete(pl *spotify.Playlist) {
-	a.deleting = deleteDialog{open: true, id: pl.ID, name: pl.Name}
+	a.deleting = deleteDialog{open: true, id: pl.ID, name: pl.Name, hybrid: pl.Hybrid()}
 }
 
 // deleteChosen deletes the playlist the dialog asked about: at once from
 // the sidebar, leaving its page, and then with Spotify, which may refuse:
 // it comes back then.
 func (a *app) deleteChosen() {
-	id := a.deleting.id
+	id, hybrid := a.deleting.id, a.deleting.hybrid
 	a.deleting.open = false
+	if hybrid || spotify.IsHybridPlaylistID(id) {
+		a.deleteHybridPlaylist(id)
+		return
+	}
 	i := slices.IndexFunc(a.mine, func(pl spotify.Playlist) bool { return pl.ID == id })
 	if i < 0 || a.mine[i].Liked() || a.profile == nil {
 		return
@@ -278,22 +302,23 @@ func (a *app) removeFrom(pid string, tr *spotify.Track) {
 	}()
 }
 
-// playlistItems are the items of a song's menu that put it in the
-// listener's playlists, or take it out of pid, the one it is listed in, if
-// set.
-func (a *app) playlistItems(m *ui.Menu, tr *spotify.Track, pid string) {
-	// Episodes go in no playlist of Vinyl's: it lists their songs only.
-	if a.profile == nil || tr.Episode {
+// hybridPlaylistItems adds menu entries for adding any non-episode track
+// (Spotify, local, or cloud) to a local hybrid playlist, and for reordering
+// or removing tracks when viewing one.
+func (a *app) hybridPlaylistItems(m *ui.Menu, tr *spotify.Track, pid string, leadingSep bool) {
+	if tr == nil || tr.Episode {
 		return
 	}
-	m.Separator()
-	m.Submenu("添加到歌单", func(m *ui.Menu) {
-		if m.Item("新建歌单…").Chosen() {
-			a.newPlaylist(tr)
+	if leadingSep {
+		m.Separator()
+	}
+	m.Submenu("添加到混合歌单", func(m *ui.Menu) {
+		if m.Item("新建混合歌单…").Chosen() {
+			a.newHybridPlaylist(tr)
 		}
 		var to []*spotify.Playlist
-		for i := range a.mine {
-			if pl := &a.mine[i]; !pl.Liked() && pl.ID != pid {
+		for i := range a.hybrids {
+			if pl := &a.hybrids[i]; pl.ID != pid {
 				to = append(to, pl)
 			}
 		}
@@ -302,13 +327,61 @@ func (a *app) playlistItems(m *ui.Menu, tr *spotify.Track, pid string) {
 		}
 		for _, pl := range to {
 			if m.Item(pl.Name).Chosen() {
-				a.addTo(pl.ID, tr)
+				a.addToHybrid(pl.ID, tr)
 			}
 		}
 	})
-	if tr.UID != "" && a.editable(pid) != nil && m.Item("从歌单中移除").Chosen() {
-		a.removeFrom(pid, tr)
+	if spotify.IsHybridPlaylistID(pid) && tr.UID != "" {
+		if a.playlistSorts[pid] == playlistOriginal {
+			idx, total := a.hybridTrackPosition(pid, tr.UID)
+			if idx > 0 && m.Item("上移").Chosen() {
+				a.moveHybridTrack(pid, tr.UID, -1)
+			}
+			if idx >= 0 && idx < total-1 && m.Item("下移").Chosen() {
+				a.moveHybridTrack(pid, tr.UID, 1)
+			}
+		}
+		if m.Item("从混合歌单移除").Chosen() {
+			a.removeFromHybrid(pid, tr.UID)
+		}
 	}
+}
+
+// playlistItems are the items of a song's menu that put it in the
+// listener's playlists, or take it out of pid, the one it is listed in, if
+// set.
+func (a *app) playlistItems(m *ui.Menu, tr *spotify.Track, pid string) {
+	// Episodes go in no playlist of Vinyl's: it lists their songs only.
+	if tr == nil || tr.Episode {
+		return
+	}
+	hasSpotifySection := a.profile != nil && !tr.Local()
+	if hasSpotifySection {
+		m.Separator()
+		m.Submenu("添加到歌单", func(m *ui.Menu) {
+			if m.Item("新建歌单…").Chosen() {
+				a.newPlaylist(tr)
+			}
+			var to []*spotify.Playlist
+			for i := range a.mine {
+				if pl := &a.mine[i]; !pl.Liked() && pl.ID != pid {
+					to = append(to, pl)
+				}
+			}
+			if len(to) > 0 {
+				m.Separator()
+			}
+			for _, pl := range to {
+				if m.Item(pl.Name).Chosen() {
+					a.addTo(pl.ID, tr)
+				}
+			}
+		})
+		if !spotify.IsHybridPlaylistID(pid) && tr.UID != "" && a.editable(pid) != nil && m.Item("从歌单中移除").Chosen() {
+			a.removeFrom(pid, tr)
+		}
+	}
+	a.hybridPlaylistItems(m, tr, pid, !hasSpotifySection)
 }
 
 // playlistNameDialog asks for the name of a playlist to make, or a new
@@ -322,13 +395,22 @@ func (a *app) playlistNameDialog(c *ui.Context) {
 			Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.94}, Exit: &ui.Motion{Scale: 0.96}})
 		a.styleGlassPanel(panel, 20, p.bg, p.hairline, 60, 24, ui.RGBA(0, 0, 0, 0.4))
 		title, action := "新建歌单", "创建"
+		if d.hybrid {
+			title = "新建混合歌单"
+		}
 		if d.rename != "" {
 			title, action = "重命名歌单", "保存"
+			if d.hybrid {
+				title = "重命名混合歌单"
+			}
 		}
 		if d.busy {
 			action = "正在创建…"
 		}
 		ui.Text(c, title).FontSize(17).FontWeight(700)
+		if d.hybrid && d.rename == "" {
+			ui.Text(c, "保存在本机，可混排 Spotify、本机与云盘歌曲，离线也能查看和播放可用曲目。").FontSize(12).TextColor(p.muted).LineHeight(1.45)
+		}
 		in := ui.TextInput(c.Key("name"), &d.name).Placeholder("歌单名称").Label("歌单名称").FontSize(14).AutoFocus()
 		if in.Submitted() {
 			a.submitName()
@@ -357,8 +439,14 @@ func (a *app) deletePlaylistDialog(c *ui.Context) {
 		panel.Width(360).Padding(24).Gap(8).
 			Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.94}, Exit: &ui.Motion{Scale: 0.96}})
 		a.styleGlassPanel(panel, 20, p.bg, p.hairline, 60, 24, ui.RGBA(0, 0, 0, 0.4))
-		ui.Text(c, "删除歌单").FontSize(17).FontWeight(700)
-		ui.Text(c, "确定删除歌单“"+d.name+"”吗？它会从你的资料库里移除。").FontSize(13).TextColor(p.muted).LineHeight(1.45)
+		title := "删除歌单"
+		body := "确定删除歌单“" + d.name + "”吗？它会从你的资料库里移除。"
+		if d.hybrid {
+			title = "删除混合歌单"
+			body = "确定删除混合歌单“" + d.name + "”吗？只会移除歌单记录，不会删除本机或云盘文件。"
+		}
+		ui.Text(c, title).FontSize(17).FontWeight(700)
+		ui.Text(c, body).FontSize(13).TextColor(p.muted).LineHeight(1.45)
 		ui.Row(c).Gap(10).Justify(ui.End).Margin(8, 0, 0, 0).Children(func() {
 			if pillButton(c.Key("cancel"), nil, "取消", p.hover.Over(p.bg), p.text).Clicked() {
 				d.open = false

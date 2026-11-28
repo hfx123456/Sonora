@@ -87,6 +87,8 @@ type app struct {
 	localFilterCache                    trackFilterCache
 	playlistSync                        playlistSyncState
 	mine, saved                         []spotify.Playlist   // the listener's playlists: made, and saved
+	hybrids                             []spotify.Playlist   // locally stored hybrid playlists (Spotify + local + cloud)
+	hybridStore                         hybridPlaylistStore  // persistence for hybrid playlists
 	followed                            []spotify.ArtistCard // the artists the listener follows
 	next                                *route               // the page to open once the frame is built (goTo)
 	signin                              signin               // the web player's window, which signs the listener in
@@ -212,6 +214,7 @@ type app struct {
 	lyricsToast    string    // how far the lyrics over a video were moved, to show
 
 	settings        settings
+	lyricsOffsets   lyricsOffsetStore
 	localTracks     []spotify.Track
 	localLoading    bool
 	localLoaded     bool
@@ -442,6 +445,8 @@ func Run() error {
 	}
 	mygo.App.WhenReady(func() {
 		a.settings = loadSettings()
+		a.lyricsOffsets = loadLyricsOffsets()
+		a.loadHybridPlaylists()
 		a.settings.applyAppearance()
 		// Before anything asks Spotify, or a web page loads.
 		a.applyProxy()

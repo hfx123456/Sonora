@@ -27,6 +27,7 @@ type fusionState struct {
 	cancel          context.CancelFunc
 	lines           []lyrics.Line
 	source, message string
+	importHash      string
 	loading         bool
 	scroll          ui.ScrollState
 	at              int
@@ -138,7 +139,7 @@ func (a *app) ensureFusion(refresh bool) {
 		state.cancel()
 	}
 	state.generation++
-	state.key, state.lines, state.source, state.message = key, nil, "", ""
+	state.key, state.lines, state.source, state.message, state.importHash = key, nil, "", "", ""
 	state.scroll, state.at = ui.ScrollState{}, -2
 	state.loading = track != nil
 	if track == nil {
@@ -261,7 +262,7 @@ func shouldSyncFusionLyricsToPlayer(current []lyrics.Line, loaded bool, source s
 }
 
 func (a *app) fusionPosition() time.Duration {
-	return a.pl.SongPosition() + time.Duration(a.settings.FusionOffset)*time.Millisecond
+	return a.lyricsPosition()
 }
 
 func (a *app) fusionCurrent() fusionCaption {
@@ -465,10 +466,7 @@ func (a *app) toggleFusionPanel() {
 }
 
 func (a *app) nudgeFusion(delta int64) {
-	a.settings.FusionOffset = max(-30000, min(30000, a.settings.FusionOffset+delta))
-	a.settings.save()
-	a.resizeFusion()
-	a.redraw()
+	a.nudgeLyricsOffset(delta)
 }
 
 func (a *app) importFusion() {
@@ -493,6 +491,8 @@ func (a *app) importFusion() {
 			a.post(func() { a.toast = "无法读取歌词文件" })
 			return
 		}
+		rawText := strings.TrimPrefix(string(data), "\ufeff")
+		importHash := lyricsImportHash(rawText)
 		a.post(func() {
 			if key != fusionTrackKey(a.pl.Current()) {
 				return
@@ -502,14 +502,19 @@ func (a *app) importFusion() {
 			}
 			a.fusion.generation++
 			generation := a.fusion.generation
-			a.fusion.key, a.fusion.loading, a.fusion.message = key, true, ""
+			a.fusion.key, a.fusion.loading, a.fusion.message, a.fusion.importHash = key, true, "", importHash
 			ctx, cancel := context.WithCancel(context.Background())
 			a.fusion.cancel = cancel
 			dir, _ := mygo.App.Path(mygo.PathCache)
 			go func() {
 				defer cancel()
-				result, err := fetchFusion(ctx, filepath.Join(dir, "fusion"), fusion.Request{Raw: strings.TrimPrefix(string(data), "\ufeff"), ParseOnly: true}, false)
-				a.post(func() { a.receiveFusionWith(key, generation, result, err, true) })
+				result, err := fetchFusion(ctx, filepath.Join(dir, "fusion"), fusion.Request{Raw: rawText, ParseOnly: true}, false)
+				a.post(func() {
+					if generation == a.fusion.generation && key == a.fusion.key {
+						a.fusion.importHash = importHash
+					}
+					a.receiveFusionWith(key, generation, result, err, true)
+				})
 			}()
 		})
 	}()

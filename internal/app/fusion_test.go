@@ -38,12 +38,12 @@ func TestFusionPanelControls(t *testing.T) {
 	if !a.settings.FusionPanel {
 		t.Fatal("panel did not open")
 	}
-	if err := tester.Click("歌词提前半秒"); err != nil {
+	if err := tester.Click("本曲歌词提前 0.2 秒"); err != nil {
 		t.Fatal(err)
 	}
 	tester.Frame()
-	if a.settings.FusionOffset != 500 {
-		t.Fatal("timing offset did not change")
+	if a.currentLyricsOffsetMs() != 200 {
+		t.Fatalf("timing offset = %d, want 200", a.currentLyricsOffsetMs())
 	}
 	if err := tester.Click("关闭双语歌词面板"); err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func TestFusionOriginalAndTranslation(t *testing.T) {
 	if translation := a.fusionCurrent().detail; translation != "" {
 		t.Fatalf("substituted another line: %q", translation)
 	}
-	a.settings.FusionOffset = 3000
+	a.setCurrentLyricsOffset(3000)
 	if a.fusionCurrent().line.Text != "いつも" {
 		t.Fatal("offset did not affect current line")
 	}
@@ -184,8 +184,8 @@ func TestFusionChineseNextLine(t *testing.T) {
 	a := newTestApp()
 	a.settings.FusionMode = "capsule"
 	a.settings.FusionHideTranslation = true
-	a.settings.FusionOffset = 500
 	a.pl.Cue([]spotify.Track{{ID: "chinese", Name: "表白"}})
+	a.setCurrentLyricsOffset(500)
 	a.fusion.lines = prepareFusionLines([]lyrics.Line{
 		{At: time.Second, Text: "晚风轻轻吹过窗前", Translation: "晚风轻轻吹过窗前"},
 		{At: 4 * time.Second, Text: " "},
@@ -290,8 +290,8 @@ func TestFusionClickSeeks(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.settings.FusionPanel = true
-	a.settings.FusionOffset = 500
 	a.pl.Cue([]spotify.Track{{ID: "1", Name: "Song", Duration: 200000}})
+	a.setCurrentLyricsOffset(500)
 	a.pl.Hold(time.Second)
 	a.fusion.lines = []lyrics.Line{{At: 10 * time.Second, End: 20 * time.Second, Text: "ありがとう", Translation: "谢谢你"}}
 	tester := ui.NewTester(a.view, 1180, 780)

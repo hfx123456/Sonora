@@ -209,7 +209,7 @@ func (a *app) stage(c *ui.Context, tr *spotify.Track, accent ui.Color) {
 		})
 		return
 	}
-	pos := pl.SongPosition()
+	pos := a.lyricsPosition()
 	cur := lyrics.Index(lines, pos)
 	if pl.Playing() {
 		stageNextFrame(c, lines, cur, pos)

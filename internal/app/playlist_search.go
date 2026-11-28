@@ -180,7 +180,7 @@ func (a *app) playPlaylistMatch(id string, match spotify.Track) {
 	tracks := a.orderedPlaylistTracks(playlist)
 	for index, track := range tracks {
 		if track.ID == match.ID && (match.UID == "" || track.UID == match.UID) {
-			a.playFrom(spotify.HomeItem{List: playlist}, tracks, index)
+			a.playPlaylistTrack(playlist, tracks, index)
 			return
 		}
 	}

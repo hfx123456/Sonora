@@ -57,11 +57,15 @@ func (a *app) songItems(tr *spotify.Track, pid string) func(m *ui.Menu) {
 			copyText(tr.Name + " - " + tr.ArtistNames())
 		}
 		if tr.Cloud() {
-			if tr.UID != "" && a.editable(pid) != nil && m.Item("从歌单中移除").Chosen() {
+			if !spotify.IsHybridPlaylistID(pid) && tr.UID != "" && a.editable(pid) != nil && m.Item("从歌单中移除").Chosen() {
 				a.removeFrom(pid, tr)
 			}
-			if tr.CloudURL != "" && m.Item("复制云盘链接").Chosen() {
-				copyText(tr.CloudURL)
+			a.hybridPlaylistItems(m, tr, pid, true)
+			if tr.CloudURL != "" {
+				m.Separator()
+				if m.Item("复制云盘链接").Chosen() {
+					copyText(tr.CloudURL)
+				}
 			}
 			m.Separator()
 			if m.Item("从音乐库移除").Chosen() {
@@ -70,11 +74,15 @@ func (a *app) songItems(tr *spotify.Track, pid string) func(m *ui.Menu) {
 			return
 		}
 		if tr.Local() {
-			if tr.UID != "" && a.editable(pid) != nil && m.Item("从歌单中移除").Chosen() {
+			if !spotify.IsHybridPlaylistID(pid) && tr.UID != "" && a.editable(pid) != nil && m.Item("从歌单中移除").Chosen() {
 				a.removeFrom(pid, tr)
 			}
-			if tr.LocalPath != "" && m.Item("复制文件路径").Chosen() {
-				copyText(tr.LocalPath)
+			a.hybridPlaylistItems(m, tr, pid, true)
+			if tr.LocalPath != "" {
+				m.Separator()
+				if m.Item("复制文件路径").Chosen() {
+					copyText(tr.LocalPath)
+				}
 			}
 			if tr.LocalPath != "" && len(a.settings.CloudSources) > 0 && !a.cloudUploading {
 				addedSep := false

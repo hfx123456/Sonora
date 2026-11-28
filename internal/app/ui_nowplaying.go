@@ -2,6 +2,7 @@ package app
 
 import (
 	"math"
+	"strings"
 	"time"
 	"unicode"
 
@@ -408,7 +409,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 		})
 		return
 	}
-	pos := pl.SongPosition()
+	pos := a.lyricsPosition()
 	cur := lyrics.Index(lines, pos)
 	// Redraw as the next line begins.
 	if pl.Playing() && cur+1 < len(lines) {
@@ -484,7 +485,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 							activeLine := l
 							activeLine.Words = words
 							karaokeText(c.Key("words"), activeLine, ui.Font{Family: c.Theme().Font, Size: 30, Weight: 800, LineHeight: 1.25},
-								white.Alpha(.38), white, pl.SongPosition, pl.Playing, c.Preferences().ReduceMotion)
+								white.Alpha(.38), white, a.lyricsPosition, pl.Playing, c.Preferences().ReduceMotion)
 						} else {
 							ui.Text(c, l.Text).FontSize(30).FontWeight(800).LineHeight(1.25).LetterSpacing(-0.4).TextColor(white)
 						}
@@ -492,7 +493,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 							if trWords := stageTranslationWords(lines, i, words); on && len(trWords) > 0 {
 								trLine := lyrics.Line{Text: l.Translation, At: l.At, End: l.End, Words: trWords}
 								karaokeText(c.Key("translation"), trLine, ui.Font{Family: c.Theme().Font, Size: 17, Weight: 600, LineHeight: 1.35},
-									white.Alpha(.34), white.Alpha(.88), pl.SongPosition, pl.Playing, c.Preferences().ReduceMotion)
+									white.Alpha(.34), white.Alpha(.88), a.lyricsPosition, pl.Playing, c.Preferences().ReduceMotion)
 							} else {
 								ui.Text(c, l.Translation).FontSize(17).FontWeight(600).TextColor(white.Alpha(0.7))
 							}
@@ -500,7 +501,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 					})
 				})
 				if line.Clicked() {
-					pl.Seek(max(0, l.At+pl.VideoLead()))
+					pl.Seek(max(0, l.At-a.currentLyricsOffset()+pl.VideoLead()))
 				}
 				if on {
 					active = line
@@ -514,6 +515,9 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 			}
 		})
 	})
+	if !tr.Episode {
+		a.npLyricsCalibrationBar(c)
+	}
 	// Bring the line sung to a third of the way down, once it changed.
 	if cur != a.lyricAt {
 		target := float32(0)
@@ -538,6 +542,38 @@ func (a *app) lyricsPane(c *ui.Context, tr *spotify.Track, h float32) {
 		a.lyricAt = cur
 		a.lyricGlide.to(c, &a.lyricScroll, min(max(0, target), a.lyricScroll.MaxY))
 	}
+}
+
+func (a *app) npLyricsCalibrationBar(c *ui.Context) {
+	offsetMs := a.currentLyricsOffsetMs()
+	source, _, _ := strings.Cut(a.fusion.source, " · ")
+	ui.Row(c.Key("np-lyrics-offset")).Padding(6, 12, 0, 12).Gap(6).AlignItems(ui.Center).Children(func() {
+		if source != "" {
+			ui.Text(c, source).FontSize(11).TextColor(white.Alpha(0.35)).SingleLine()
+		}
+		ui.Spacer(c)
+		if iconButton(c.Key("np-lyrics-earlier"), iconBack, 13, white.Alpha(0.55), "本曲歌词提前 0.2 秒").Clicked() {
+			a.nudgeLyricsOffset(lyricsOffsetStepMs)
+		}
+		offsetColor := white.Alpha(0.5)
+		if offsetMs != 0 {
+			offsetColor = white.Alpha(0.92)
+		}
+		resetBtn := ui.ButtonBase(c.Key("np-lyrics-reset")).Padding(3, 7).Radius(6).FocusRing(false).
+			Label("重置本曲歌词时间").Tooltip("点击重置本曲歌词时间").Disabled(offsetMs == 0)
+		if offsetMs != 0 && resetBtn.Hovered() {
+			resetBtn.Background(white.Alpha(0.12))
+		}
+		resetBtn.Children(func() {
+			ui.Text(c, formatLyricsOffset(offsetMs)).FontSize(11).FontFeatures("tnum").TextColor(offsetColor)
+		})
+		if resetBtn.Clicked() {
+			a.resetCurrentLyricsOffset()
+		}
+		if iconButton(c.Key("np-lyrics-later"), iconForward, 13, white.Alpha(0.55), "本曲歌词延后 0.2 秒").Clicked() {
+			a.nudgeLyricsOffset(-lyricsOffsetStepMs)
+		}
+	})
 }
 
 // lyricGap is the room between two lines of the lyrics.

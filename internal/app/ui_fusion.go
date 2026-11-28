@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -162,16 +161,22 @@ func (a *app) fusionMenu(menu *ui.Menu) {
 		a.redraw()
 	}
 	menu.Separator()
-	if menu.Item("歌词提前 0.5 秒").Chosen() {
-		a.nudgeFusion(500)
+	canCalibrate := a.pl.Current() != nil && !a.pl.Current().Episode
+	curOffset := a.currentLyricsOffsetMs()
+	if menu.Item("本曲歌词提前 0.2 秒").Disabled(!canCalibrate).Chosen() {
+		a.nudgeFusion(lyricsOffsetStepMs)
 	}
-	if menu.Item("歌词延后 0.5 秒").Chosen() {
-		a.nudgeFusion(-500)
+	if menu.Item("本曲歌词延后 0.2 秒").Disabled(!canCalibrate).Chosen() {
+		a.nudgeFusion(-lyricsOffsetStepMs)
 	}
-	if menu.Item("重置歌词时间").Chosen() {
-		a.settings.FusionOffset = 0
-		a.settings.save()
-		a.redraw()
+	if menu.Item("本曲歌词提前 0.5 秒").Disabled(!canCalibrate).Chosen() {
+		a.nudgeFusion(lyricsOffsetBigStepMs)
+	}
+	if menu.Item("本曲歌词延后 0.5 秒").Disabled(!canCalibrate).Chosen() {
+		a.nudgeFusion(-lyricsOffsetBigStepMs)
+	}
+	if menu.Item("重置本曲歌词时间").Disabled(!canCalibrate || curOffset == 0).Chosen() {
+		a.resetCurrentLyricsOffset()
 	}
 	menu.Separator()
 	idle := a.pl.Current() == nil
@@ -233,12 +238,30 @@ func (a *app) fusionPanel(c *ui.Context) {
 			ui.Row(c).Padding(12, 18, 14, 24).Gap(5).AlignItems(ui.Center).Children(func() {
 				source, _, _ := strings.Cut(a.fusion.source, " · ")
 				ui.Text(c, source).Grow(1).FontSize(10.5).TextColor(white.Alpha(0.4)).SingleLine()
-				if iconButton(c.Key("earlier"), iconBack, 13, white.Alpha(0.55), "歌词提前半秒").Clicked() {
-					a.nudgeFusion(500)
+				canCalibrate := a.pl.Current() != nil && !a.pl.Current().Episode
+				offsetMs := a.currentLyricsOffsetMs()
+				earlier := iconButton(c.Key("earlier"), iconBack, 13, white.Alpha(0.55), "本曲歌词提前 0.2 秒").Disabled(!canCalibrate)
+				if earlier.Clicked() {
+					a.nudgeFusion(lyricsOffsetStepMs)
 				}
-				ui.Text(c, fmt.Sprintf("%+.1fs", float64(a.settings.FusionOffset)/1000)).FontSize(10.5).TextColor(white.Alpha(0.55))
-				if iconButton(c.Key("later"), iconForward, 13, white.Alpha(0.55), "歌词延后半秒").Clicked() {
-					a.nudgeFusion(-500)
+				offsetColor := white.Alpha(0.55)
+				if offsetMs != 0 {
+					offsetColor = white.Alpha(0.92)
+				}
+				resetBtn := ui.ButtonBase(c.Key("reset-offset")).Padding(3, 6).Radius(6).FocusRing(false).
+					Label("重置本曲歌词时间").Tooltip("点击重置本曲歌词时间").Disabled(!canCalibrate || offsetMs == 0)
+				if offsetMs != 0 && resetBtn.Hovered() {
+					resetBtn.Background(white.Alpha(0.12))
+				}
+				resetBtn.Children(func() {
+					ui.Text(c, formatLyricsOffset(offsetMs)).FontSize(10.5).FontFeatures("tnum").TextColor(offsetColor)
+				})
+				if resetBtn.Clicked() {
+					a.resetCurrentLyricsOffset()
+				}
+				later := iconButton(c.Key("later"), iconForward, 13, white.Alpha(0.55), "本曲歌词延后 0.2 秒").Disabled(!canCalibrate)
+				if later.Clicked() {
+					a.nudgeFusion(-lyricsOffsetStepMs)
 				}
 			})
 		})
@@ -290,7 +313,7 @@ func (a *app) fusionLines(c *ui.Context) {
 					}
 				})
 				if button.Clicked() && !line.Unsynced {
-					a.pl.Seek(max(0, line.At-time.Duration(a.settings.FusionOffset)*time.Millisecond+a.pl.VideoLead()))
+					a.pl.Seek(max(0, line.At-a.currentLyricsOffset()+a.pl.VideoLead()))
 					a.redraw()
 				}
 			}

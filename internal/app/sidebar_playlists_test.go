@@ -258,6 +258,7 @@ func TestSidebarSectionAlignmentAndCompactCollapsedSpacing(t *testing.T) {
 	a.settings.PinnedPlaylists = []string{spotify.LikedURI}
 	a.settings.SidebarCollapsed = map[string]bool{
 		sidebarSectionMine:     true,
+		sidebarSectionHybrid:   true,
 		sidebarSectionSaved:    true,
 		sidebarSectionFollowed: true,
 	}
@@ -268,20 +269,22 @@ func TestSidebarSectionAlignmentAndCompactCollapsedSpacing(t *testing.T) {
 	pinHdr, ok1 := tt.Find("置顶歌单")
 	likedRow, ok2 := tt.Find("我喜欢的音乐")
 	mineHdr, ok3 := tt.Find("我的歌单")
+	hybridHdr, okH := tt.Find("混合歌单")
 	savedHdr, ok4 := tt.Find("我的收藏")
 	followedHdr, ok5 := tt.Find("关注的艺人")
-	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
-		t.Fatalf("missing elements: %v %v %v %v %v", ok1, ok2, ok3, ok4, ok5)
+	if !ok1 || !ok2 || !ok3 || !okH || !ok4 || !ok5 {
+		t.Fatalf("missing elements: %v %v %v %v %v %v", ok1, ok2, ok3, okH, ok4, ok5)
 	}
-	if pinHdr.X != likedRow.X || mineHdr.X != likedRow.X || savedHdr.X != likedRow.X {
-		t.Fatalf("left edges misaligned: pinHdr.X=%v likedRow.X=%v mineHdr.X=%v savedHdr.X=%v",
-			pinHdr.X, likedRow.X, mineHdr.X, savedHdr.X)
+	if pinHdr.X != likedRow.X || mineHdr.X != likedRow.X || hybridHdr.X != likedRow.X || savedHdr.X != likedRow.X {
+		t.Fatalf("left edges misaligned: pinHdr.X=%v likedRow.X=%v mineHdr.X=%v hybridHdr.X=%v savedHdr.X=%v",
+			pinHdr.X, likedRow.X, mineHdr.X, hybridHdr.X, savedHdr.X)
 	}
 	// Collapsed consecutive headers must stay compact (<= 8px gap, not 24px).
-	gap1 := savedHdr.Y - (mineHdr.Y + mineHdr.H)
+	gap0 := hybridHdr.Y - (mineHdr.Y + mineHdr.H)
+	gap1 := savedHdr.Y - (hybridHdr.Y + hybridHdr.H)
 	gap2 := followedHdr.Y - (savedHdr.Y + savedHdr.H)
-	if gap1 < 0 || gap1 > 8 || gap2 < 0 || gap2 > 8 {
-		t.Fatalf("collapsed section spacing too large: gap1=%v gap2=%v", gap1, gap2)
+	if gap0 < 0 || gap0 > 8 || gap1 < 0 || gap1 > 8 || gap2 < 0 || gap2 > 8 {
+		t.Fatalf("collapsed section spacing too large: gap0=%v gap1=%v gap2=%v", gap0, gap1, gap2)
 	}
 
 	if out := os.Getenv("SIDEBAR_SNAP"); out != "" {

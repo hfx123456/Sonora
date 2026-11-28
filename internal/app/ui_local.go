@@ -514,6 +514,7 @@ func (a *app) toggleCacheAllCloud() {
 			a.cloudSyncing = false
 			a.cloudSyncCancel = nil
 			a.cloudSyncLastFailed = stats.Failed
+			a.refreshHybridPlaylists()
 			switch {
 			case stats.Failed > 0:
 				a.toast = fmt.Sprintf("已缓存 %d 首，%d 首失败", stats.Succeeded, stats.Failed)
@@ -702,6 +703,7 @@ func (a *app) applyScannedTracks(tracks []spotify.Track, warnings []string, done
 			playlist.Tracks = updated
 		}
 	}
+	a.refreshHybridPlaylists()
 }
 
 func (a *app) scanLocalMusic() {

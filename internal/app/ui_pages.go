@@ -283,6 +283,8 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(8).Children(func() {
 			kind, unit := "歌单", "首"
 			switch {
+			case pl.Hybrid():
+				kind = "本机混合歌单"
 			case strings.HasPrefix(pl.ID, "spotify:album:"):
 				kind = "专辑"
 			case strings.HasPrefix(pl.ID, "spotify:show:"):
@@ -307,7 +309,13 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 					// The latest episodes list; the podcast has them all.
 					n = max(n, pl.TrackCount)
 				}
-				ui.Text(c, fmt.Sprintf("%d %s", n, unit)).FontSize(13).TextColor(p.muted).Shrink(0)
+				countText := fmt.Sprintf("%d %s", n, unit)
+				if pl.Hybrid() && n > 0 {
+					if playable := countPlayableTracks(pl.Tracks); playable < n {
+						countText = fmt.Sprintf("%d %s · 当前可播 %d %s", n, unit, playable, unit)
+					}
+				}
+				ui.Text(c, countText).FontSize(13).TextColor(p.muted).Shrink(0)
 			})
 			if d := strings.TrimSpace(pl.Description); d != "" {
 				ui.Text(c, strings.ReplaceAll(d, "\n", " ")).FontSize(12.5).TextColor(p.muted).MaxLines(2).LineHeight(1.45).Margin(2, 0, 0, 0)
@@ -317,8 +325,18 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 					a.playPlaylist(pl)
 				}
 				if a.secondaryPillButton(c.Key("shuffle"), iconShuffle, "随机播放").Clicked() {
-					a.enableShuffle()
-					a.playFrom(spotify.HomeItem{List: pl}, tracks, randomPlayable(tracks))
+					if pl.Hybrid() {
+						playable := playableTracks(tracks)
+						if len(playable) == 0 {
+							a.toast = "当前没有可播放的歌曲"
+						} else {
+							a.enableShuffle()
+							a.playFrom(spotify.HomeItem{List: pl}, playable, randomPlayable(playable))
+						}
+					} else {
+						a.enableShuffle()
+						a.playFrom(spotify.HomeItem{List: pl}, tracks, randomPlayable(tracks))
+					}
 				}
 				if a.profile != nil && !pl.Liked() && a.editable(pl.ID) == nil {
 					icon, label := iconPlus, "收藏"
@@ -512,7 +530,7 @@ func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, head
 					if !tr.Playable() {
 						label := "不可播放"
 						if tr.LocalError != "" {
-							label = "文件未就绪"
+							label = tr.LocalError
 						}
 						ui.Text(c, label).FontSize(9).FontWeight(800).TextColor(p.accent).Padding(0, 4).Radius(3).Border(1, p.accent.Alpha(0.6))
 					} else if tr.Video && a.mvTag(c.Key("mv"), tr).Clicked() {
@@ -521,6 +539,14 @@ func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, head
 						} else {
 							a.playMV(a.routeItem(), tracks, i)
 						}
+					}
+					if spotify.IsHybridPlaylistID(pid) {
+						srcLabel, cached := hybridTrackSourceLabel(tr)
+						if cached {
+							srcLabel += " · 已缓存"
+						}
+						ui.Text(c, srcLabel).FontSize(9).FontWeight(600).TextColor(p.muted).
+							Background(p.hover).Padding(0, 5).Radius(3).Shrink(0)
 					}
 					a.artistLinks(c.Key("by"), tr.Artists, 12.5, p.muted, p.text)
 				})
@@ -555,6 +581,8 @@ func (a *app) trackRows(c *ui.Context, tracks []spotify.Track, covers bool, head
 				a.playPlaylistMatch(pid, *tr)
 			} else if a.route.page == pageLocal && strings.TrimSpace(a.localQuery) != "" {
 				a.playLocalMatch(*tr)
+			} else if spotify.IsHybridPlaylistID(pid) {
+				a.playPlaylistTrack(a.playlists[pid], tracks, i)
 			} else {
 				a.playFrom(a.routeItem(), tracks, i)
 			}

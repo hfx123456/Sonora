@@ -506,6 +506,7 @@ func (a *app) signedIn(prof *spotify.Profile) {
 		a.playlistSync = playlistSyncState{}
 		a.plErr = map[string]string{}
 	}
+	a.refreshHybridPlaylists()
 	if prof == nil {
 		a.setAccountSession(false)
 		a.signin.cookies = ""
@@ -854,6 +855,7 @@ func (a *app) scheduleMine() {
 const (
 	sidebarSectionPinned   = "pinned"
 	sidebarSectionMine     = "mine"
+	sidebarSectionHybrid   = "hybrid"
 	sidebarSectionSaved    = "saved"
 	sidebarSectionFollowed = "followed"
 )
@@ -893,6 +895,7 @@ func (a *app) isPlaylistPinned(id string) bool {
 
 func (a *app) inLibrary(id string) bool {
 	return slices.ContainsFunc(a.mine, func(pl spotify.Playlist) bool { return pl.ID == id }) ||
+		slices.ContainsFunc(a.hybrids, func(pl spotify.Playlist) bool { return pl.ID == id }) ||
 		slices.ContainsFunc(a.saved, func(pl spotify.Playlist) bool { return pl.ID == id })
 }
 
@@ -961,6 +964,11 @@ func (a *app) pinnedPlaylists() []pinnedEntry {
 		if i := slices.IndexFunc(a.mine, func(pl spotify.Playlist) bool { return pl.ID == id }); i >= 0 {
 			seen[id] = true
 			out = append(out, pinnedEntry{pl: &a.mine[i], mine: true})
+			continue
+		}
+		if i := slices.IndexFunc(a.hybrids, func(pl spotify.Playlist) bool { return pl.ID == id }); i >= 0 {
+			seen[id] = true
+			out = append(out, pinnedEntry{pl: &a.hybrids[i], mine: true})
 			continue
 		}
 		if i := slices.IndexFunc(a.saved, func(pl spotify.Playlist) bool { return pl.ID == id }); i >= 0 {
@@ -1082,6 +1090,44 @@ func (a *app) myPlaylists(c *ui.Context, section, title string, lists []spotify.
 	}
 	for i := range lists {
 		a.myPlaylist(c, &lists[i], mine, false, false, -1, 0)
+	}
+	return true, true
+}
+
+// hybridPlaylistsSection lists locally stored hybrid playlists in the sidebar.
+// Always shown (even when signed out of Spotify) with a "+" button to create one.
+func (a *app) hybridPlaylistsSection(c *ui.Context, prevHadItems bool) (shown, expanded bool) {
+	trailing := func() {
+		p := a.pal
+		add := ui.ButtonBase(c.Key("new-hybrid")).Size(26, 26).Margin(0, 3, 0, 0).Shrink(0).Center().Radius(7).
+			FocusRing(false).Label("新建混合歌单").Tooltip("新建混合歌单")
+		fg := p.muted
+		if add.Hovered() {
+			add.Background(p.hover)
+			fg = p.text
+		}
+		add.Children(func() { ui.Icon(c, iconPlus).Size(14, 14).TextColor(fg) })
+		if add.Clicked() {
+			a.newHybridPlaylist(nil)
+		}
+	}
+	if a.sidebarSectionHeader(c, sidebarSectionHybrid, "混合歌单", len(a.hybrids), prevHadItems, trailing) {
+		return true, false
+	}
+	if len(a.hybrids) == 0 {
+		ui.Text(c, "可混排 Spotify、本机与云盘歌曲").FontSize(11.5).TextColor(a.pal.faint).Padding(4, 10, 6, 10)
+		return true, true
+	}
+	if a.settings.MyPlaylistGrid {
+		ui.Grid(c.Key("hybrid-grid")).Columns(2).Gap(6).Children(func() {
+			for i := range a.hybrids {
+				a.myPlaylist(c, &a.hybrids[i], true, true, false, -1, 0)
+			}
+		})
+		return true, true
+	}
+	for i := range a.hybrids {
+		a.myPlaylist(c, &a.hybrids[i], true, false, false, -1, 0)
 	}
 	return true, true
 }

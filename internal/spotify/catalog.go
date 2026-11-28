@@ -135,6 +135,20 @@ const likedName = "我喜欢的音乐"
 // Liked reports whether p is the listener's liked songs.
 func (p *Playlist) Liked() bool { return p.ID == LikedURI }
 
+// HybridPlaylistPrefix identifies playlists stored locally on this device that
+// can mix Spotify, local-file, and cloud-drive tracks together.
+const HybridPlaylistPrefix = "sonora:playlist:"
+
+// IsHybridPlaylistID reports whether id names a local hybrid playlist.
+func IsHybridPlaylistID(id string) bool {
+	return strings.HasPrefix(id, HybridPlaylistPrefix)
+}
+
+// Hybrid reports whether p is a local hybrid playlist.
+func (p *Playlist) Hybrid() bool {
+	return p != nil && IsHybridPlaylistID(p.ID)
+}
+
 // Sized asks the image CDN for a picture at least n pixels across, where
 // it serves more than one size, and says after "#", which no request
 // sends, the n the picture is to be shrunk to: Spotify's sizes jump from

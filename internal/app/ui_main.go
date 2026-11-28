@@ -352,6 +352,9 @@ func (a *app) sidebar(c *ui.Context) {
 			if shown, expanded := a.myPlaylists(c, sidebarSectionMine, "我的歌单", a.mine, true, prevHadItems); shown {
 				prevHadItems = expanded
 			}
+			if shown, expanded := a.hybridPlaylistsSection(c, prevHadItems); shown {
+				prevHadItems = expanded
+			}
 			if shown, expanded := a.myPlaylists(c, sidebarSectionSaved, "我的收藏", a.saved, false, prevHadItems); shown {
 				prevHadItems = expanded
 			}
@@ -746,10 +749,55 @@ func (a *app) playPlaylist(pl *spotify.Playlist) {
 		return
 	}
 	tracks := a.orderedPlaylistTracks(pl)
+	if pl.Hybrid() {
+		playable := playableTracks(tracks)
+		if len(playable) == 0 {
+			a.toast = "当前没有可播放的歌曲"
+			return
+		}
+		a.playFrom(spotify.HomeItem{List: pl}, playable, 0)
+		return
+	}
 	a.playFrom(spotify.HomeItem{List: pl}, tracks, firstPlayable(tracks))
 }
 
+func (a *app) playPlaylistTrack(pl *spotify.Playlist, tracks []spotify.Track, index int) {
+	if pl != nil && pl.Hybrid() {
+		if index < 0 || index >= len(tracks) {
+			return
+		}
+		target := tracks[index]
+		playable := playableTracks(tracks)
+		if len(playable) == 0 {
+			a.toast = "当前没有可播放的歌曲"
+			return
+		}
+		start := 0
+		for i, tr := range playable {
+			if tr.ID == target.ID && (target.UID == "" || tr.UID == target.UID) {
+				start = i
+				break
+			}
+		}
+		a.playFrom(spotify.HomeItem{List: pl}, playable, start)
+		return
+	}
+	a.playFrom(spotify.HomeItem{List: pl}, tracks, index)
+}
+
 func (a *app) requestPlaylist(id string, thenPlay, refresh bool) {
+	if spotify.IsHybridPlaylistID(id) {
+		a.refreshHybridPlaylists()
+		if pl := a.playlists[id]; pl != nil {
+			delete(a.plErr, id)
+			if thenPlay {
+				a.playPlaylist(pl)
+			}
+			return
+		}
+		a.plErr[id] = "未找到该混合歌单"
+		return
+	}
 	if pl := a.playlists[id]; pl != nil && !refresh {
 		if thenPlay {
 			a.playPlaylist(pl)
