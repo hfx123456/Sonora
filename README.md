@@ -103,8 +103,8 @@
     <td width="50%"><img src="docs/screenshots/desktop-lyrics.webp" alt="透明桌面双语歌词"><br><b>透明桌面歌词</b>：清晰双语描边字幕，支持单独设置中文字体。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/fusion.webp" alt="侧边双语歌词与选源面板"><br><b>侧边双语词面板</b>：独立字体缩放、译文开关与时间轴微调。</td>
-    <td width="50%"><img src="docs/screenshots/fusion-menu.webp" alt="歌词右键快捷菜单"><br><b>多源检索与切换</b>：一键重搜网易云 / QQ 音乐 / LRCLIB 词源。</td>
+    <td width="50%" align="center"><img src="docs/screenshots/fusion.webp" alt="侧边双语歌词与选源面板"><br><b>侧边双语词面板</b>：独立字体缩放、译文开关与时间轴微调。</td>
+    <td width="50%" align="center"><img src="docs/screenshots/fusion-menu.webp" height="280" alt="歌词右键快捷菜单"><br><b>多源检索与切换</b>：一键重搜网易云 / QQ 音乐 / LRCLIB 词源。</td>
   </tr>
 </table>
 
