@@ -7,8 +7,8 @@ English | **[简体中文](README.md)**
 </p>
 
 <p align="center">
-  Native Spotify desktop client &amp; personal Cloud Music Disk built with <b>Go + MyGo</b> (based on <a href="https://github.com/margbug01/MySpotify">MySpotify</a>)<br>
-  <b>6 Cloud Drives · Word-by-Word Bilingual Lyrics · Draggable Dynamic Island · Apple Music Mini Player · 6 Synced Progress Effects · Flow Backdrop · Windows &amp; macOS</b>
+  Native multi-source desktop music player built with <b>Go + MyGo</b> (based on <a href="https://github.com/margbug01/MySpotify">MySpotify</a>)<br>
+  <b>Spotify + Direct NetEase Playlists + 6 Cloud Drives + Multi-Source Hybrid Playlists · Smart Cross-Source Dedup · Word-by-Word Bilingual Lyrics · Dynamic Island · Apple Music Mini Player · Windows &amp; macOS</b>
 </p>
 
 <p align="center">
@@ -114,11 +114,30 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 
 ---
 
+## 6. Direct NetEase Playlists, Multi-Source Hybrid Playlists & Smart Deduplication
+
+Bring **Spotify, NetEase Cloud Music, local lossless files, and 6 cloud drives** together into one unified library—usable even without a Spotify account:
+
+- **Dedicated NetEase Playlists Section & Dual-Account Settings**:
+  - Clean collapsible sidebar sections: **Pinned Playlists → Spotify Playlists → NetEase Playlists → Hybrid Playlists → Saved**, all supporting list/grid views and pinning.
+  - Manage **Spotify (Primary)** and **NetEase Cloud Music (Secondary)** side by side in **Settings → Account** with unified circular avatars, badges, playlist sync count, and OS-keystore encrypted cookies.
+  - Paste any public NetEase playlist link, `163cn.tv` short URL, or numeric ID to add it directly without signing in (automatically fetching full track lists past 1,000+ songs).
+- **NetEase-First Playback with Automatic Local & Spotify Fallback**:
+  - NetEase tracks stream directly via NetEase's playback API by default (up to 320 kbps with your optional cookie) and fetch exact synced/bilingual lyrics by NetEase song ID.
+  - When a NetEase track is unavailable or restricted to a 30-second trial preview, Sonora seamlessly falls back to your local/cloud library or Spotify full version and caches the mapping. Hovering the bottom player cover reveals a **Source** row inside the Credits popover showing the active playback source (e.g., `Spotify`, `NetEase`, `NetEase (Switched to Spotify)`, `Local`, or cloud drive name).
+- **4-Source Hybrid Playlists & Priority Deduplication (`Spotify > Local/Cloud > NetEase`)**:
+  - Import whole Spotify, NetEase, local, or cloud playlists into local Hybrid Playlists with one-click order shuffling and shuffled playback by default.
+  - Cross-source duplicate detection (Simplified/Traditional Chinese normalization, title folding, and sorted artist matching) automatically skips duplicates during both playlist import and shuffled playback, always keeping the highest-priority source (**Spotify > Local/Cloud > NetEase**).
+- **Per-Track Lyrics Timing Offset**:
+  - Fine-tune lyrics timing in `±0.2s` steps (with one-click reset) persisted independently per `(track, lyrics source)` across desktop lyrics, Dynamic Island, side panel, Now Playing, and Stage.
+
+---
+
 ## Install, Isolation & Build
 
 1. Download from **[Sonora Releases](https://github.com/hfx123456/Sonora/releases/latest)**:
-   - **Windows**: Run `sonora-setup-1.0.19-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.0.19-windows-amd64.zip`.
-   - **macOS**: Download `sonora-1.0.19.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
+   - **Windows**: Run `sonora-setup-1.1.0-amd64.exe` for one-click install (handles shortcuts & WebView2), or extract `Sonora-1.1.0-windows-amd64.zip`.
+   - **macOS**: Download `sonora-1.1.0.dmg` (Apple Silicon & Intel) and drag Sonora to Applications (for the first launch of an unnotarized build, right-click → Open or allow it in Privacy & Security).
    Pure Go native binary (~20 MB) with built-in multi-source lyrics—no `.NET` runtime or extra setup needed.
 2. **Isolated from upstream MySpotify**: Uses its own single-instance lock, icon, identifier (`dev.hfx123456.sonora`), and directories (`%APPDATA%\Sonora` / `%LOCALAPPDATA%\Sonora`), migrating existing settings on first launch without altering the legacy folder.
 
