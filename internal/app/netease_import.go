@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
+	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"vinyl/internal/localmusic"
 	"vinyl/internal/spotify"
 )
 
@@ -19,8 +21,10 @@ var (
 	fetchNetEaseAccount       = spotify.NetEaseAccountInfo
 	fetchNetEaseUserPlaylists = spotify.NetEaseUserPlaylists
 	fetchNetEasePlaylist      = spotify.NetEasePlaylist
+	fetchNetEaseSongMedia     = spotify.NetEaseSongMedia
 	resolveNetEasePlaylistID  = spotify.ResolveNetEasePlaylistID
 	searchSpotifyForNetEase   = spotify.Search
+	resolveSpotifyForNetEase  = spotify.ResolveMedia
 )
 
 type neteaseImportState struct {
@@ -45,12 +49,48 @@ type neteaseImportState struct {
 	importing    bool
 	importGen    int
 	importCancel context.CancelFunc
-	importTitle  string
-	done         int
-	total        int
-	localHits    int
-	spotifyHits  int
-	unmatched    int
+
+	cache *neteasePlaybackCache
+}
+
+type neteasePlaybackCache struct {
+	mu              sync.RWMutex
+	cachedCookie    string
+	cookieLoaded    bool
+	spotifyFallback map[int64]string // netease song ID -> resolved Spotify track URI
+}
+
+var neteaseCacheInitMu sync.Mutex
+
+func (a *app) neteaseCache() *neteasePlaybackCache {
+	neteaseCacheInitMu.Lock()
+	defer neteaseCacheInitMu.Unlock()
+	if a.netease.cache == nil {
+		a.netease.cache = &neteasePlaybackCache{spotifyFallback: map[int64]string{}}
+	}
+	return a.netease.cache
+}
+
+func (a *app) syncNetEaseCookieCache(cookie string) {
+	c := a.neteaseCache()
+	c.mu.Lock()
+	c.cachedCookie = cookie
+	c.cookieLoaded = true
+	c.mu.Unlock()
+}
+
+func (a *app) neteasePlaybackCookie() string {
+	c := a.neteaseCache()
+	c.mu.RLock()
+	loaded := c.cookieLoaded
+	cookie := c.cachedCookie
+	c.mu.RUnlock()
+	if loaded {
+		return cookie
+	}
+	cookie = a.settings.neteaseCookie()
+	a.syncNetEaseCookieCache(cookie)
+	return cookie
 }
 
 func (a *app) openNetEaseImport(targetHybridID string) {
@@ -65,7 +105,9 @@ func (a *app) openNetEaseImport(targetHybridID string) {
 	if !st.autoShuffle && !st.importing && st.input == "" && len(st.playlists) == 0 {
 		st.autoShuffle = true
 	}
-	if a.settings.NetEaseUserID > 0 && a.settings.neteaseCookie() != "" && len(st.playlists) == 0 && !st.playlistsLoading {
+	cookie := a.settings.neteaseCookie()
+	a.syncNetEaseCookieCache(cookie)
+	if a.settings.NetEaseUserID > 0 && cookie != "" && len(st.playlists) == 0 && !st.playlistsLoading {
 		a.loadNetEasePlaylists()
 	}
 }
@@ -97,6 +139,7 @@ func (a *app) signOutNetEase() {
 	a.closeNetEaseLoginWindow()
 	a.settings.clearNetEaseAccount()
 	a.settings.save()
+	a.syncNetEaseCookieCache("")
 	a.netease.playlists = nil
 	a.netease.playlistsErr = ""
 	a.netease.playlistsLoading = false
@@ -107,6 +150,7 @@ func (a *app) signOutNetEase() {
 func (a *app) loadNetEasePlaylists() {
 	uid := a.settings.NetEaseUserID
 	cookie := a.settings.neteaseCookie()
+	a.syncNetEaseCookieCache(cookie)
 	if uid <= 0 || cookie == "" {
 		return
 	}
@@ -208,6 +252,7 @@ func (a *app) openNetEaseLogin() {
 				a.closeNetEaseLoginWindow()
 				a.settings.setNetEaseAccount(acc.UserID, acc.Nickname, cookie)
 				a.settings.save()
+				a.syncNetEaseCookieCache(cookie)
 				a.netease.status = ""
 				a.netease.err = ""
 				a.toast = "已登录网易云音乐：" + acc.Nickname
@@ -252,14 +297,10 @@ func (a *app) startNetEaseImport(playlistID int64, rawInput, fallbackTitle strin
 	a.netease.importCancel = cancel
 	a.netease.importing = true
 	a.netease.err = ""
-	a.netease.importTitle = fallbackTitle
 	a.netease.status = "正在读取网易云歌单…"
-	a.netease.done, a.netease.total = 0, 0
-	a.netease.localHits, a.netease.spotifyHits, a.netease.unmatched = 0, 0, 0
 
 	cookie := a.settings.neteaseCookie()
-	localSnap := slices.Clone(a.localTracks)
-	canSearchSpotify := a.profile != nil
+	a.syncNetEaseCookieCache(cookie)
 	targetID := a.netease.targetHybridID
 	if a.netease.createNew {
 		targetID = ""
@@ -312,104 +353,32 @@ func (a *app) startNetEaseImport(playlistID int64, rawInput, fallbackTitle strin
 			})
 			return
 		}
+		if ctx.Err() != nil {
+			return
+		}
 
 		title := detail.Name
 		if title == "" {
 			title = fallbackTitle
 		}
-		total := len(detail.Tracks)
-		a.post(func() {
-			if a.netease.importGen != gen {
-				return
+		tracks := make([]spotify.Track, 0, len(detail.Tracks))
+		for _, item := range detail.Tracks {
+			if item.ID <= 0 || item.Name == "" {
+				continue
 			}
-			a.netease.importTitle = title
-			a.netease.total = total
-			a.netease.status = fmt.Sprintf("正在匹配「%s」中的 %d 首歌曲…", title, total)
-		})
-
-		matched := make([]spotify.Track, total)
-		var (
-			mu          sync.Mutex
-			doneCount   int
-			localHits   int
-			spotifyHits int
-			unmatched   int
-			lastPost    time.Time
-		)
-
-		reportProgress := func(force bool) {
-			mu.Lock()
-			d, l, s, u := doneCount, localHits, spotifyHits, unmatched
-			shouldPost := force || time.Since(lastPost) >= 120*time.Millisecond || d == total
-			if shouldPost {
-				lastPost = time.Now()
-			}
-			mu.Unlock()
-			if !shouldPost {
-				return
-			}
-			a.post(func() {
-				if a.netease.importGen != gen {
-					return
-				}
-				a.netease.done = d
-				a.netease.localHits = l
-				a.netease.spotifyHits = s
-				a.netease.unmatched = u
-				a.netease.status = fmt.Sprintf("正在匹配「%s」：%d / %d（本机/云盘 %d · Spotify %d · 未找到 %d）", title, d, total, l, s, u)
-			})
+			tracks = append(tracks, item.ToTrack())
 		}
-
-		const workers = 3
-		jobs := make(chan int, total)
-		for i := range total {
-			jobs <- i
-		}
-		close(jobs)
-
-		var wg sync.WaitGroup
-		for range min(workers, total) {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for idx := range jobs {
-					if ctx.Err() != nil {
-						return
-					}
-					item := detail.Tracks[idx]
-					tr, kind := matchNetEaseTrack(ctx, item, localSnap, canSearchSpotify)
-					matched[idx] = tr
-					mu.Lock()
-					doneCount++
-					switch kind {
-					case neteaseMatchLocal:
-						localHits++
-					case neteaseMatchSpotify:
-						spotifyHits++
-					default:
-						unmatched++
-					}
-					mu.Unlock()
-					reportProgress(false)
-				}
-			}()
-		}
-		wg.Wait()
-		if ctx.Err() != nil {
-			return
-		}
-		reportProgress(true)
 
 		a.post(func() {
 			if a.netease.importGen != gen || a.quitting {
 				return
 			}
-			a.finishNetEaseImport(targetID, detail.ID, title, matched, autoShuffle, localHits, spotifyHits, unmatched)
+			a.finishNetEaseImport(targetID, detail.ID, title, tracks, autoShuffle)
 		})
 	}()
 }
 
-func (a *app) finishNetEaseImport(targetID string, neteaseID int64, title string, matched []spotify.Track, autoShuffle bool, localHits, spotifyHits, unmatched int) {
+func (a *app) finishNetEaseImport(targetID string, neteaseID int64, title string, tracks []spotify.Track, autoShuffle bool) {
 	a.netease.importing = false
 	a.netease.importCancel = nil
 	a.netease.status = ""
@@ -428,58 +397,131 @@ func (a *app) finishNetEaseImport(targetID string, neteaseID int64, title string
 		}
 		dstID = made.ID
 	}
-	added, skipped := a.addManyToHybrid(dstID, matched)
+	added, skipped := a.addManyToHybrid(dstID, tracks)
 	if autoShuffle && len(a.playlists[dstID].Tracks) >= 2 {
 		a.shuffleHybridPlaylist(dstID)
 	}
 	a.open(route{page: pagePlaylist, playlist: dstID})
 
-	summary := fmt.Sprintf("网易云导入完成：新增 %d 首（本机/云盘 %d · Spotify %d · 未匹配 %d）", added, localHits, spotifyHits, unmatched)
-	if skipped > 0 {
-		summary = fmt.Sprintf("网易云导入完成：新增 %d 首，跳过 %d 首重复（本机/云盘 %d · Spotify %d · 未匹配 %d）", added, skipped, localHits, spotifyHits, unmatched)
+	switch {
+	case added == 0 && skipped > 0:
+		a.toast = "网易云歌单中的歌曲已全部在混合歌单中"
+	case skipped > 0:
+		a.toast = fmt.Sprintf("已导入 %d 首网易云歌曲（跳过 %d 首重复）· 不可播时将自动切换 Spotify", added, skipped)
+	default:
+		a.toast = fmt.Sprintf("已直接导入 %d 首网易云歌曲 · 默认走网易云播放，不可播时自动切换 Spotify", added)
 	}
-	a.toast = summary
 }
 
-type neteaseMatchKind int
-
-const (
-	neteaseMatchNone neteaseMatchKind = iota
-	neteaseMatchLocal
-	neteaseMatchSpotify
-)
-
-func matchNetEaseTrack(ctx context.Context, item spotify.NetEasePlaylistTrack, localTracks []spotify.Track, canSearchSpotify bool) (spotify.Track, neteaseMatchKind) {
-	if hit, ok := spotify.MatchCandidateForNetEase(item, localTracks, false); ok {
-		return hit, neteaseMatchLocal
+// resolveNetEasePlayback resolves a NetEase track for playback:
+//  1. Default: fetch the direct audio stream from NetEase's playback API.
+//  2. Fallback 1: if unavailable/trial-only on NetEase, check the user's local/cloud library.
+//  3. Fallback 2: if still unavailable, search Spotify and play the matched Spotify track.
+func (a *app) resolveNetEasePlayback(ctx context.Context, tr spotify.Track) (*spotify.Media, error) {
+	id := tr.NetEaseID()
+	if id <= 0 {
+		return nil, spotify.ErrNetEaseUnavailable
 	}
-	if canSearchSpotify {
-		for _, q := range spotify.NetEaseSearchQueries(item) {
-			if ctx.Err() != nil {
-				break
-			}
-			results, err := searchSpotifyWithRetry(ctx, q)
-			if err != nil {
-				continue
-			}
-			if hit, ok := spotify.MatchCandidateForNetEase(item, results, true); ok {
-				return hit, neteaseMatchSpotify
+
+	// 1. Try NetEase direct playback first.
+	cookie := a.neteasePlaybackCookie()
+	media, neErr := fetchNetEaseSongMedia(ctx, cookie, id)
+	if neErr == nil && media != nil {
+		if media.Duration <= 0 {
+			media.Duration = tr.Length()
+		}
+		return media, nil
+	}
+
+	want := trackToNetEaseQuery(tr)
+
+	// 2. Fallback to local or cloud library if the user already has this song.
+	if localSnap := spotify.LocalTracksSnapshot(); len(localSnap) > 0 {
+		if hit, ok := spotify.MatchCandidateForNetEase(want, localSnap, false); ok {
+			if m, err := resolveLocalOrCloudFallback(ctx, hit); err == nil && m != nil {
+				log.Printf("netease: %q (%d) unavailable (%v), playing local/cloud fallback %s", tr.Name, id, neErr, hit.ID)
+				return m, nil
 			}
 		}
 	}
-	artists := make([]spotify.Artist, 0, len(item.Artists))
-	for _, name := range item.Artists {
-		artists = append(artists, spotify.Artist{Name: name})
+
+	// 3. Fallback to Spotify playback (using cached URI when available).
+	cache := a.neteaseCache()
+	cache.mu.RLock()
+	cachedURI := cache.spotifyFallback[id]
+	cache.mu.RUnlock()
+	if cachedURI != "" {
+		if m, err := resolveSpotifyForNetEase(cachedURI); err == nil && m != nil {
+			log.Printf("netease: %q (%d) unavailable (%v), playing cached Spotify fallback %s", tr.Name, id, neErr, cachedURI)
+			return m, nil
+		}
 	}
-	return spotify.Track{
-		ID:         fmt.Sprintf("netease:%d", item.ID),
-		Name:       item.Name,
-		Artists:    artists,
-		Album:      spotify.Album{Name: item.Album, PicURL: item.PicURL},
-		Duration:   item.Duration,
-		Unplayable: true,
-		LocalError: "未匹配到音源",
-	}, neteaseMatchNone
+
+	for _, q := range spotify.NetEaseSearchQueries(want) {
+		if ctx.Err() != nil {
+			break
+		}
+		results, err := searchSpotifyWithRetry(ctx, q)
+		if err != nil {
+			continue
+		}
+		if hit, ok := spotify.MatchCandidateForNetEase(want, results, true); ok {
+			uri := hit.URI()
+			m, err := resolveSpotifyForNetEase(uri)
+			if err == nil && m != nil {
+				cache.mu.Lock()
+				cache.spotifyFallback[id] = uri
+				cache.mu.Unlock()
+				log.Printf("netease: %q (%d) unavailable (%v), playing Spotify fallback %s (%s)", tr.Name, id, neErr, hit.Name, uri)
+				return m, nil
+			}
+		}
+	}
+
+	if neErr != nil {
+		return nil, neErr
+	}
+	return nil, spotify.ErrNetEaseUnavailable
+}
+
+func trackToNetEaseQuery(tr spotify.Track) spotify.NetEasePlaylistTrack {
+	artists := make([]string, 0, len(tr.Artists))
+	for _, ar := range tr.Artists {
+		if name := strings.TrimSpace(ar.Name); name != "" {
+			artists = append(artists, name)
+		}
+	}
+	return spotify.NetEasePlaylistTrack{
+		ID:       tr.NetEaseID(),
+		Name:     tr.Name,
+		Artists:  artists,
+		Album:    tr.Album.Name,
+		PicURL:   tr.Album.PicURL,
+		Duration: tr.Duration,
+	}
+}
+
+func resolveLocalOrCloudFallback(ctx context.Context, hit spotify.Track) (*spotify.Media, error) {
+	if hit.Cloud() {
+		if cached := localmusic.CachedCloudAudio(hit.ID); cached != "" {
+			return &spotify.Media{LocalPath: cached, Duration: hit.Length()}, nil
+		}
+		if hit.CloudURL == "" {
+			return nil, errors.New("empty cloud url")
+		}
+		streamURL, headers, err := localmusic.ResolveCloudMedia(ctx, hit.CloudURL)
+		if err != nil {
+			return nil, err
+		}
+		localmusic.CacheCloudAudioAsync(hit, streamURL, headers)
+		return &spotify.Media{File: streamURL, Headers: headers, Duration: hit.Length()}, nil
+	}
+	if hit.LocalPath != "" {
+		if info, err := os.Stat(hit.LocalPath); err == nil && !info.IsDir() {
+			return &spotify.Media{LocalPath: hit.LocalPath, Duration: hit.Length()}, nil
+		}
+	}
+	return nil, errors.New("local fallback unreadable")
 }
 
 func searchSpotifyWithRetry(ctx context.Context, query string) ([]spotify.Track, error) {
@@ -518,7 +560,7 @@ func (a *app) neteaseImportDialog(c *ui.Context) {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).Gap(2).Children(func() {
 				ui.Text(c, "从网易云歌单导入").FontSize(17).FontWeight(700)
-				ui.Text(c, "免费账号即可使用，自动匹配本机/云盘与 Spotify 完整正版音源。").FontSize(12).TextColor(p.muted)
+				ui.Text(c, "直接导入网易云歌单。默认走网易云播放，无版权或仅试听时自动切换本地或 Spotify。").FontSize(12).TextColor(p.muted)
 			})
 			if iconButton(c.Key("close-netease"), iconX, 14, p.muted, "关闭").Clicked() {
 				st.open = false
@@ -567,19 +609,11 @@ func (a *app) neteaseImportDialog(c *ui.Context) {
 		})
 
 		if st.importing {
-			ui.Column(c).Padding(12).Gap(8).Radius(12).Background(p.hover).Children(func() {
-				ui.Text(c, st.status).FontSize(12.5).FontWeight(500)
-				if st.total > 0 {
-					frac := float32(st.done) / float32(st.total)
-					ui.Box(c).Height(5).Radius(3).Background(p.hairline).Children(func() {
-						ui.Box(c).Absolute().Top(0).Left(0).Bottom(0).Width(max(4, frac*408)).Radius(3).Background(p.accent)
-					})
+			ui.Row(c).Padding(12).Gap(10).Radius(12).Background(p.hover).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, st.status).FontSize(12.5).FontWeight(500).Grow(1)
+				if ui.Button(c.Key("netease-cancel-import"), "取消").Clicked() {
+					a.cancelNetEaseImport()
 				}
-				ui.Row(c).Justify(ui.End).Children(func() {
-					if ui.Button(c.Key("netease-cancel-import"), "取消导入").Clicked() {
-						a.cancelNetEaseImport()
-					}
-				})
 			})
 		} else if st.status != "" {
 			ui.Text(c, st.status).FontSize(12).TextColor(p.muted)

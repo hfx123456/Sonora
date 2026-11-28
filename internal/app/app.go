@@ -463,6 +463,7 @@ func Run() error {
 		player.SimplifyLyrics = !readsTraditional(mygo.App.PreferredLanguages())
 		a.pl = player.New(a.post)
 		a.pl.SmartFeed = a.smartShuffleFeed()
+		a.pl.ResolveNetEase = a.resolveNetEasePlayback
 		a.applySavedPlaybackModes()
 		a.pl.Leads = a.mvLead
 		a.pl.Cache = newPartCache(a.settings.CacheMB)

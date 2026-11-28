@@ -80,6 +80,9 @@ func (t *Track) URI() string {
 
 // URL is the track's page on the web player.
 func (t *Track) URL() string {
+	if id := t.NetEaseID(); id > 0 {
+		return "https://music.163.com/#/song?id=" + strconv.FormatInt(id, 10)
+	}
 	if t.CloudURL != "" {
 		return t.CloudURL
 	}

@@ -56,6 +56,17 @@ func (a *app) songItems(tr *spotify.Track, pid string) func(m *ui.Menu) {
 		if m.Item("复制歌名和歌手").Chosen() {
 			copyText(tr.Name + " - " + tr.ArtistNames())
 		}
+		if tr.NetEase() {
+			if !spotify.IsHybridPlaylistID(pid) && tr.UID != "" && a.editable(pid) != nil && m.Item("从歌单中移除").Chosen() {
+				a.removeFrom(pid, tr)
+			}
+			a.hybridPlaylistItems(m, tr, pid, true)
+			m.Separator()
+			if m.Item("复制网易云链接").Chosen() {
+				copyText(tr.URL())
+			}
+			return
+		}
 		if tr.Cloud() {
 			if !spotify.IsHybridPlaylistID(pid) && tr.UID != "" && a.editable(pid) != nil && m.Item("从歌单中移除").Chosen() {
 				a.removeFrom(pid, tr)

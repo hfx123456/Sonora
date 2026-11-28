@@ -22,12 +22,31 @@ func SetLocalTracks(tracks []Track) {
 	localCatalog.Unlock()
 }
 
+// LocalTracksSnapshot returns a thread-safe copy of the current local and cloud library.
+func LocalTracksSnapshot() []Track {
+	localCatalog.RLock()
+	defer localCatalog.RUnlock()
+	return append([]Track(nil), localCatalog.tracks...)
+}
+
+func (t *Track) NetEase() bool {
+	return strings.HasPrefix(t.ID, "netease:")
+}
+
+func (t *Track) NetEaseID() int64 {
+	if !t.NetEase() {
+		return 0
+	}
+	id, _ := strconv.ParseInt(strings.TrimPrefix(t.ID, "netease:"), 10, 64)
+	return id
+}
+
 func (t *Track) Cloud() bool {
 	return t.CloudURL != "" || strings.HasPrefix(t.ID, "cloud:")
 }
 
 func (t *Track) Local() bool {
-	return t.LocalPath != "" || t.CloudURL != "" || strings.HasPrefix(t.ID, "local:") || strings.HasPrefix(t.ID, "cloud:") || strings.HasPrefix(t.ID, "spotify:local:")
+	return t.LocalPath != "" || t.CloudURL != "" || t.NetEase() || strings.HasPrefix(t.ID, "local:") || strings.HasPrefix(t.ID, "cloud:") || strings.HasPrefix(t.ID, "spotify:local:")
 }
 
 func MatchLocal(uri string) (Track, bool) {

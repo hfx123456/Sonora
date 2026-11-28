@@ -168,6 +168,25 @@ func neteaseLyrics(t Track, wantTranslation bool, match func(synced, translation
 	return "", "", nil
 }
 
+// NetEaseLyricsByID fetches lyrics and optional Chinese translation directly
+// for a known NetEase song ID.
+func NetEaseLyricsByID(id int64) (synced, translation, plain string, err error) {
+	if id <= 0 {
+		return "", "", "", nil
+	}
+	lrc, tr, pure, err := fetchNetEaseSongLyrics(id)
+	if err != nil || pure || lrc == "" {
+		return "", "", "", err
+	}
+	if lrcTimed.MatchString(lrc) {
+		if !lrcTimed.MatchString(tr) {
+			tr = ""
+		}
+		return lrc, tr, "", nil
+	}
+	return "", "", lrc, nil
+}
+
 func fetchNetEaseSongLyrics(id int64) (lyric, translation string, pureMusic bool, err error) {
 	var res struct {
 		Lrc struct {

@@ -98,3 +98,56 @@ func TestMatchCandidateForNetEase(t *testing.T) {
 		t.Fatalf("MatchCandidateForNetEase = (%+v, %v), want exact", got, ok)
 	}
 }
+
+func TestNetEaseSongMediaDirectTrialAndUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("ids") {
+		case "[101]":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 200,
+				"data": []map[string]any{{
+					"id":   101,
+					"code": 200,
+					"url":  "http://m701.music.126.net/full.mp3",
+					"time": 240000,
+				}},
+			})
+		case "[102]":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 200,
+				"data": []map[string]any{{
+					"id":            102,
+					"code":          200,
+					"url":           "http://m701.music.126.net/trial.mp3",
+					"time":          30000,
+					"freeTrialInfo": map[string]any{"start": 0, "end": 30},
+				}},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 200,
+				"data": []map[string]any{{
+					"id":   103,
+					"code": 404,
+					"url":  "",
+				}},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	prev := neteaseURL
+	neteaseURL = srv.URL
+	defer func() { neteaseURL = prev }()
+
+	m, err := NetEaseSongMedia(context.Background(), "", 101)
+	if err != nil || m == nil || m.File != "http://m701.music.126.net/full.mp3" {
+		t.Fatalf("full track = (%+v, %v)", m, err)
+	}
+	if _, err := NetEaseSongMedia(context.Background(), "", 102); err != ErrNetEaseTrialOnly {
+		t.Fatalf("trial track err = %v, want ErrNetEaseTrialOnly", err)
+	}
+	if _, err := NetEaseSongMedia(context.Background(), "", 103); err != ErrNetEaseUnavailable {
+		t.Fatalf("unavailable track err = %v, want ErrNetEaseUnavailable", err)
+	}
+}

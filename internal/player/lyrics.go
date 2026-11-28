@@ -51,6 +51,27 @@ func trackLyrics(track spotify.Track) []lyrics.Line {
 }
 
 func uncachedTrackLyrics(track spotify.Track) []lyrics.Line {
+	if id := track.NetEaseID(); id > 0 {
+		synced, tr, plain, err := spotify.NetEaseLyricsByID(id)
+		if err != nil {
+			log.Printf("lyrics: netease %d: %v", id, err)
+			return nil
+		}
+		var lines []lyrics.Line
+		if synced != "" {
+			lines = lyrics.Build(synced, tr, "")
+		} else if plain != "" {
+			for _, line := range strings.Split(plain, "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					lines = append(lines, lyrics.Line{Text: line, Unsynced: true})
+				}
+			}
+		}
+		if SimplifyLyrics && lyrics.Chinese(lines) {
+			lyrics.Simplify(lines)
+		}
+		return lines
+	}
 	if track.Local() {
 		text := localmusic.Lyrics(track)
 		lines := lyrics.Build(text, "", "")

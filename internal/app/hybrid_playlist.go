@@ -159,20 +159,11 @@ func buildHybridHydrationIndex(localTracks []spotify.Track) hybridHydrationIndex
 func hydrateHybridTrack(tr spotify.Track, idx hybridHydrationIndex, signedIn, cloudOffline bool) spotify.Track {
 	uid := tr.UID
 	switch {
-	case strings.HasPrefix(tr.ID, "netease:"):
-		// Unmatched NetEase placeholder: automatically revives if the user later
-		// adds a matching file to their local or cloud music library.
-		if nk := trackIdentityKey(tr.Name, tr.ArtistNames()); nk != "" && !idx.ambiguous[nk] {
-			if matched, ok := idx.byName[nk]; ok {
-				tr = matched
-			}
-		}
-		if strings.HasPrefix(tr.ID, "netease:") {
-			tr.Unplayable = true
-			if tr.LocalError == "" {
-				tr.LocalError = "未匹配到音源"
-			}
-		}
+	case tr.NetEase():
+		// Direct NetEase tracks play via NetEase's audio API by default and
+		// automatically fall back to local/cloud or Spotify at playback time.
+		tr.Unplayable = false
+		tr.LocalError = ""
 	case tr.Cloud():
 		if live, ok := idx.byID[tr.ID]; ok {
 			tr = live

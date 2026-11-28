@@ -6,23 +6,42 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
 	"vinyl/internal/spotify"
 )
 
-func TestNetEaseTrackMatchingAndPlaceholderRevival(t *testing.T) {
+func TestNetEaseDirectImportAndPlaybackFallback(t *testing.T) {
 	dir := t.TempDir()
 	localFile := filepath.Join(dir, "qingtian.flac")
-	revivedFile := filepath.Join(dir, "rare.flac")
-	for _, f := range []string{localFile, revivedFile} {
-		if err := os.WriteFile(f, []byte("flac"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(localFile, []byte("flac"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
+	prevSongMedia := fetchNetEaseSongMedia
 	prevSearch := searchSpotifyForNetEase
+	prevResolve := resolveSpotifyForNetEase
+	defer func() {
+		fetchNetEaseSongMedia = prevSongMedia
+		searchSpotifyForNetEase = prevSearch
+		resolveSpotifyForNetEase = prevResolve
+		spotify.SetLocalTracks(nil)
+	}()
+
+	fetchNetEaseSongMedia = func(ctx context.Context, cookie string, songID int64) (*spotify.Media, error) {
+		switch songID {
+		case 1:
+			return &spotify.Media{File: "http://m701.music.126.net/free.mp3", Duration: 210 * time.Second}, nil
+		case 2:
+			return nil, spotify.ErrNetEaseTrialOnly
+		case 3:
+			return nil, spotify.ErrNetEaseUnavailable
+		default:
+			return nil, spotify.ErrNetEaseUnavailable
+		}
+	}
 	searchSpotifyForNetEase = func(q string, limit int) ([]spotify.Track, error) {
 		if strings.Contains(q, "稻香") {
 			return []spotify.Track{
@@ -32,68 +51,61 @@ func TestNetEaseTrackMatchingAndPlaceholderRevival(t *testing.T) {
 		}
 		return nil, nil
 	}
-	defer func() { searchSpotifyForNetEase = prevSearch }()
+	var resolvedURIs []string
+	resolveSpotifyForNetEase = func(uri string) (*spotify.Media, error) {
+		resolvedURIs = append(resolvedURIs, uri)
+		return &spotify.Media{Manifest: "#EXTM3U", Duration: 223 * time.Second}, nil
+	}
 
-	localTracks := []spotify.Track{{
+	spotify.SetLocalTracks([]spotify.Track{{
 		ID:        "local:qingtian",
 		LocalPath: localFile,
 		Name:      "晴天",
 		Artists:   []spotify.Artist{{Name: "周杰伦"}},
 		Duration:  269000,
-	}}
+	}})
 
 	items := []spotify.NetEasePlaylistTrack{
-		{ID: 1, Name: "晴天", Artists: []string{"周杰伦"}, Album: "叶惠美", Duration: 269200},
+		{ID: 1, Name: "海屿你", Artists: []string{"马也_Crabbit"}, Album: "海屿你", Duration: 210000},
 		{ID: 2, Name: "稻香", Artists: []string{"周杰伦"}, Album: "魔杰座", Duration: 223000},
-		{ID: 3, Name: "网易云冷门独享曲", Artists: []string{"独立乐队"}, Album: "Demo", Duration: 195000},
+		{ID: 3, Name: "晴天", Artists: []string{"周杰伦"}, Album: "叶惠美", Duration: 269200},
 	}
-
-	matched := make([]spotify.Track, len(items))
-	var lHits, sHits, uHits int
+	tracks := make([]spotify.Track, len(items))
 	for i, it := range items {
-		tr, kind := matchNetEaseTrack(context.Background(), it, localTracks, true)
-		matched[i] = tr
-		switch kind {
-		case neteaseMatchLocal:
-			lHits++
-		case neteaseMatchSpotify:
-			sHits++
-		default:
-			uHits++
-		}
-	}
-	if lHits != 1 || sHits != 1 || uHits != 1 {
-		t.Fatalf("match counts = local:%d spotify:%d unmatched:%d, want 1/1/1", lHits, sHits, uHits)
-	}
-	if matched[0].ID != "local:qingtian" || matched[1].ID != "sp-daoxiang" || matched[2].ID != "netease:3" {
-		t.Fatalf("matched IDs = [%s, %s, %s]", matched[0].ID, matched[1].ID, matched[2].ID)
+		tracks[i] = it.ToTrack()
 	}
 
 	a := newTestApp()
 	a.settings = defaultSettings()
-	a.localTracks = localTracks
-	a.finishNetEaseImport("", 3778678, "我的网易云搬家", matched, false, lHits, sHits, uHits)
+	a.finishNetEaseImport("", 3778678, "网易云热歌榜", tracks, false)
 
-	if len(a.hybrids) != 1 || a.hybrids[0].Name != "我的网易云搬家" {
+	if len(a.hybrids) != 1 || a.hybrids[0].Name != "网易云热歌榜" {
 		t.Fatalf("expected new hybrid playlist, got %+v", a.hybrids)
 	}
-	pid := a.hybrids[0].ID
-	pl := a.playlists[pid]
-	if countPlayableTracks(pl.Tracks) != 2 {
-		t.Fatalf("playable tracks = %d, want 2", countPlayableTracks(pl.Tracks))
+	pl := a.playlists[a.hybrids[0].ID]
+	if countPlayableTracks(pl.Tracks) != 3 {
+		t.Fatalf("all direct NetEase tracks should be playable, got %d", countPlayableTracks(pl.Tracks))
 	}
-	if pl.Tracks[2].Playable() || pl.Tracks[2].LocalError != "未匹配到音源" {
-		t.Fatalf("unmatched placeholder = playable:%v err:%q", pl.Tracks[2].Playable(), pl.Tracks[2].LocalError)
+	if !pl.Tracks[0].NetEase() || !pl.Tracks[1].NetEase() || !pl.Tracks[2].NetEase() {
+		t.Fatalf("tracks should remain native NetEase tracks: %+v", pl.Tracks)
 	}
 
-	// Adding the rare track into the local library automatically revives the unmatched placeholder.
-	a.applyScannedTracks([]spotify.Track{
-		localTracks[0],
-		{ID: "local:rare", LocalPath: revivedFile, Name: "网易云冷门独享曲", Artists: []spotify.Artist{{Name: "独立乐队"}}, Duration: 195000},
-	}, nil, true)
-	pl = a.playlists[pid]
-	if countPlayableTracks(pl.Tracks) != 3 || pl.Tracks[2].ID != "local:rare" {
-		t.Fatalf("placeholder did not revive after local scan: playable=%d track=%+v", countPlayableTracks(pl.Tracks), pl.Tracks[2])
+	// 1. Default playback uses NetEase audio stream directly.
+	m1, err := a.resolveNetEasePlayback(context.Background(), pl.Tracks[0])
+	if err != nil || m1.File != "http://m701.music.126.net/free.mp3" {
+		t.Fatalf("track 1 should play via NetEase directly, got (%+v, %v)", m1, err)
+	}
+
+	// 2. Trial-only NetEase track falls back seamlessly to Spotify.
+	m2, err := a.resolveNetEasePlayback(context.Background(), pl.Tracks[1])
+	if err != nil || m2.Manifest != "#EXTM3U" || len(resolvedURIs) != 1 || resolvedURIs[0] != "spotify:track:sp-daoxiang" {
+		t.Fatalf("track 2 should fall back to Spotify, got (%+v, %v, uris=%v)", m2, err, resolvedURIs)
+	}
+
+	// 3. Unavailable NetEase track with a matching local file plays locally.
+	m3, err := a.resolveNetEasePlayback(context.Background(), pl.Tracks[2])
+	if err != nil || m3.LocalPath != localFile {
+		t.Fatalf("track 3 should fall back to local file, got (%+v, %v)", m3, err)
 	}
 }
 

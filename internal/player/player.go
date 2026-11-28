@@ -93,7 +93,11 @@ type Player struct {
 	volume       float64
 
 	// SmartFeed supplies recommended tracks for Smart Shuffle, seeded from a track in the queue.
-	SmartFeed    func(seed spotify.Track, got func([]spotify.Track))
+	SmartFeed func(seed spotify.Track, got func([]spotify.Track))
+	// ResolveNetEase, if set, resolves a NetEase track for playback: trying
+	// NetEase's audio API first, and falling back to local/cloud or Spotify
+	// when the track is unavailable or trial-only on NetEase.
+	ResolveNetEase func(ctx context.Context, t spotify.Track) (*spotify.Media, error)
 	smartGen     int
 	smartFeeding bool
 	smartAdded   map[string]bool
@@ -453,7 +457,7 @@ func (p *Player) failed(msg string, licence int, wait time.Duration) {
 // connections now and then answers between its drops; on it went, three
 // tracks failed as the identity could not be renewed, and it stopped.
 func (p *Player) unlessOffline(flaky bool, then func()) {
-	if p.track != nil && p.track.Local() && !p.track.Cloud() {
+	if p.track != nil && p.track.Local() && !p.track.Cloud() && !p.track.NetEase() {
 		p.stop()
 		then()
 		return
@@ -1534,7 +1538,17 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 	p.loading, p.skipped = true, skipped
 	p.updateIdle()
 	resolveMedia := resolve
-	if t.Cloud() {
+	if t.NetEase() {
+		resolveNetEase := p.ResolveNetEase
+		resolveMedia = func(string) (*spotify.Media, error) {
+			if resolveNetEase == nil {
+				return nil, errors.New("网易云音源解析器未初始化")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			return resolveNetEase(ctx, t)
+		}
+	} else if t.Cloud() {
 		resolveMedia = func(string) (*spotify.Media, error) {
 			if t.CloudURL == "" {
 				return nil, errors.New("云盘歌曲地址无效")
@@ -1606,12 +1620,12 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			}
 			if err != nil {
 				log.Printf("player: %s: %v", t.URI(), err)
-				if t.Local() && !t.Cloud() {
+				if t.Local() && !t.Cloud() && !t.NetEase() {
 					p.err, p.playing = "本地文件无法读取，请下载到本机后重新扫描", false
 					p.sync()
 					return
 				}
-				if t.Cloud() {
+				if t.Cloud() || t.NetEase() {
 					p.unlessOffline(netFault(err), func() {
 						if len(p.order) == 0 {
 							p.playing = false
@@ -1619,7 +1633,11 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 							return
 						}
 						curAt := min(max(p.at, 0), len(p.order)-1)
-						p.err = "云盘歌曲暂时无法播放"
+						if t.NetEase() {
+							p.err = "网易云歌曲暂时无法播放"
+						} else {
+							p.err = "云盘歌曲暂时无法播放"
+						}
 						p.skip(curAt, skipped)
 					})
 					return

@@ -372,6 +372,80 @@ func NetEasePlaylist(ctx context.Context, cookie string, id int64) (*NetEasePlay
 	}, nil
 }
 
+// ToTrack converts a NetEase playlist track into a directly playable Sonora
+// track backed by NetEase's playback API (with runtime fallback if unavailable).
+func (t NetEasePlaylistTrack) ToTrack() Track {
+	artists := make([]Artist, 0, len(t.Artists))
+	for _, name := range t.Artists {
+		if name = strings.TrimSpace(name); name != "" {
+			artists = append(artists, Artist{Name: name})
+		}
+	}
+	return Track{
+		ID:       fmt.Sprintf("netease:%d", t.ID),
+		Name:     t.Name,
+		Artists:  artists,
+		Album:    Album{Name: t.Album, PicURL: t.PicURL},
+		Duration: t.Duration,
+	}
+}
+
+var (
+	// ErrNetEaseUnavailable indicates NetEase returned no playable audio URL for a song.
+	ErrNetEaseUnavailable = errors.New("网易云该歌曲暂无可用音频")
+	// ErrNetEaseTrialOnly indicates NetEase only returned a short VIP trial preview.
+	ErrNetEaseTrialOnly = errors.New("网易云该歌曲仅支持试听")
+)
+
+// NetEaseSongMedia resolves the direct audio stream URL for a NetEase song ID
+// using the listener's optional cookie. If NetEase returns no URL or only a
+// short VIP trial preview, it returns ErrNetEaseUnavailable or ErrNetEaseTrialOnly
+// so the caller can seamlessly fall back to local/cloud or Spotify playback.
+func NetEaseSongMedia(ctx context.Context, cookie string, songID int64) (*Media, error) {
+	if songID <= 0 {
+		return nil, ErrNetEaseUnavailable
+	}
+	var res struct {
+		Data []struct {
+			ID            int64  `json:"id"`
+			URL           string `json:"url"`
+			Code          int    `json:"code"`
+			Fee           int    `json:"fee"`
+			Time          int64  `json:"time"`
+			FreeTrialInfo *struct {
+				Start int64 `json:"start"`
+				End   int64 `json:"end"`
+			} `json:"freeTrialInfo"`
+		} `json:"data"`
+	}
+	q := url.Values{
+		"ids": {fmt.Sprintf("[%d]", songID)},
+		"br":  {"320000"},
+	}
+	if err := neteaseDo(ctx, http.MethodGet, "/api/song/enhance/player/url?"+q.Encode(), cookie, nil, &res); err != nil {
+		return nil, err
+	}
+	if len(res.Data) == 0 {
+		return nil, ErrNetEaseUnavailable
+	}
+	d := res.Data[0]
+	if d.FreeTrialInfo != nil {
+		return nil, ErrNetEaseTrialOnly
+	}
+	streamURL := strings.TrimSpace(d.URL)
+	if d.Code != http.StatusOK || streamURL == "" {
+		return nil, ErrNetEaseUnavailable
+	}
+	return &Media{
+		File: streamURL,
+		Headers: map[string]string{
+			"Referer":    "https://music.163.com/",
+			"User-Agent": UserAgent,
+		},
+		Duration: time.Duration(d.Time) * time.Millisecond,
+	}, nil
+}
+
 // MatchCandidateForNetEase picks the best matching track from candidates
 // (either local/cloud library tracks or Spotify search results) for a NetEase
 // playlist entry, rejecting mismatched version tags (live/remix/instrumental).
