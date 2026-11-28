@@ -84,8 +84,8 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/playlist-covers.png" alt="Playlist with unified per-row album covers"><br><b>Unified Track Covers (Toggleable)</b>: Consistent per-row album thumbnails across all lists.</td>
-    <td width="50%"><img src="docs/screenshots/playlist-search.webp" alt="Sticky playlist search"><br><b>Sticky Capsule Search</b>: Fast multi-term filtering while preserving the full playback queue.</td>
+    <td width="50%"><img src="docs/screenshots/playlist-covers.png" alt="Track covers enabled with sticky capsule search"><br><b>Track Covers On + Sticky Capsule Search</b>: Per-row rounded album thumbnails, source badges, and sticky search/sort bar while scrolling.</td>
+    <td width="50%"><img src="docs/screenshots/playlist-covers-off.png" alt="Track covers disabled minimal list view"><br><b>Track Covers Off (Compact List)</b>: Toggle anytime in Settings → Appearance for a clean cover-free list view.</td>
   </tr>
 </table>
 

@@ -117,8 +117,8 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/playlist-covers.png" alt="统一显示专辑封面的歌单列表"><br><b>统一专辑封面（可开关）</b>：歌单与我喜欢的音乐默认展示每首歌的专辑缩略图。</td>
-    <td width="50%"><img src="docs/screenshots/playlist-search.webp" alt="吸顶胶囊搜索框与歌单排序"><br><b>吸顶胶囊搜索</b>：简繁匹配、空格多词筛选与一致的歌单排序。</td>
+    <td width="50%"><img src="docs/screenshots/playlist-covers.png" alt="开启统一专辑封面与吸顶胶囊搜索"><br><b>开启专辑封面 + 吸顶胶囊搜索</b>：滚动时搜索与排序栏自动吸顶，每首歌展示圆角专辑缩略图与来源徽章。</td>
+    <td width="50%"><img src="docs/screenshots/playlist-covers-off.png" alt="关闭专辑封面的极简列表模式与吸顶胶囊搜索"><br><b>关闭专辑封面（极简列表）</b>：在「设置 → 外观」一键切换为清爽无封面列表，吸顶搜索与排序保持一致。</td>
   </tr>
 </table>
 
