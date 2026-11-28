@@ -535,30 +535,46 @@ func NetEaseSearchQueries(t NetEasePlaylistTrack) []string {
 	if len(t.Artists) > 0 {
 		firstArtist = strings.TrimSpace(t.Artists[0])
 	}
-	add := func(list []string, title string) []string {
-		title = strings.TrimSpace(title)
-		if title == "" {
-			return list
-		}
-		q := title
-		if firstArtist != "" {
-			q = title + " " + firstArtist
-		}
-		if !slices.Contains(list, q) {
+	addRaw := func(list []string, q string) []string {
+		q = strings.TrimSpace(q)
+		if q != "" && !slices.Contains(list, q) {
 			list = append(list, q)
 		}
 		return list
 	}
-	var queries []string
-	if cleaned := cleanTitle(t.Name); cleaned != "" {
-		queries = add(queries, cleaned)
+	add := func(list []string, title, artist string) []string {
+		title = strings.TrimSpace(title)
+		if title == "" {
+			return list
+		}
+		if artist != "" {
+			list = addRaw(list, title+" "+artist)
+		} else {
+			list = addRaw(list, title)
+		}
+		return list
 	}
-	queries = add(queries, t.Name)
+	var queries []string
+	cleaned := cleanTitle(t.Name)
+	if cleaned != "" {
+		queries = add(queries, cleaned, firstArtist)
+		asciiTitle := lyrics.StripLatinDiacritics(cleaned)
+		asciiArtist := lyrics.StripLatinDiacritics(firstArtist)
+		if asciiTitle != cleaned || asciiArtist != firstArtist {
+			queries = add(queries, asciiTitle, asciiArtist)
+		}
+	}
+	queries = add(queries, t.Name, firstArtist)
 	for _, alt := range append(slices.Clone(t.Trans), t.Aliases...) {
 		if len(queries) >= 3 {
 			break
 		}
-		queries = add(queries, cleanTitle(alt))
+		queries = add(queries, cleanTitle(alt), firstArtist)
+	}
+	// Title-only fallback helps when NetEase lists a localized artist name
+	// (e.g. 周杰伦 / 米津玄师) while Spotify lists the romanized artist name.
+	if firstArtist != "" && cleaned != "" && len(queries) < 4 {
+		queries = addRaw(queries, lyrics.StripLatinDiacritics(cleaned))
 	}
 	return queries
 }

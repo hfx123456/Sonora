@@ -97,6 +97,22 @@ func TestMatchCandidateForNetEase(t *testing.T) {
 	if !ok || got.ID != "exact" {
 		t.Fatalf("MatchCandidateForNetEase = (%+v, %v), want exact", got, ok)
 	}
+
+	// Latin diacritics ("Sofía" / "Álvaro Soler") must match unaccented Spotify catalog ("Sofia" / "Alvaro Soler").
+	wantAccented := NetEasePlaylistTrack{
+		ID:       409872465,
+		Name:     "Sofía",
+		Artists:  []string{"Álvaro Soler"},
+		Album:    "Sofia",
+		Duration: 210413,
+	}
+	accentedCand := []Track{
+		{ID: "sp-sofia", Name: "Sofia", Artists: []Artist{{Name: "Alvaro Soler"}}, Album: Album{Name: "Eterno Agosto"}, Duration: 210000},
+	}
+	got2, ok2 := MatchCandidateForNetEase(wantAccented, accentedCand, true)
+	if !ok2 || got2.ID != "sp-sofia" {
+		t.Fatalf("accented MatchCandidateForNetEase = (%+v, %v), want sp-sofia", got2, ok2)
+	}
 }
 
 func TestNetEaseSongMediaDirectTrialAndUnavailable(t *testing.T) {
