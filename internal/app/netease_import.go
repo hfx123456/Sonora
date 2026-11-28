@@ -55,11 +55,13 @@ type neteaseImportState struct {
 }
 
 type neteasePlaybackCache struct {
-	mu              sync.RWMutex
-	cachedCookie    string
-	cookieLoaded    bool
-	spotifyFallback map[int64]string // netease song ID -> resolved Spotify track URI
-	resolvedSource  map[int64]string // netease song ID -> human-readable active playback source
+	mu                   sync.RWMutex
+	cachedCookie         string
+	cookieLoaded         bool
+	spotifyFallback      map[int64]string    // netease song ID -> resolved Spotify track URI
+	spotifyMissedUntil   map[int64]time.Time // netease song ID -> avoid re-searching Spotify after miss
+	spotifyCooldownUntil time.Time           // global cooldown after Spotify returns HTTP 429
+	resolvedSource       map[int64]string    // netease song ID -> human-readable active playback source
 }
 
 var neteaseCacheInitMu sync.Mutex
@@ -69,8 +71,9 @@ func (a *app) neteaseCache() *neteasePlaybackCache {
 	defer neteaseCacheInitMu.Unlock()
 	if a.netease.cache == nil {
 		a.netease.cache = &neteasePlaybackCache{
-			spotifyFallback: map[int64]string{},
-			resolvedSource:  map[int64]string{},
+			spotifyFallback:    map[int64]string{},
+			spotifyMissedUntil: map[int64]time.Time{},
+			resolvedSource:     map[int64]string{},
 		}
 	}
 	return a.netease.cache
@@ -766,36 +769,80 @@ func (a *app) resolveNetEasePlayback(ctx context.Context, tr spotify.Track) (*sp
 
 	// 3. Fallback to Spotify playback (using cached URI when available).
 	cache := a.neteaseCache()
+	now := time.Now()
 	cache.mu.RLock()
 	cachedURI := cache.spotifyFallback[id]
+	cooldownUntil := cache.spotifyCooldownUntil
+	missedUntil := cache.spotifyMissedUntil[id]
 	cache.mu.RUnlock()
-	if cachedURI != "" {
-		if m, err := resolveSpotifyForNetEase(cachedURI); err == nil && m != nil {
+
+	recordThrottle := func(err error) bool {
+		var thr *spotify.Throttled
+		if !errors.As(err, &thr) {
+			return false
+		}
+		wait := thr.Wait
+		if wait < 30*time.Second {
+			wait = 30 * time.Second
+		}
+		cache.mu.Lock()
+		if until := time.Now().Add(wait); until.After(cache.spotifyCooldownUntil) {
+			cache.spotifyCooldownUntil = until
+		}
+		cache.mu.Unlock()
+		return true
+	}
+
+	if cachedURI != "" && !now.Before(cooldownUntil) {
+		m, err := resolveSpotifyForNetEase(cachedURI)
+		if err == nil && m != nil {
 			a.setNetEaseResolvedSource(id, "网易云（已切换 Spotify）")
 			log.Printf("netease: %q (%d) unavailable (%v), playing cached Spotify fallback %s", tr.Name, id, neErr, cachedURI)
 			return m, nil
 		}
+		if recordThrottle(err) {
+			return nil, err
+		}
 	}
 
-	for _, q := range spotify.NetEaseSearchQueries(want) {
-		if ctx.Err() != nil {
-			break
-		}
-		results, err := searchSpotifyWithRetry(ctx, q)
-		if err != nil {
-			continue
-		}
-		if hit, ok := spotify.MatchCandidateForNetEase(want, results, true); ok {
-			uri := hit.URI()
-			m, err := resolveSpotifyForNetEase(uri)
-			if err == nil && m != nil {
-				cache.mu.Lock()
-				cache.spotifyFallback[id] = uri
-				cache.mu.Unlock()
-				a.setNetEaseResolvedSource(id, "网易云（已切换 Spotify）")
-				log.Printf("netease: %q (%d) unavailable (%v), playing Spotify fallback %s (%s)", tr.Name, id, neErr, hit.Name, uri)
-				return m, nil
+	if !now.Before(cooldownUntil) && !now.Before(missedUntil) {
+		throttled := false
+		for _, q := range spotify.NetEaseSearchQueries(want) {
+			if ctx.Err() != nil {
+				break
 			}
+			results, err := searchSpotifyForNetEase(q, 8)
+			if err != nil {
+				if recordThrottle(err) {
+					throttled = true
+					return nil, err
+				}
+				continue
+			}
+			if hit, ok := spotify.MatchCandidateForNetEase(want, results, true); ok {
+				uri := hit.URI()
+				m, err := resolveSpotifyForNetEase(uri)
+				if err == nil && m != nil {
+					cache.mu.Lock()
+					cache.spotifyFallback[id] = uri
+					delete(cache.spotifyMissedUntil, id)
+					cache.mu.Unlock()
+					a.setNetEaseResolvedSource(id, "网易云（已切换 Spotify）")
+					log.Printf("netease: %q (%d) unavailable (%v), playing Spotify fallback %s (%s)", tr.Name, id, neErr, hit.Name, uri)
+					return m, nil
+				}
+				if recordThrottle(err) {
+					return nil, err
+				}
+			}
+		}
+		if !throttled && ctx.Err() == nil {
+			cache.mu.Lock()
+			if cache.spotifyMissedUntil == nil {
+				cache.spotifyMissedUntil = map[int64]time.Time{}
+			}
+			cache.spotifyMissedUntil[id] = time.Now().Add(10 * time.Minute)
+			cache.mu.Unlock()
 		}
 	}
 
@@ -843,30 +890,6 @@ func resolveLocalOrCloudFallback(ctx context.Context, hit spotify.Track) (*spoti
 		}
 	}
 	return nil, errors.New("local fallback unreadable")
-}
-
-func searchSpotifyWithRetry(ctx context.Context, query string) ([]spotify.Track, error) {
-	for attempt := range 2 {
-		results, err := searchSpotifyForNetEase(query, 8)
-		if err == nil {
-			return results, nil
-		}
-		var throttled *spotify.Throttled
-		if errors.As(err, &throttled) && attempt == 0 {
-			wait := throttled.Wait
-			if wait <= 0 || wait > 5*time.Second {
-				wait = 1500 * time.Millisecond
-			}
-			select {
-			case <-time.After(wait):
-				continue
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		}
-		return nil, err
-	}
-	return nil, context.Canceled
 }
 
 func (a *app) neteaseImportDialog(c *ui.Context) {

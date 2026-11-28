@@ -1666,6 +1666,11 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 			}
 			if err != nil {
 				log.Printf("player: %s: %v", t.URI(), err)
+				var thr *spotify.Throttled
+				if errors.As(err, &thr) {
+					p.throttled(thr.Wait)
+					return
+				}
 				if t.Local() && !t.Cloud() && !t.NetEase() {
 					p.err, p.playing = "本地文件无法读取，请下载到本机后重新扫描", false
 					p.sync()
@@ -1686,11 +1691,6 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 						}
 						p.skip(curAt, skipped)
 					})
-					return
-				}
-				var thr *spotify.Throttled
-				if errors.As(err, &thr) {
-					p.throttled(thr.Wait)
 					return
 				}
 				if !errors.Is(err, spotify.ErrNoAudioHere) {

@@ -185,3 +185,37 @@ func TestNetEaseSidebarSectionSettingsAndHybridJoin(t *testing.T) {
 		t.Fatalf("after restoreHiddenNetEasePlaylists: lists=%d", len(a.neteaseLists))
 	}
 }
+
+func TestNetEaseFallbackStopsImmediatelyOnSpotifyThrottle(t *testing.T) {
+	prevSongMedia := fetchNetEaseSongMedia
+	prevSearch := searchSpotifyForNetEase
+	defer func() {
+		fetchNetEaseSongMedia = prevSongMedia
+		searchSpotifyForNetEase = prevSearch
+	}()
+
+	fetchNetEaseSongMedia = func(ctx context.Context, cookie string, songID int64) (*spotify.Media, error) {
+		return nil, spotify.ErrNetEaseUnavailable
+	}
+	calls := 0
+	searchSpotifyForNetEase = func(q string, limit int) ([]spotify.Track, error) {
+		calls++
+		return nil, &spotify.Throttled{Wait: 45 * time.Second}
+	}
+
+	a := newTestApp()
+	tr := (spotify.NetEasePlaylistTrack{ID: 409872465, Name: "Sofía", Artists: []string{"Álvaro Soler"}, Duration: 210413}).ToTrack()
+	if _, err := a.resolveNetEasePlayback(context.Background(), tr); err == nil {
+		t.Fatal("expected throttled error")
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 search call before aborting on throttle, got %d", calls)
+	}
+	// Subsequent fallback during cooldown must not call Spotify search again.
+	if _, err := a.resolveNetEasePlayback(context.Background(), tr); err == nil {
+		t.Fatal("expected error during cooldown")
+	}
+	if calls != 1 {
+		t.Fatalf("expected 0 extra search calls during cooldown, got total %d", calls)
+	}
+}

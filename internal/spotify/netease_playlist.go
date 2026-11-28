@@ -557,24 +557,25 @@ func NetEaseSearchQueries(t NetEasePlaylistTrack) []string {
 	var queries []string
 	cleaned := cleanTitle(t.Name)
 	if cleaned != "" {
-		queries = add(queries, cleaned, firstArtist)
 		asciiTitle := lyrics.StripLatinDiacritics(cleaned)
 		asciiArtist := lyrics.StripLatinDiacritics(firstArtist)
+		// Put the diacritic-folded "title artist" query first so accented
+		// tracks (e.g. "Sofía" / "Álvaro Soler") match in a single Spotify request.
+		queries = add(queries, asciiTitle, asciiArtist)
 		if asciiTitle != cleaned || asciiArtist != firstArtist {
-			queries = add(queries, asciiTitle, asciiArtist)
+			queries = add(queries, cleaned, firstArtist)
 		}
 	}
-	queries = add(queries, t.Name, firstArtist)
-	for _, alt := range append(slices.Clone(t.Trans), t.Aliases...) {
-		if len(queries) >= 3 {
-			break
-		}
-		queries = add(queries, cleanTitle(alt), firstArtist)
+	if len(queries) == 0 {
+		queries = add(queries, t.Name, firstArtist)
 	}
 	// Title-only fallback helps when NetEase lists a localized artist name
 	// (e.g. 周杰伦 / 米津玄师) while Spotify lists the romanized artist name.
-	if firstArtist != "" && cleaned != "" && len(queries) < 4 {
+	if firstArtist != "" && cleaned != "" && len(queries) < 2 {
 		queries = addRaw(queries, lyrics.StripLatinDiacritics(cleaned))
+	}
+	if len(queries) > 2 {
+		queries = queries[:2]
 	}
 	return queries
 }
