@@ -748,16 +748,11 @@ func (a *app) playPlaylist(pl *spotify.Playlist) {
 	if pl == nil {
 		return
 	}
-	tracks := a.orderedPlaylistTracks(pl)
 	if pl.Hybrid() {
-		playable := playableTracks(tracks)
-		if len(playable) == 0 {
-			a.toast = "当前没有可播放的歌曲"
-			return
-		}
-		a.playFrom(spotify.HomeItem{List: pl}, playable, 0)
+		a.playHybridShuffled(pl)
 		return
 	}
+	tracks := a.orderedPlaylistTracks(pl)
 	a.playFrom(spotify.HomeItem{List: pl}, tracks, firstPlayable(tracks))
 }
 

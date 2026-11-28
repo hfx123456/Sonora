@@ -251,3 +251,121 @@ func TestHybridPlaylistSidebarAndPageUI(t *testing.T) {
 		t.Fatalf("expected cloud track added via context menu, got %d tracks", len(a.playlists[pl.ID].Tracks))
 	}
 }
+
+func TestHybridPlaylistWholeImportShuffleOrderAndShuffledPlayback(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "hybrid-playlists.json")
+	localFile := filepath.Join(dir, "local.flac")
+	if err := os.WriteFile(localFile, []byte("flac"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.hybridStore = loadHybridPlaylistsFrom(storePath)
+
+	spPlaylistID := "spotify:playlist:orig-1"
+	spTracks := []spotify.Track{
+		{ID: "sp-1", Name: "SP One", Artists: []spotify.Artist{{Name: "A"}}, Duration: 180000},
+		{ID: "sp-2", Name: "SP Two", Artists: []spotify.Artist{{Name: "B"}}, Duration: 180000},
+		{ID: "sp-3", Name: "SP Three", Artists: []spotify.Artist{{Name: "C"}}, Duration: 180000},
+	}
+	a.mine = []spotify.Playlist{{ID: spPlaylistID, Name: "我的原有歌单", TrackCount: len(spTracks)}}
+	a.playlists[spPlaylistID] = &spotify.Playlist{ID: spPlaylistID, Name: "我的原有歌单", Tracks: spTracks}
+	a.localTracks = []spotify.Track{
+		{ID: "local:1", LocalPath: localFile, Name: "Local One", Artists: []spotify.Artist{{Name: "L1"}}, Duration: 200000},
+		{ID: "local:2", LocalPath: localFile, Name: "Local Two", Artists: []spotify.Artist{{Name: "L2"}}, Duration: 200000},
+		{ID: "cloud:1", CloudURL: "https://dav.example.com/c1.flac", CloudSource: "NAS", Name: "Cloud One", Artists: []spotify.Artist{{Name: "C1"}}, Duration: 220000},
+	}
+
+	pl := a.createHybridPlaylist("混排大合集", nil)
+
+	// Import whole Spotify playlist and whole local+cloud library via UI header menu.
+	tester := ui.NewTester(a.view, 1180, 780)
+	tester.Frame()
+	if err := tester.Click("导入歌单"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if err := tester.ChooseMenuItem("我的歌单", "我的原有歌单"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	if got := len(a.playlists[pl.ID].Tracks); got != 3 {
+		t.Fatalf("tracks after importing spotify playlist = %d, want 3", got)
+	}
+
+	// Re-importing the same playlist skips all duplicates cleanly.
+	a.importPlaylistIntoHybrid(spPlaylistID, pl.ID)
+	if got := len(a.playlists[pl.ID].Tracks); got != 3 {
+		t.Fatalf("duplicate import changed track count to %d", got)
+	}
+
+	// Import all local + cloud tracks.
+	a.importLocalScopeIntoHybrid(pl.ID, 0)
+	if got := len(a.playlists[pl.ID].Tracks); got != 6 {
+		t.Fatalf("tracks after importing local/cloud = %d, want 6", got)
+	}
+
+	beforeIDs := make([]string, 6)
+	for i, tr := range a.playlists[pl.ID].Tracks {
+		beforeIDs[i] = tr.ID
+	}
+
+	// Click "打乱顺序" button in header: order must visibly change and persist to disk.
+	tester.Frame()
+	if err := tester.Click("打乱顺序"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+
+	afterIDs := make([]string, 6)
+	same := true
+	for i, tr := range a.playlists[pl.ID].Tracks {
+		afterIDs[i] = tr.ID
+		if afterIDs[i] != beforeIDs[i] {
+			same = false
+		}
+	}
+	if same {
+		t.Fatalf("shuffle order did not change track order: %v", afterIDs)
+	}
+
+	// Reload from disk and verify shuffled order persisted.
+	reloaded := loadHybridPlaylistsFrom(storePath)
+	if len(reloaded.entries) != 1 || len(reloaded.entries[0].Tracks) != 6 {
+		t.Fatalf("reloaded hybrid store mismatch")
+	}
+	for i, rec := range reloaded.entries[0].Tracks {
+		if rec.Track.ID != afterIDs[i] {
+			t.Fatalf("persisted order mismatch at %d: got %s want %s", i, rec.Track.ID, afterIDs[i])
+		}
+	}
+
+	// Click primary "随机混播" button: queues all 6 playable tracks and produces a shuffled order across runs.
+	if err := tester.Click("随机混播"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Frame()
+	q := a.pl.Queue()
+	if len(q) != 6 {
+		t.Fatalf("shuffled playback queue len = %d, want 6", len(q))
+	}
+	sawDifferent := false
+	for range 12 {
+		a.playPlaylist(a.playlists[pl.ID])
+		q2 := a.pl.Queue()
+		for i := range q2 {
+			if q2[i].ID != afterIDs[i] {
+				sawDifferent = true
+				break
+			}
+		}
+		if sawDifferent {
+			break
+		}
+	}
+	if !sawDifferent {
+		t.Fatalf("playPlaylist on hybrid playlist never produced a shuffled order distinct from stored order")
+	}
+}

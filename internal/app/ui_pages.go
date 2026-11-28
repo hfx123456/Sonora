@@ -321,19 +321,22 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 				ui.Text(c, strings.ReplaceAll(d, "\n", " ")).FontSize(12.5).TextColor(p.muted).MaxLines(2).LineHeight(1.45).Margin(2, 0, 0, 0)
 			}
 			ui.Row(c).Gap(10).Margin(10, 0, 0, 0).Children(func() {
-				if pillButton(c.Key("play"), iconPlay, "播放", p.accent, p.onAccent).Clicked() {
-					a.playPlaylist(pl)
-				}
-				if a.secondaryPillButton(c.Key("shuffle"), iconShuffle, "随机播放").Clicked() {
-					if pl.Hybrid() {
-						playable := playableTracks(tracks)
-						if len(playable) == 0 {
-							a.toast = "当前没有可播放的歌曲"
-						} else {
-							a.enableShuffle()
-							a.playFrom(spotify.HomeItem{List: pl}, playable, randomPlayable(playable))
-						}
-					} else {
+				if pl.Hybrid() {
+					if pillButton(c.Key("play"), iconShuffle, "随机混播", p.accent, p.onAccent).Clicked() {
+						a.playHybridShuffled(pl)
+					}
+					if a.secondaryPillButton(c.Key("shuffle-order"), iconShuffle, "打乱顺序").Clicked() {
+						a.shuffleHybridPlaylist(pl.ID)
+					}
+					importBtn := a.secondaryPillButton(c.Key("import-hybrid"), iconPlus, "导入歌单")
+					importBtn.Menu(func(m *ui.Menu) {
+						a.hybridImportSourcesMenu(m, pl.ID)
+					})
+				} else {
+					if pillButton(c.Key("play"), iconPlay, "播放", p.accent, p.onAccent).Clicked() {
+						a.playPlaylist(pl)
+					}
+					if a.secondaryPillButton(c.Key("shuffle"), iconShuffle, "随机播放").Clicked() {
 						a.enableShuffle()
 						a.playFrom(spotify.HomeItem{List: pl}, tracks, randomPlayable(tracks))
 					}
@@ -348,15 +351,36 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 					}
 				}
 				mine := a.editable(pl.ID)
-				if mine != nil || a.inLibrary(pl.ID) {
+				isShow := strings.HasPrefix(pl.ID, "spotify:show:")
+				if mine != nil || a.inLibrary(pl.ID) || !isShow {
 					more := iconButton(c.Key("more"), iconMore, 18, p.muted, "更多")
 					more.Menu(func(m *ui.Menu) {
-						pinLabel := "置顶歌单"
-						if a.isPlaylistPinned(pl.ID) {
-							pinLabel = "取消置顶"
+						hasTop := false
+						if pl.Hybrid() {
+							if m.Item("顺序播放").Chosen() {
+								a.playHybridSequential(pl)
+							}
+							hasTop = true
 						}
-						if m.Item(pinLabel).Chosen() {
-							a.togglePlaylistPinned(pl.ID)
+						if mine != nil || a.inLibrary(pl.ID) {
+							if hasTop {
+								m.Separator()
+							}
+							pinLabel := "置顶歌单"
+							if a.isPlaylistPinned(pl.ID) {
+								pinLabel = "取消置顶"
+							}
+							if m.Item(pinLabel).Chosen() {
+								a.togglePlaylistPinned(pl.ID)
+							}
+							hasTop = true
+						}
+						if !isShow {
+							if hasTop {
+								m.Separator()
+							}
+							a.playlistToHybridMenu(m, pl)
+							hasTop = true
 						}
 						if mine != nil {
 							m.Separator()

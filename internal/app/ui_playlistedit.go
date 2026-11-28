@@ -23,12 +23,14 @@ var (
 
 // nameDialog asks for a playlist's name: a new one's, or one's new name.
 type nameDialog struct {
-	open   bool
-	name   string
-	rename string         // the playlist renamed, or "" to make one
-	add    *spotify.Track // the song to add to the playlist made, if any
-	busy   bool           // Spotify is making the playlist
-	hybrid bool           // true for locally stored hybrid playlists
+	open             bool
+	name             string
+	rename           string          // the playlist renamed, or "" to make one
+	add              *spotify.Track  // the song to add to the playlist made, if any
+	importPlaylistID string          // whole playlist to import into a newly created hybrid playlist
+	importTracks     []spotify.Track // batch of tracks to import into a newly created hybrid playlist
+	busy             bool            // Spotify is making the playlist
+	hybrid           bool            // true for locally stored hybrid playlists
 }
 
 // deleteDialog asks whether to delete one of the listener's playlists.
@@ -94,12 +96,20 @@ func (a *app) submitName() {
 		return
 	}
 	if d.hybrid {
-		rename, add := d.rename, d.add
+		rename, add, importPID, importTracks := d.rename, d.add, d.importPlaylistID, d.importTracks
 		d.open = false
+		d.importPlaylistID, d.importTracks = "", nil
 		if rename != "" {
 			a.renameHybridPlaylist(rename, name)
 		} else {
-			a.createHybridPlaylist(name, add)
+			made := a.createHybridPlaylist(name, add)
+			if made != nil {
+				if importPID != "" {
+					a.importPlaylistIntoHybrid(importPID, made.ID)
+				} else if len(importTracks) > 0 {
+					a.addManyToHybrid(made.ID, importTracks)
+				}
+			}
 		}
 		return
 	}

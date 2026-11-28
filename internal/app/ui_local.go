@@ -967,6 +967,11 @@ func (a *app) localMusicPage(c *ui.Context) {
 				if len(tracks) > 0 && ui.Button(c.Key("play-local"), "播放全部").Clicked() {
 					a.playQueue(tracks, firstPlayable(tracks))
 				}
+				if len(tracks) > 0 {
+					ui.Button(c.Key("add-local-hybrid"), "添加到混合歌单").Menu(func(m *ui.Menu) {
+						a.tracksToHybridMenu(m, "本地与云盘音乐", tracks)
+					})
+				}
 			})
 
 			if a.cloudFormOpen {

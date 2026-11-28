@@ -1199,6 +1199,15 @@ func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid, pinned
 				a.togglePlaylistPinned(pl.ID)
 			}
 		}
+		if !strings.HasPrefix(pl.ID, "spotify:show:") {
+			m.Separator()
+			if pl.Hybrid() {
+				if m.Item("打乱顺序").Chosen() {
+					a.shuffleHybridPlaylist(pl.ID)
+				}
+			}
+			a.playlistToHybridMenu(m, pl)
+		}
 		switch {
 		case mine && !pl.Liked():
 			m.Separator()

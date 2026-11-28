@@ -3,7 +3,9 @@ package app
 import (
 	"cmp"
 	"encoding/json"
+	"fmt"
 	"log"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 
 	"vinyl/internal/localmusic"
 	"vinyl/internal/spotify"
@@ -266,6 +269,27 @@ func (a *app) newHybridPlaylist(tr *spotify.Track) {
 	a.naming = nameDialog{open: true, add: tr, hybrid: true}
 }
 
+func (a *app) newHybridPlaylistFromPlaylist(pl *spotify.Playlist) {
+	if pl == nil {
+		return
+	}
+	a.naming = nameDialog{
+		open:             true,
+		name:             pl.Name,
+		hybrid:           true,
+		importPlaylistID: pl.ID,
+	}
+}
+
+func (a *app) newHybridPlaylistFromTracks(defaultName string, tracks []spotify.Track) {
+	a.naming = nameDialog{
+		open:         true,
+		name:         defaultName,
+		hybrid:       true,
+		importTracks: slices.Clone(tracks),
+	}
+}
+
 func (a *app) createHybridPlaylist(name string, add *spotify.Track) *spotify.Playlist {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -434,5 +458,324 @@ func hybridTrackSourceLabel(tr *spotify.Track) (label string, offlineCached bool
 		return "本机", false
 	default:
 		return "Spotify", false
+	}
+}
+
+func (a *app) addManyToHybrid(pid string, tracks []spotify.Track) (added, skipped int) {
+	i := a.hybridEntryIndex(pid)
+	if i < 0 {
+		return 0, 0
+	}
+	entry := &a.hybridStore.entries[i]
+	seen := make(map[string]bool, len(entry.Tracks)+len(tracks))
+	for _, rec := range entry.Tracks {
+		seen[rec.Track.ID] = true
+	}
+	now := time.Now().Unix()
+	for _, tr := range tracks {
+		if tr.Episode || tr.ID == "" {
+			continue
+		}
+		if seen[tr.ID] {
+			skipped++
+			continue
+		}
+		seen[tr.ID] = true
+		snap := tr
+		uid := "h-" + randomHexID(6)
+		snap.UID = uid
+		if snap.LocalError == "需登录 Spotify" || snap.LocalError == "云盘离线且未缓存" {
+			snap.LocalError = ""
+			snap.Unplayable = false
+		}
+		entry.Tracks = append(entry.Tracks, hybridTrackRecord{UID: uid, AddedAt: now, Track: snap})
+		added++
+	}
+	if added > 0 {
+		entry.UpdatedAt = now
+		a.refreshHybridPlaylists()
+		a.saveHybridStore()
+	}
+	switch {
+	case added == 0 && skipped > 0:
+		a.toast = "歌单中的歌曲已全部在混合歌单中"
+	case added == 0:
+		a.toast = "没有可导入的歌曲"
+	case skipped > 0:
+		a.toast = fmt.Sprintf("已导入 %d 首歌曲（跳过 %d 首重复）", added, skipped)
+	default:
+		a.toast = fmt.Sprintf("已导入 %d 首歌曲", added)
+	}
+	return added, skipped
+}
+
+func shuffleSlice[T any](items []T, sameOrder func(a, b []T) bool) {
+	if len(items) < 2 {
+		return
+	}
+	orig := slices.Clone(items)
+	for range 4 {
+		rand.Shuffle(len(items), func(i, j int) {
+			items[i], items[j] = items[j], items[i]
+		})
+		if sameOrder == nil || !sameOrder(orig, items) {
+			return
+		}
+	}
+	// Guarantee visible reorder when len >= 2 and random draws happened to match.
+	items[0], items[1] = items[1], items[0]
+}
+
+func (a *app) shuffleHybridPlaylist(pid string) {
+	i := a.hybridEntryIndex(pid)
+	if i < 0 {
+		return
+	}
+	entry := &a.hybridStore.entries[i]
+	if len(entry.Tracks) < 2 {
+		a.toast = "歌曲不足 2 首，无需打乱"
+		return
+	}
+	next := slices.Clone(entry.Tracks)
+	shuffleSlice(next, func(a, b []hybridTrackRecord) bool {
+		for idx := range a {
+			if a[idx].UID != b[idx].UID {
+				return false
+			}
+		}
+		return true
+	})
+	entry.Tracks = next
+	entry.UpdatedAt = time.Now().Unix()
+	if a.playlistSorts != nil && a.playlistSorts[pid] != playlistOriginal {
+		a.playlistSorts[pid] = playlistOriginal
+	}
+	a.refreshHybridPlaylists()
+	a.saveHybridStore()
+	a.toast = "已打乱混合歌单顺序"
+}
+
+func (a *app) playHybridShuffled(pl *spotify.Playlist) {
+	if pl == nil {
+		return
+	}
+	playable := playableTracks(a.orderedPlaylistTracks(pl))
+	if len(playable) == 0 {
+		a.toast = "当前没有可播放的歌曲"
+		return
+	}
+	shuffled := slices.Clone(playable)
+	if len(shuffled) >= 2 {
+		rand.Shuffle(len(shuffled), func(i, j int) {
+			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+		})
+	}
+	a.playFrom(spotify.HomeItem{List: pl}, shuffled, 0)
+}
+
+func (a *app) playHybridSequential(pl *spotify.Playlist) {
+	if pl == nil {
+		return
+	}
+	playable := playableTracks(a.orderedPlaylistTracks(pl))
+	if len(playable) == 0 {
+		a.toast = "当前没有可播放的歌曲"
+		return
+	}
+	a.playFrom(spotify.HomeItem{List: pl}, playable, 0)
+}
+
+func (a *app) importPlaylistIntoHybrid(srcID, dstHybridID string) {
+	if srcID == "" || dstHybridID == "" || srcID == dstHybridID {
+		return
+	}
+	if spotify.IsHybridPlaylistID(srcID) {
+		a.refreshHybridPlaylists()
+		if src := a.playlists[srcID]; src != nil {
+			a.addManyToHybrid(dstHybridID, src.Tracks)
+		}
+		return
+	}
+	if src := a.playlists[srcID]; src != nil && len(src.Tracks) > 0 {
+		a.addManyToHybrid(dstHybridID, src.Tracks)
+		return
+	}
+	user := ""
+	if a.profile != nil {
+		user = a.profile.UserID
+	}
+	if cached := readPlaylistSnapshot(a.playlistCacheRoot, user, srcID); cached != nil && cached.Playlist != nil && len(cached.Playlist.Tracks) > 0 {
+		a.addManyToHybrid(dstHybridID, cached.Playlist.Tracks)
+		return
+	}
+	a.toast = "正在读取歌单并导入…"
+	root, gen, epoch, fetch := a.playlistCacheRoot, a.accountGen, accountEpoch(), playlistDetail
+	asked := time.Now()
+	go func() {
+		pl, err := fetch(srcID)
+		if err == nil && pl != nil && accountEpoch() == epoch {
+			savePlaylistSnapshot(root, user, srcID, pl, asked)
+		}
+		a.post(func() {
+			if a.accountGen != gen || a.quitting {
+				return
+			}
+			if err != nil || pl == nil {
+				a.toast = "读取歌单失败，请稍后再试"
+				return
+			}
+			a.playlists[srcID] = pl
+			a.addManyToHybrid(dstHybridID, pl.Tracks)
+		})
+	}()
+}
+
+func (a *app) importLocalScopeIntoHybrid(dstHybridID string, scope int) {
+	tracks := make([]spotify.Track, 0, len(a.localTracks))
+	for _, tr := range a.localTracks {
+		switch scope {
+		case 1:
+			if !tr.Cloud() {
+				tracks = append(tracks, tr)
+			}
+		case 2:
+			if tr.Cloud() {
+				tracks = append(tracks, tr)
+			}
+		default:
+			tracks = append(tracks, tr)
+		}
+	}
+	a.addManyToHybrid(dstHybridID, tracks)
+}
+
+func (a *app) playlistToHybridMenu(m *ui.Menu, pl *spotify.Playlist) {
+	if pl == nil || strings.HasPrefix(pl.ID, "spotify:show:") {
+		return
+	}
+	m.Submenu("添加到混合歌单", func(m *ui.Menu) {
+		if m.Item("新建混合歌单…").Chosen() {
+			a.newHybridPlaylistFromPlaylist(pl)
+		}
+		var targets []*spotify.Playlist
+		for i := range a.hybrids {
+			if h := &a.hybrids[i]; h.ID != pl.ID {
+				targets = append(targets, h)
+			}
+		}
+		if len(targets) > 0 {
+			m.Separator()
+		}
+		for _, h := range targets {
+			if m.Item(h.Name).Chosen() {
+				a.importPlaylistIntoHybrid(pl.ID, h.ID)
+			}
+		}
+	})
+}
+
+func (a *app) tracksToHybridMenu(m *ui.Menu, defaultName string, tracks []spotify.Track) {
+	if m.Item("新建混合歌单…").Chosen() {
+		a.newHybridPlaylistFromTracks(defaultName, tracks)
+	}
+	if len(a.hybrids) > 0 {
+		m.Separator()
+	}
+	for i := range a.hybrids {
+		h := &a.hybrids[i]
+		if m.Item(h.Name).Chosen() {
+			a.addManyToHybrid(h.ID, tracks)
+		}
+	}
+}
+
+func (a *app) hybridImportSourcesMenu(m *ui.Menu, dstHybridID string) {
+	addedAny := false
+	hasLocal, hasCloud := false, false
+	for _, tr := range a.localTracks {
+		if tr.Cloud() {
+			hasCloud = true
+		} else {
+			hasLocal = true
+		}
+	}
+	if hasLocal || hasCloud {
+		addedAny = true
+		if hasLocal && hasCloud {
+			m.Submenu("本地与云盘音乐", func(m *ui.Menu) {
+				if m.Item("全部本地与云盘音乐").Chosen() {
+					a.importLocalScopeIntoHybrid(dstHybridID, 0)
+				}
+				if m.Item("仅本机音乐").Chosen() {
+					a.importLocalScopeIntoHybrid(dstHybridID, 1)
+				}
+				if m.Item("仅云盘音乐").Chosen() {
+					a.importLocalScopeIntoHybrid(dstHybridID, 2)
+				}
+			})
+		} else if hasLocal {
+			if m.Item("全部本机音乐").Chosen() {
+				a.importLocalScopeIntoHybrid(dstHybridID, 1)
+			}
+		} else {
+			if m.Item("全部云盘音乐").Chosen() {
+				a.importLocalScopeIntoHybrid(dstHybridID, 2)
+			}
+		}
+	}
+	if len(a.mine) > 0 {
+		if addedAny {
+			m.Separator()
+		}
+		addedAny = true
+		m.Submenu("我的歌单", func(m *ui.Menu) {
+			for i := range a.mine {
+				pl := &a.mine[i]
+				if m.Item(pl.Name).Chosen() {
+					a.importPlaylistIntoHybrid(pl.ID, dstHybridID)
+				}
+			}
+		})
+	}
+	var savedLists []*spotify.Playlist
+	for i := range a.saved {
+		if !strings.HasPrefix(a.saved[i].ID, "spotify:show:") {
+			savedLists = append(savedLists, &a.saved[i])
+		}
+	}
+	if len(savedLists) > 0 {
+		if addedAny {
+			m.Separator()
+		}
+		addedAny = true
+		m.Submenu("我的收藏", func(m *ui.Menu) {
+			for _, pl := range savedLists {
+				if m.Item(pl.Name).Chosen() {
+					a.importPlaylistIntoHybrid(pl.ID, dstHybridID)
+				}
+			}
+		})
+	}
+	var otherHybrids []*spotify.Playlist
+	for i := range a.hybrids {
+		if a.hybrids[i].ID != dstHybridID {
+			otherHybrids = append(otherHybrids, &a.hybrids[i])
+		}
+	}
+	if len(otherHybrids) > 0 {
+		if addedAny {
+			m.Separator()
+		}
+		addedAny = true
+		m.Submenu("其他混合歌单", func(m *ui.Menu) {
+			for _, pl := range otherHybrids {
+				if m.Item(pl.Name).Chosen() {
+					a.importPlaylistIntoHybrid(pl.ID, dstHybridID)
+				}
+			}
+		})
+	}
+	if !addedAny {
+		m.Item("暂无可导入的歌单或本地音乐").Disabled(true)
 	}
 }
