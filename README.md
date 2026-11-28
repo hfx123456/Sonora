@@ -166,8 +166,12 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/hybrid-playlist.png" alt="四源混合歌单与侧栏多音源歌单分组"><br><b>四源混合歌单 &amp; 侧栏多音源分组</b>：Spotify、网易云、本机与云盘同单混排，一键随机混播与智能去重。</td>
-    <td width="50%"><img src="docs/screenshots/dual-account-settings.png" alt="设置页 Spotify 主账号与网易云子账号统一卡片"><br><b>双账号统一管理（设置 › 账号）</b>：Spotify 主账号与网易云子账号统一头像样式，一键刷新歌单。</td>
+    <td width="50%"><img src="docs/screenshots/hybrid-playlist.png" alt="四源混合歌单与侧栏多音源歌单分组（浅色模式）"><br><b>四源混合歌单（浅色模式）</b>：Spotify、网易云、本机与云盘同单混排，一键随机混播与智能去重。</td>
+    <td width="50%"><img src="docs/screenshots/hybrid-playlist-dark.png" alt="四源混合歌单与侧栏多音源歌单分组（黑夜模式）"><br><b>四源混合歌单（黑夜模式）</b>：深色封面渐变顶光 + 液态玻璃底栏，多音源徽章清晰直观。</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/dual-account-settings.png" alt="设置页 Spotify 主账号与网易云子账号统一卡片（浅色模式）"><br><b>双账号统一管理（浅色模式）</b>：Spotify 主账号与网易云子账号统一头像样式，一键刷新歌单。</td>
+    <td width="50%"><img src="docs/screenshots/dual-account-settings-dark.png" alt="设置页 Spotify 主账号与网易云子账号统一卡片（黑夜模式）"><br><b>双账号统一管理（黑夜模式）</b>：深色外观下的统一账号卡片、液态玻璃与进度条设置。</td>
   </tr>
   <tr>
     <td colspan="2" align="center"><img src="docs/screenshots/home-multisource.png" alt="Sonora v1.1.0 主页与置顶歌单、多音源侧栏及呼吸光珠进度条"><br><b>Sonora v1.1.0 主页总览</b>：置顶歌单、Spotify / 网易云 / 混合歌单清晰分层，配合液态玻璃与动效进度条。</td>

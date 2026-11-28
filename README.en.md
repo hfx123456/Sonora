@@ -133,8 +133,12 @@ Bring **Spotify, NetEase Cloud Music, local lossless files, and 6 cloud drives**
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/hybrid-playlist.png" alt="Multi-source Hybrid Playlist and sidebar playlist sections"><br><b>Multi-Source Hybrid Playlist &amp; Sidebar</b>: Mix Spotify, NetEase, local, and cloud tracks with smart dedup and shuffled playback.</td>
-    <td width="50%"><img src="docs/screenshots/dual-account-settings.png" alt="Settings Account card with Spotify primary and NetEase secondary accounts"><br><b>Unified Dual-Account Settings</b>: Manage Spotify (Primary) and NetEase (Secondary) side by side with one-click playlist sync.</td>
+    <td width="50%"><img src="docs/screenshots/hybrid-playlist.png" alt="Multi-source Hybrid Playlist and sidebar playlist sections (Light Mode)"><br><b>Multi-Source Hybrid Playlist (Light Mode)</b>: Mix Spotify, NetEase, local, and cloud tracks with smart dedup and shuffled playback.</td>
+    <td width="50%"><img src="docs/screenshots/hybrid-playlist-dark.png" alt="Multi-source Hybrid Playlist and sidebar playlist sections (Dark Mode)"><br><b>Multi-Source Hybrid Playlist (Dark Mode)</b>: Adaptive dark cover wash, Liquid Glass bar, and crisp source badges.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/dual-account-settings.png" alt="Settings Account card with Spotify primary and NetEase secondary accounts (Light Mode)"><br><b>Unified Dual-Account Settings (Light Mode)</b>: Manage Spotify (Primary) and NetEase (Secondary) side by side with one-click playlist sync.</td>
+    <td width="50%"><img src="docs/screenshots/dual-account-settings-dark.png" alt="Settings Account card with Spotify primary and NetEase secondary accounts (Dark Mode)"><br><b>Unified Dual-Account Settings (Dark Mode)</b>: Matching dark-mode account cards, Liquid Glass, and progress bar settings.</td>
   </tr>
   <tr>
     <td colspan="2" align="center"><img src="docs/screenshots/home-multisource.png" alt="Sonora v1.1.0 Home overview with pinned playlists and multi-source sidebar"><br><b>Sonora v1.1.0 Home Overview</b>: Pinned playlists, separated Spotify / NetEase / Hybrid sections, Liquid Glass, and animated progress bar.</td>
