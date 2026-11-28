@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -144,7 +145,199 @@ func (a *app) signOutNetEase() {
 	a.netease.playlistsErr = ""
 	a.netease.playlistsLoading = false
 	a.netease.playlistsGen++
+	a.rebuildNetEaseLists()
 	a.toast = "已退出网易云账号"
+}
+
+func (a *app) loadNetEaseLibrary() {
+	cookie := a.settings.neteaseCookie()
+	a.syncNetEaseCookieCache(cookie)
+	a.rebuildNetEaseLists()
+	if a.settings.NetEaseUserID > 0 && cookie != "" {
+		a.loadNetEasePlaylists()
+	}
+}
+
+func (a *app) rebuildNetEaseLists() {
+	seen := map[int64]bool{}
+	lists := make([]spotify.Playlist, 0, len(a.netease.playlists)+len(a.settings.NetEasePlaylists))
+	addSummary := func(s spotify.NetEasePlaylistSummary) {
+		if s.ID <= 0 || seen[s.ID] {
+			return
+		}
+		seen[s.ID] = true
+		name := strings.TrimSpace(s.Name)
+		if name == "" {
+			name = fmt.Sprintf("网易云歌单 %d", s.ID)
+		}
+		lists = append(lists, spotify.Playlist{
+			ID:         spotify.NetEasePlaylistID(s.ID),
+			Name:       name,
+			CoverURL:   s.CoverURL,
+			TrackCount: s.TrackCount,
+		})
+	}
+	for _, s := range a.netease.playlists {
+		addSummary(s)
+	}
+	for _, s := range a.settings.NetEasePlaylists {
+		addSummary(s)
+	}
+	a.neteaseLists = lists
+}
+
+func (a *app) isManualNetEasePlaylist(plID string) bool {
+	neID := spotify.ParseNetEasePlaylistURI(plID)
+	if neID <= 0 {
+		return false
+	}
+	return slices.ContainsFunc(a.settings.NetEasePlaylists, func(s spotify.NetEasePlaylistSummary) bool { return s.ID == neID })
+}
+
+func (a *app) addManualNetEasePlaylist(detail *spotify.NetEasePlaylistDetail) string {
+	if detail == nil || detail.ID <= 0 {
+		return ""
+	}
+	summary := spotify.NetEasePlaylistSummary{
+		ID:         detail.ID,
+		Name:       strings.TrimSpace(detail.Name),
+		CoverURL:   detail.CoverURL,
+		TrackCount: detail.TrackCount,
+	}
+	if summary.Name == "" {
+		summary.Name = fmt.Sprintf("网易云歌单 %d", detail.ID)
+	}
+	if idx := slices.IndexFunc(a.settings.NetEasePlaylists, func(s spotify.NetEasePlaylistSummary) bool { return s.ID == detail.ID }); idx >= 0 {
+		a.settings.NetEasePlaylists[idx] = summary
+	} else {
+		a.settings.NetEasePlaylists = slices.Insert(a.settings.NetEasePlaylists, 0, summary)
+	}
+	a.settings.save()
+	a.rebuildNetEaseLists()
+	a.expandSidebarSection(sidebarSectionNetEase)
+	return spotify.NetEasePlaylistID(detail.ID)
+}
+
+func (a *app) removeManualNetEasePlaylist(plID string) {
+	neID := spotify.ParseNetEasePlaylistURI(plID)
+	if neID <= 0 {
+		return
+	}
+	idx := slices.IndexFunc(a.settings.NetEasePlaylists, func(s spotify.NetEasePlaylistSummary) bool { return s.ID == neID })
+	if idx < 0 {
+		return
+	}
+	a.settings.NetEasePlaylists = slices.Delete(a.settings.NetEasePlaylists, idx, idx+1)
+	a.settings.save()
+	a.unpinPlaylist(plID)
+	a.rebuildNetEaseLists()
+	a.toast = "已从网易云歌单列表移除"
+}
+
+func neteaseDetailToPlaylist(detail *spotify.NetEasePlaylistDetail) *spotify.Playlist {
+	tracks := make([]spotify.Track, 0, len(detail.Tracks))
+	for _, item := range detail.Tracks {
+		if item.ID <= 0 || item.Name == "" {
+			continue
+		}
+		tracks = append(tracks, item.ToTrack())
+	}
+	name := strings.TrimSpace(detail.Name)
+	if name == "" {
+		name = fmt.Sprintf("网易云歌单 %d", detail.ID)
+	}
+	return &spotify.Playlist{
+		ID:         spotify.NetEasePlaylistID(detail.ID),
+		Name:       name,
+		CoverURL:   detail.CoverURL,
+		TrackCount: max(detail.TrackCount, len(tracks)),
+		Tracks:     tracks,
+	}
+}
+
+func (a *app) requestNetEasePlaylist(id string, thenPlay, refresh bool) {
+	neID := spotify.ParseNetEasePlaylistURI(id)
+	if neID <= 0 {
+		a.plErr[id] = "无效的网易云歌单"
+		return
+	}
+	if pl := a.playlists[id]; pl != nil && !refresh {
+		if thenPlay {
+			a.playPlaylist(pl)
+		}
+		return
+	}
+	if a.loadingPl[id] {
+		if thenPlay {
+			if a.plThenPlay == nil {
+				a.plThenPlay = map[string]bool{}
+			}
+			a.plThenPlay[id] = true
+		}
+		return
+	}
+	a.loadingPl[id] = true
+	if thenPlay {
+		if a.plThenPlay == nil {
+			a.plThenPlay = map[string]bool{}
+		}
+		a.plThenPlay[id] = true
+	}
+	delete(a.plErr, id)
+	cookie := a.neteasePlaybackCookie()
+	asked := time.Now()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		detail, err := fetchNetEasePlaylist(ctx, cookie, neID)
+		var pl *spotify.Playlist
+		if err == nil && detail != nil {
+			pl = neteaseDetailToPlaylist(detail)
+		}
+		a.post(func() {
+			if a.quitting {
+				return
+			}
+			playNow := a.plThenPlay[id]
+			delete(a.plThenPlay, id)
+			a.receivePlaylist(id, pl, err, playNow, asked)
+			if err == nil && pl != nil {
+				// Keep sidebar metadata (name/cover/count) fresh.
+				for i := range a.neteaseLists {
+					if a.neteaseLists[i].ID == id {
+						a.neteaseLists[i].Name = pl.Name
+						a.neteaseLists[i].CoverURL = pl.CoverURL
+						a.neteaseLists[i].TrackCount = pl.TrackCount
+					}
+				}
+			}
+		})
+	}()
+}
+
+func (a *app) importNetEasePlaylistIntoHybrid(srcID string, neID int64, dstHybridID string) {
+	a.toast = "正在读取网易云歌单并加入混合歌单…"
+	cookie := a.neteasePlaybackCookie()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		detail, err := fetchNetEasePlaylist(ctx, cookie, neID)
+		a.post(func() {
+			if a.quitting {
+				return
+			}
+			if err != nil || detail == nil {
+				a.toast = "读取网易云歌单失败，请稍后再试"
+				return
+			}
+			pl := neteaseDetailToPlaylist(detail)
+			if a.playlists == nil {
+				a.playlists = map[string]*spotify.Playlist{}
+			}
+			a.playlists[srcID] = pl
+			a.addManyToHybrid(dstHybridID, pl.Tracks)
+		})
+	}()
 }
 
 func (a *app) loadNetEasePlaylists() {
@@ -172,6 +365,7 @@ func (a *app) loadNetEasePlaylists() {
 				return
 			}
 			a.netease.playlists = lists
+			a.rebuildNetEaseLists()
 		})
 	}()
 }
@@ -281,6 +475,12 @@ func (a *app) startNetEaseImportFromInput() {
 }
 
 func (a *app) startNetEaseImportBySummary(pl spotify.NetEasePlaylistSummary) {
+	if a.netease.targetHybridID == "" {
+		a.netease.open = false
+		a.expandSidebarSection(sidebarSectionNetEase)
+		a.open(route{page: pagePlaylist, playlist: spotify.NetEasePlaylistID(pl.ID)})
+		return
+	}
 	a.startNetEaseImport(pl.ID, "", pl.Name)
 }
 
@@ -301,6 +501,7 @@ func (a *app) startNetEaseImport(playlistID int64, rawInput, fallbackTitle strin
 
 	cookie := a.settings.neteaseCookie()
 	a.syncNetEaseCookieCache(cookie)
+	toHybrid := a.netease.targetHybridID != ""
 	targetID := a.netease.targetHybridID
 	if a.netease.createNew {
 		targetID = ""
@@ -361,19 +562,31 @@ func (a *app) startNetEaseImport(playlistID int64, rawInput, fallbackTitle strin
 		if title == "" {
 			title = fallbackTitle
 		}
-		tracks := make([]spotify.Track, 0, len(detail.Tracks))
-		for _, item := range detail.Tracks {
-			if item.ID <= 0 || item.Name == "" {
-				continue
-			}
-			tracks = append(tracks, item.ToTrack())
+		pl := neteaseDetailToPlaylist(detail)
+		if pl.Name == "" {
+			pl.Name = title
 		}
 
 		a.post(func() {
 			if a.netease.importGen != gen || a.quitting {
 				return
 			}
-			a.finishNetEaseImport(targetID, detail.ID, title, tracks, autoShuffle)
+			if !toHybrid {
+				a.netease.importing = false
+				a.netease.importCancel = nil
+				a.netease.status = ""
+				a.netease.open = false
+				a.netease.input = ""
+				if a.playlists == nil {
+					a.playlists = map[string]*spotify.Playlist{}
+				}
+				a.playlists[pl.ID] = pl
+				plID := a.addManualNetEasePlaylist(detail)
+				a.open(route{page: pagePlaylist, playlist: plID})
+				a.toast = fmt.Sprintf("已添加网易云歌单「%s」（%d 首）", pl.Name, len(pl.Tracks))
+				return
+			}
+			a.finishNetEaseImport(targetID, detail.ID, title, pl.Tracks, autoShuffle)
 		})
 	}()
 }
@@ -557,17 +770,24 @@ func (a *app) neteaseImportDialog(c *ui.Context) {
 			Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Scale: 0.94}, Exit: &ui.Motion{Scale: 0.96}})
 		a.styleGlassPanel(panel, 20, p.bg, p.hairline, 60, 24, ui.RGBA(0, 0, 0, 0.4))
 
+		toHybrid := st.targetHybridID != ""
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).Gap(2).Children(func() {
-				ui.Text(c, "从网易云歌单导入").FontSize(17).FontWeight(700)
-				ui.Text(c, "直接导入网易云歌单。默认走网易云播放，无版权或仅试听时自动切换本地或 Spotify。").FontSize(12).TextColor(p.muted)
+				heading := "添加网易云歌单"
+				subtitle := "默认走网易云直接播放，无版权或仅试听时自动切换本地或 Spotify，也可随时加入混合歌单。"
+				if toHybrid {
+					heading = "从网易云歌单导入"
+					subtitle = "直接导入网易云歌单到混合歌单。默认走网易云播放，无版权或仅试听时自动切换本地或 Spotify。"
+				}
+				ui.Text(c, heading).FontSize(17).FontWeight(700)
+				ui.Text(c, subtitle).FontSize(12).TextColor(p.muted)
 			})
 			if iconButton(c.Key("close-netease"), iconX, 14, p.muted, "关闭").Clicked() {
 				st.open = false
 			}
 		})
 
-		if st.targetHybridID != "" {
+		if toHybrid {
 			targetName := "当前混合歌单"
 			if pl := a.playlists[st.targetHybridID]; pl != nil {
 				targetName = pl.Name
@@ -593,7 +813,11 @@ func (a *app) neteaseImportDialog(c *ui.Context) {
 				if in.Submitted() && !st.importing {
 					a.startNetEaseImportFromInput()
 				}
-				goBtn := pillButton(c.Key("netease-go"), nil, "导入", p.accent, p.onAccent)
+				actionText := "添加"
+				if toHybrid {
+					actionText = "导入"
+				}
+				goBtn := pillButton(c.Key("netease-go"), nil, actionText, p.accent, p.onAccent)
 				if st.importing || strings.TrimSpace(st.input) == "" {
 					goBtn.Disabled(true).Opacity(0.5)
 				}
@@ -603,10 +827,12 @@ func (a *app) neteaseImportDialog(c *ui.Context) {
 			})
 		})
 
-		ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
-			ui.Text(c, "导入完成后自动打乱顺序").FontSize(12.5).TextColor(p.text).Grow(1)
-			ui.Switch(c.Key("netease-autoshuffle"), &st.autoShuffle).Label("导入完成后自动打乱顺序").Disabled(st.importing)
-		})
+		if toHybrid {
+			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+				ui.Text(c, "导入完成后自动打乱顺序").FontSize(12.5).TextColor(p.text).Grow(1)
+				ui.Switch(c.Key("netease-autoshuffle"), &st.autoShuffle).Label("导入完成后自动打乱顺序").Disabled(st.importing)
+			})
+		}
 
 		if st.importing {
 			ui.Row(c).Padding(12).Gap(10).Radius(12).Background(p.hover).AlignItems(ui.Center).Children(func() {
@@ -679,7 +905,11 @@ func (a *app) neteaseImportDialog(c *ui.Context) {
 									}
 									ui.Text(c, sub).FontSize(11).TextColor(p.muted).SingleLine()
 								})
-								ui.Text(c, "导入").FontSize(12).FontWeight(600).TextColor(p.accent).Shrink(0)
+								rowAction := "打开"
+								if toHybrid {
+									rowAction = "导入"
+								}
+								ui.Text(c, rowAction).FontSize(12).FontWeight(600).TextColor(p.accent).Shrink(0)
 							})
 							if row.Clicked() {
 								a.startNetEaseImportBySummary(pl)

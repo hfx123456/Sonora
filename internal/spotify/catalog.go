@@ -152,6 +152,33 @@ func (p *Playlist) Hybrid() bool {
 	return p != nil && IsHybridPlaylistID(p.ID)
 }
 
+// NetEasePlaylistPrefix identifies playlists backed directly by NetEase Cloud Music.
+const NetEasePlaylistPrefix = "netease:playlist:"
+
+// NetEasePlaylistID builds the Sonora playlist URI for a numeric NetEase playlist ID.
+func NetEasePlaylistID(id int64) string {
+	return NetEasePlaylistPrefix + strconv.FormatInt(id, 10)
+}
+
+// IsNetEasePlaylistID reports whether id names a NetEase playlist.
+func IsNetEasePlaylistID(id string) bool {
+	return strings.HasPrefix(id, NetEasePlaylistPrefix)
+}
+
+// ParseNetEasePlaylistURI extracts the numeric NetEase playlist ID from a Sonora URI.
+func ParseNetEasePlaylistURI(id string) int64 {
+	if !IsNetEasePlaylistID(id) {
+		return 0
+	}
+	n, _ := strconv.ParseInt(strings.TrimPrefix(id, NetEasePlaylistPrefix), 10, 64)
+	return n
+}
+
+// NetEase reports whether p is a NetEase Cloud Music playlist.
+func (p *Playlist) NetEase() bool {
+	return p != nil && IsNetEasePlaylistID(p.ID)
+}
+
 // Sized asks the image CDN for a picture at least n pixels across, where
 // it serves more than one size, and says after "#", which no request
 // sends, the n the picture is to be shrunk to: Spotify's sizes jump from

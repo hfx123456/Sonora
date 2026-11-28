@@ -607,6 +607,10 @@ func (a *app) importPlaylistIntoHybrid(srcID, dstHybridID string) {
 		a.addManyToHybrid(dstHybridID, src.Tracks)
 		return
 	}
+	if neID := spotify.ParseNetEasePlaylistURI(srcID); neID > 0 {
+		a.importNetEasePlaylistIntoHybrid(srcID, neID, dstHybridID)
+		return
+	}
 	user := ""
 	if a.profile != nil {
 		user = a.profile.UserID
@@ -656,28 +660,35 @@ func (a *app) importLocalScopeIntoHybrid(dstHybridID string, scope int) {
 	a.addManyToHybrid(dstHybridID, tracks)
 }
 
+func (a *app) playlistToHybridMenuItems(m *ui.Menu, pl *spotify.Playlist) {
+	if pl == nil {
+		return
+	}
+	if m.Item("新建混合歌单…").Chosen() {
+		a.newHybridPlaylistFromPlaylist(pl)
+	}
+	var targets []*spotify.Playlist
+	for i := range a.hybrids {
+		if h := &a.hybrids[i]; h.ID != pl.ID {
+			targets = append(targets, h)
+		}
+	}
+	if len(targets) > 0 {
+		m.Separator()
+	}
+	for _, h := range targets {
+		if m.Item(h.Name).Chosen() {
+			a.importPlaylistIntoHybrid(pl.ID, h.ID)
+		}
+	}
+}
+
 func (a *app) playlistToHybridMenu(m *ui.Menu, pl *spotify.Playlist) {
 	if pl == nil || strings.HasPrefix(pl.ID, "spotify:show:") {
 		return
 	}
 	m.Submenu("添加到混合歌单", func(m *ui.Menu) {
-		if m.Item("新建混合歌单…").Chosen() {
-			a.newHybridPlaylistFromPlaylist(pl)
-		}
-		var targets []*spotify.Playlist
-		for i := range a.hybrids {
-			if h := &a.hybrids[i]; h.ID != pl.ID {
-				targets = append(targets, h)
-			}
-		}
-		if len(targets) > 0 {
-			m.Separator()
-		}
-		for _, h := range targets {
-			if m.Item(h.Name).Chosen() {
-				a.importPlaylistIntoHybrid(pl.ID, h.ID)
-			}
-		}
+		a.playlistToHybridMenuItems(m, pl)
 	})
 }
 
@@ -697,8 +708,23 @@ func (a *app) tracksToHybridMenu(m *ui.Menu, defaultName string, tracks []spotif
 }
 
 func (a *app) hybridImportSourcesMenu(m *ui.Menu, dstHybridID string) {
-	if m.Item("从网易云歌单导入…").Chosen() {
-		a.openNetEaseImport(dstHybridID)
+	if len(a.neteaseLists) > 0 {
+		m.Submenu("网易云歌单", func(m *ui.Menu) {
+			if m.Item("粘贴链接或登录其他账号…").Chosen() {
+				a.openNetEaseImport(dstHybridID)
+			}
+			m.Separator()
+			for i := range a.neteaseLists {
+				pl := &a.neteaseLists[i]
+				if m.Item(pl.Name).Chosen() {
+					a.importPlaylistIntoHybrid(pl.ID, dstHybridID)
+				}
+			}
+		})
+	} else {
+		if m.Item("从网易云歌单导入…").Chosen() {
+			a.openNetEaseImport(dstHybridID)
+		}
 	}
 	addedAny := true
 	hasLocal, hasCloud := false, false

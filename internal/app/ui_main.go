@@ -350,7 +350,10 @@ func (a *app) sidebar(c *ui.Context) {
 			if shown, expanded := a.pinnedPlaylistSection(c, prevHadItems); shown {
 				prevHadItems = expanded
 			}
-			if shown, expanded := a.myPlaylists(c, sidebarSectionMine, "我的歌单", a.mine, true, prevHadItems); shown {
+			if shown, expanded := a.myPlaylists(c, sidebarSectionMine, "Spotify 歌单", a.mine, true, prevHadItems); shown {
+				prevHadItems = expanded
+			}
+			if shown, expanded := a.neteasePlaylistsSection(c, prevHadItems); shown {
 				prevHadItems = expanded
 			}
 			if shown, expanded := a.hybridPlaylistsSection(c, prevHadItems); shown {
@@ -792,6 +795,10 @@ func (a *app) requestPlaylist(id string, thenPlay, refresh bool) {
 			return
 		}
 		a.plErr[id] = "未找到该混合歌单"
+		return
+	}
+	if spotify.IsNetEasePlaylistID(id) {
+		a.requestNetEasePlaylist(id, thenPlay, refresh)
 		return
 	}
 	if pl := a.playlists[id]; pl != nil && !refresh {

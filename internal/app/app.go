@@ -87,8 +87,9 @@ type app struct {
 	localFilterCache                    trackFilterCache
 	playlistSync                        playlistSyncState
 	mine, saved                         []spotify.Playlist   // the listener's playlists: made, and saved
-	hybrids                             []spotify.Playlist   // locally stored hybrid playlists (Spotify + local + cloud)
+	hybrids                             []spotify.Playlist   // locally stored hybrid playlists (Spotify + local + cloud + NetEase)
 	hybridStore                         hybridPlaylistStore  // persistence for hybrid playlists
+	neteaseLists                        []spotify.Playlist   // dedicated NetEase playlists (signed-in account + manually added)
 	followed                            []spotify.ArtistCard // the artists the listener follows
 	next                                *route               // the page to open once the frame is built (goTo)
 	signin                              signin               // the web player's window, which signs the listener in
@@ -448,6 +449,7 @@ func Run() error {
 		a.settings = loadSettings()
 		a.lyricsOffsets = loadLyricsOffsets()
 		a.loadHybridPlaylists()
+		a.loadNetEaseLibrary()
 		a.settings.applyAppearance()
 		// Before anything asks Spotify, or a web page loads.
 		a.applyProxy()

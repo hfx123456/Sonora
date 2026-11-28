@@ -109,24 +109,50 @@ func TestNetEaseDirectImportAndPlaybackFallback(t *testing.T) {
 	}
 }
 
-func TestNetEaseImportDialogRendersAndOpensFromSidebar(t *testing.T) {
+func TestNetEaseSidebarSectionSettingsAndHybridJoin(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.settings.setNetEaseAccount(8888, "测试用户", "MUSIC_U=demo")
 	a.netease.playlists = []spotify.NetEasePlaylistSummary{
 		{ID: 123456, Name: "深夜单曲循环", TrackCount: 42},
 	}
+	a.rebuildNetEaseLists()
 
+	// Dedicated "网易云歌单" section renders in the sidebar and opens the playlist page.
 	tester := ui.NewTester(a.view, 1180, 780)
 	tester.Frame()
-	if err := tester.Click("从网易云导入歌单…"); err != nil {
+	if !tester.HasText("网易云歌单") || !tester.HasText("深夜单曲循环") {
+		t.Fatal("sidebar missing dedicated 网易云歌单 section or playlist row")
+	}
+
+	// Clicking '+' opens the NetEase dialog; Settings page shows the NetEase account row.
+	if err := tester.Click("添加网易云歌单"); err != nil {
 		t.Fatal(err)
 	}
 	tester.Frame()
-	if !a.netease.open {
-		t.Fatal("netease import dialog did not open")
+	if !a.netease.open || !tester.HasText("添加网易云歌单") || !tester.HasText("我的网易云歌单 · 测试用户") {
+		t.Fatal("netease dialog did not open cleanly from sidebar '+'")
 	}
-	if !tester.HasText("我的网易云歌单 · 测试用户") || !tester.HasText("深夜单曲循环") {
-		t.Fatal("dialog missing logged-in NetEase account or playlist row")
+	a.netease.open = false
+	a.route = route{page: pageSettings}
+	tester.Frame()
+	if !tester.HasText("网易云音乐 · 测试用户") || !tester.HasText("刷新歌单") {
+		t.Fatal("settings account section missing logged-in NetEase row")
+	}
+
+	// Adding a NetEase playlist into a hybrid playlist works directly.
+	neID := spotify.NetEasePlaylistID(123456)
+	a.playlists[neID] = &spotify.Playlist{
+		ID:   neID,
+		Name: "深夜单曲循环",
+		Tracks: []spotify.Track{
+			(spotify.NetEasePlaylistTrack{ID: 777, Name: "夜曲", Artists: []string{"周杰伦"}, Duration: 226000}).ToTrack(),
+		},
+	}
+	hyb := a.createHybridPlaylist("混音测试", nil)
+	a.importPlaylistIntoHybrid(neID, hyb.ID)
+	got := a.playlists[hyb.ID]
+	if len(got.Tracks) != 1 || got.Tracks[0].ID != "netease:777" || !got.Tracks[0].Playable() {
+		t.Fatalf("hybrid playlist tracks after importing NetEase playlist = %+v", got.Tracks)
 	}
 }

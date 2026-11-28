@@ -9,6 +9,7 @@ import (
 	"github.com/egoist/mygo"
 
 	"vinyl/internal/localmusic"
+	"vinyl/internal/spotify"
 )
 
 // cloudSourceSetting persists a cloud music source (WebDAV, OneDrive, or
@@ -117,10 +118,11 @@ type settings struct {
 	LocalSources          []string             `json:"localSources,omitempty"`
 	CloudSources          []cloudSourceSetting `json:"cloudSources,omitempty"`
 	HiddenLocalIDs        []string             `json:"hiddenLocalIds,omitempty"`
-	NetEaseUserID         int64                `json:"neteaseUserId,omitempty"`
-	NetEaseNickname       string               `json:"neteaseNickname,omitempty"`
-	NetEaseSealedCookie   string               `json:"neteaseSealedCookie,omitempty"`
-	NetEasePlainCookie    string               `json:"neteasePlainCookie,omitempty"`
+	NetEaseUserID         int64                            `json:"neteaseUserId,omitempty"`
+	NetEaseNickname       string                           `json:"neteaseNickname,omitempty"`
+	NetEaseSealedCookie   string                           `json:"neteaseSealedCookie,omitempty"`
+	NetEasePlainCookie    string                           `json:"neteasePlainCookie,omitempty"`
+	NetEasePlaylists      []spotify.NetEasePlaylistSummary `json:"neteasePlaylists,omitempty"`
 	// Notch shows the quick player around the notch: the listener turns
 	// it on.
 	Notch bool `json:"notch"`

@@ -285,6 +285,8 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 			switch {
 			case pl.Hybrid():
 				kind = "本机混合歌单"
+			case pl.NetEase():
+				kind = "网易云歌单"
 			case strings.HasPrefix(pl.ID, "spotify:album:"):
 				kind = "专辑"
 			case strings.HasPrefix(pl.ID, "spotify:show:"):
@@ -341,7 +343,13 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 						a.playFrom(spotify.HomeItem{List: pl}, tracks, randomPlayable(tracks))
 					}
 				}
-				if a.profile != nil && !pl.Liked() && a.editable(pl.ID) == nil {
+				if pl.NetEase() {
+					toHybrid := a.secondaryPillButton(c.Key("netease-to-hybrid"), iconPlus, "加入混合歌单")
+					toHybrid.Menu(func(m *ui.Menu) {
+						a.playlistToHybridMenuItems(m, pl)
+					})
+				}
+				if a.profile != nil && !pl.Liked() && !pl.NetEase() && a.editable(pl.ID) == nil {
 					icon, label := iconPlus, "收藏"
 					if a.isSaved(pl.ID) {
 						icon, label = iconCheck, "已收藏"
@@ -359,6 +367,12 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 						if pl.Hybrid() {
 							if m.Item("顺序播放").Chosen() {
 								a.playHybridSequential(pl)
+							}
+							hasTop = true
+						}
+						if pl.NetEase() {
+							if m.Item("刷新歌单").Chosen() {
+								a.requestPlaylist(pl.ID, false, true)
 							}
 							hasTop = true
 						}

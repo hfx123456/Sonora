@@ -28,25 +28,25 @@ func TestSidebarCollapsibleSections(t *testing.T) {
 		}
 	}
 
-	// Collapsing "我的歌单" hides its playlists while keeping "+" available.
-	if err := tt.Click("我的歌单"); err != nil {
-		t.Fatalf("click 我的歌单: %v", err)
+	// Collapsing "Spotify 歌单" hides its playlists while keeping "+" available.
+	if err := tt.Click("Spotify 歌单"); err != nil {
+		t.Fatalf("click Spotify 歌单: %v", err)
 	}
 	tt.Frame()
 	if !a.sidebarCollapsed(sidebarSectionMine) {
-		t.Fatal("我的歌单 did not mark collapsed")
+		t.Fatal("Spotify 歌单 did not mark collapsed")
 	}
 	for _, name := range []string{"我喜欢的音乐", "通勤", "睡前"} {
 		if _, ok := tt.Find(name); ok {
-			t.Fatalf("expected %q hidden while 我的歌单 is collapsed", name)
+			t.Fatalf("expected %q hidden while Spotify 歌单 is collapsed", name)
 		}
 	}
 	if _, ok := tt.Find("新建歌单"); !ok {
-		t.Fatal("new playlist '+' button disappeared when 我的歌单 collapsed")
+		t.Fatal("new playlist '+' button disappeared when Spotify 歌单 collapsed")
 	}
 	// Other sections remain visible.
 	if _, ok := tt.Find("飙升榜"); !ok {
-		t.Fatal("我的收藏 should remain expanded when 我的歌单 collapses")
+		t.Fatal("我的收藏 should remain expanded when Spotify 歌单 collapses")
 	}
 
 	// Collapsing "我的收藏" and "关注的艺人" hides their entries too.
@@ -64,16 +64,16 @@ func TestSidebarCollapsibleSections(t *testing.T) {
 		t.Fatal("陶喆 still visible after collapsing 关注的艺人")
 	}
 
-	// Clicking "我的歌单" again expands it.
-	if err := tt.Click("我的歌单"); err != nil {
-		t.Fatalf("re-expand 我的歌单: %v", err)
+	// Clicking "Spotify 歌单" again expands it.
+	if err := tt.Click("Spotify 歌单"); err != nil {
+		t.Fatalf("re-expand Spotify 歌单: %v", err)
 	}
 	tt.Frame()
 	if a.sidebarCollapsed(sidebarSectionMine) {
-		t.Fatal("我的歌单 did not expand on second click")
+		t.Fatal("Spotify 歌单 did not expand on second click")
 	}
 	if _, ok := tt.Find("睡前"); !ok {
-		t.Fatal("睡前 did not reappear after expanding 我的歌单")
+		t.Fatal("睡前 did not reappear after expanding Spotify 歌单")
 	}
 }
 
@@ -81,12 +81,12 @@ func TestSidebarPinnedPlaylistsSectionAboveMine(t *testing.T) {
 	a := editTestApp()
 	a.route = route{page: pageHome}
 	a.homeLoading = true
-	tt := ui.NewTester(a.view, 1200, 800)
+	tt := ui.NewTester(a.view, 1200, 920)
 	tt.Frame()
 
 	// No pinned section initially.
-	if _, ok := tt.Find("置顶歌单"); ok {
-		t.Fatal("置顶歌单 should not render when no playlists are pinned")
+	if _, ok := tt.Find("收藏歌单"); ok {
+		t.Fatal("收藏歌单 should not render when no playlists are pinned")
 	}
 
 	// Pin a user playlist ("睡前") and a saved playlist ("飙升榜") via context menu.
@@ -110,9 +110,9 @@ func TestSidebarPinnedPlaylistsSectionAboveMine(t *testing.T) {
 		t.Fatalf("PinnedPlaylists = %v, want [%s %s]", a.settings.PinnedPlaylists, pl11, pl20)
 	}
 
-	// "置顶歌单" section sits strictly above "我的歌单", and pinned playlists sit above "我的歌单".
-	pinHdr, ok1 := tt.Find("置顶歌单")
-	mineHdr, ok2 := tt.Find("我的歌单")
+	// "收藏歌单" section sits strictly above "Spotify 歌单", and pinned playlists sit above "Spotify 歌单".
+	pinHdr, ok1 := tt.Find("收藏歌单")
+	mineHdr, ok2 := tt.Find("Spotify 歌单")
 	pinnedItem, ok3 := tt.Find("睡前")
 	unpinnedItem, ok4 := tt.Find("通勤")
 	if !ok1 || !ok2 || !ok3 || !ok4 {
@@ -123,16 +123,16 @@ func TestSidebarPinnedPlaylistsSectionAboveMine(t *testing.T) {
 			pinHdr.Y, pinnedItem.Y, mineHdr.Y, unpinnedItem.Y)
 	}
 
-	// Collapsing "我的歌单" keeps "置顶歌单" visible!
-	if err := tt.Click("我的歌单"); err != nil {
+	// Collapsing "Spotify 歌单" keeps "收藏歌单" visible!
+	if err := tt.Click("Spotify 歌单"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
 	if _, ok := tt.Find("睡前"); !ok {
-		t.Fatal("pinned playlist should stay visible when 我的歌单 is collapsed")
+		t.Fatal("pinned playlist should stay visible when Spotify 歌单 is collapsed")
 	}
 	if _, ok := tt.Find("通勤"); ok {
-		t.Fatal("unpinned playlist should hide when 我的歌单 is collapsed")
+		t.Fatal("unpinned playlist should hide when Spotify 歌单 is collapsed")
 	}
 
 	// Reordering pinned playlists via "上移" swaps 飙升榜 above 睡前.
@@ -152,38 +152,38 @@ func TestSidebarPinnedPlaylistsSectionAboveMine(t *testing.T) {
 		t.Fatalf("after 上移 飙升榜.Y=%v should be above 睡前.Y=%v", b1.Y, b2.Y)
 	}
 
-	// Collapsing "置顶歌单" while "我的歌单" is expanded proves pinned playlists
-	// STILL stay listed inside "我的歌单" / "我的收藏" (not removed from them).
-	if err := tt.Click("我的歌单"); err != nil { // re-expand 我的歌单
+	// Collapsing "收藏歌单" while "Spotify 歌单" is expanded proves pinned playlists
+	// STILL stay listed inside "Spotify 歌单" / "我的收藏" (not removed from them).
+	if err := tt.Click("Spotify 歌单"); err != nil { // re-expand Spotify 歌单
 		t.Fatal(err)
 	}
-	if err := tt.Click("置顶歌单"); err != nil { // collapse 置顶歌单
+	if err := tt.Click("收藏歌单"); err != nil { // collapse 收藏歌单
 		t.Fatal(err)
 	}
 	tt.Frame()
-	mineHdr, _ = tt.Find("我的歌单")
+	mineHdr, _ = tt.Find("Spotify 歌单")
 	keptInMine, okKept := tt.Find("睡前")
 	if !okKept || keptInMine.Y <= mineHdr.Y {
-		t.Fatalf("pinned 睡前 disappeared from 我的歌单: found=%v y=%v mineHdr.Y=%v", okKept, keptInMine.Y, mineHdr.Y)
+		t.Fatalf("pinned 睡前 disappeared from Spotify 歌单: found=%v y=%v mineHdr.Y=%v", okKept, keptInMine.Y, mineHdr.Y)
 	}
-	// Right-clicking the copy inside "我的歌单" offers "取消置顶" (not duplicate "置顶歌单").
+	// Right-clicking the copy inside "Spotify 歌单" offers "取消置顶" (not duplicate "置顶歌单").
 	if err := tt.RightClick("睡前"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tt.ChooseMenuItem("取消置顶"); err != nil {
-		t.Fatalf("unpin 睡前 from 我的歌单: %v (menu=%q)", err, tt.Menu())
+		t.Fatalf("unpin 睡前 from Spotify 歌单: %v (menu=%q)", err, tt.Menu())
 	}
 	tt.Frame()
 	if a.isPlaylistPinned(pl11) {
 		t.Fatal("睡前 remained pinned after 取消置顶")
 	}
-	// Re-expand "置顶歌单" (飙升榜 is still pinned).
-	if err := tt.Click("置顶歌单"); err != nil {
+	// Re-expand "收藏歌单" (飙升榜 is still pinned).
+	if err := tt.Click("收藏歌单"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
 	if _, ok := tt.Find("飙升榜"); !ok {
-		t.Fatal("飙升榜 missing after re-expanding 置顶歌单")
+		t.Fatal("飙升榜 missing after re-expanding 收藏歌单")
 	}
 }
 
@@ -217,7 +217,7 @@ func TestPinLikedSongsAndDetailMenuAndGridAndPersistence(t *testing.T) {
 		t.Fatal("我喜欢的音乐 was not pinned")
 	}
 
-	// Pin the last remaining playlist in a.mine ("睡前"): "我的歌单" header and "+" stay visible.
+	// Pin the last remaining playlist in a.mine ("睡前"): "Spotify 歌单" header and "+" stay visible.
 	if err := tt.RightClick("睡前"); err != nil {
 		t.Fatal(err)
 	}
@@ -225,8 +225,8 @@ func TestPinLikedSongsAndDetailMenuAndGridAndPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if _, ok := tt.Find("我的歌单"); !ok {
-		t.Fatal("我的歌单 header should stay visible when all own playlists are pinned")
+	if _, ok := tt.Find("Spotify 歌单"); !ok {
+		t.Fatal("Spotify 歌单 header should stay visible when all own playlists are pinned")
 	}
 	if _, ok := tt.Find("新建歌单"); !ok {
 		t.Fatal("新建歌单 button should stay visible when all own playlists are pinned")
@@ -258,6 +258,7 @@ func TestSidebarSectionAlignmentAndCompactCollapsedSpacing(t *testing.T) {
 	a.settings.PinnedPlaylists = []string{spotify.LikedURI}
 	a.settings.SidebarCollapsed = map[string]bool{
 		sidebarSectionMine:     true,
+		sidebarSectionNetEase:  true,
 		sidebarSectionHybrid:   true,
 		sidebarSectionSaved:    true,
 		sidebarSectionFollowed: true,
@@ -266,25 +267,27 @@ func TestSidebarSectionAlignmentAndCompactCollapsedSpacing(t *testing.T) {
 	tt.Frame()
 
 	// Section headers and playlist rows share the same horizontal container edge.
-	pinHdr, ok1 := tt.Find("置顶歌单")
+	pinHdr, ok1 := tt.Find("收藏歌单")
 	likedRow, ok2 := tt.Find("我喜欢的音乐")
-	mineHdr, ok3 := tt.Find("我的歌单")
+	mineHdr, ok3 := tt.Find("Spotify 歌单")
+	neHdr, okN := tt.Find("网易云歌单")
 	hybridHdr, okH := tt.Find("混合歌单")
 	savedHdr, ok4 := tt.Find("我的收藏")
 	followedHdr, ok5 := tt.Find("关注的艺人")
-	if !ok1 || !ok2 || !ok3 || !okH || !ok4 || !ok5 {
-		t.Fatalf("missing elements: %v %v %v %v %v %v", ok1, ok2, ok3, okH, ok4, ok5)
+	if !ok1 || !ok2 || !ok3 || !okN || !okH || !ok4 || !ok5 {
+		t.Fatalf("missing elements: %v %v %v %v %v %v %v", ok1, ok2, ok3, okN, okH, ok4, ok5)
 	}
-	if pinHdr.X != likedRow.X || mineHdr.X != likedRow.X || hybridHdr.X != likedRow.X || savedHdr.X != likedRow.X {
-		t.Fatalf("left edges misaligned: pinHdr.X=%v likedRow.X=%v mineHdr.X=%v hybridHdr.X=%v savedHdr.X=%v",
-			pinHdr.X, likedRow.X, mineHdr.X, hybridHdr.X, savedHdr.X)
+	if pinHdr.X != likedRow.X || mineHdr.X != likedRow.X || neHdr.X != likedRow.X || hybridHdr.X != likedRow.X || savedHdr.X != likedRow.X {
+		t.Fatalf("left edges misaligned: pinHdr.X=%v likedRow.X=%v mineHdr.X=%v neHdr.X=%v hybridHdr.X=%v savedHdr.X=%v",
+			pinHdr.X, likedRow.X, mineHdr.X, neHdr.X, hybridHdr.X, savedHdr.X)
 	}
 	// Collapsed consecutive headers must stay compact (<= 8px gap, not 24px).
-	gap0 := hybridHdr.Y - (mineHdr.Y + mineHdr.H)
+	gapN := neHdr.Y - (mineHdr.Y + mineHdr.H)
+	gap0 := hybridHdr.Y - (neHdr.Y + neHdr.H)
 	gap1 := savedHdr.Y - (hybridHdr.Y + hybridHdr.H)
 	gap2 := followedHdr.Y - (savedHdr.Y + savedHdr.H)
-	if gap0 < 0 || gap0 > 8 || gap1 < 0 || gap1 > 8 || gap2 < 0 || gap2 > 8 {
-		t.Fatalf("collapsed section spacing too large: gap0=%v gap1=%v gap2=%v", gap0, gap1, gap2)
+	if gapN < 0 || gapN > 8 || gap0 < 0 || gap0 > 8 || gap1 < 0 || gap1 > 8 || gap2 < 0 || gap2 > 8 {
+		t.Fatalf("collapsed section spacing too large: gapN=%v gap0=%v gap1=%v gap2=%v", gapN, gap0, gap1, gap2)
 	}
 
 	if out := os.Getenv("SIDEBAR_SNAP"); out != "" {

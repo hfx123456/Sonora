@@ -78,26 +78,63 @@ func (a *app) settingsPage(c *ui.Context) {
 
 		group("账号", func() {
 			if a.profile == nil {
-				row("未登录", "登录 Spotify 后才能听歌，免费账号也能完整播放", func() {
+				row("Spotify 未登录", "登录 Spotify 后可播放 Spotify 曲库，并作为网易云无版权曲目的自动回退", func() {
 					// In the main window already, which the login
 					// window opens over.
 					if ui.PrimaryButton(c.Key("login"), "登录").Clicked() {
 						a.openLogin()
 					}
 				})
-				return
-			}
-			prof := a.profile
-			ui.Row(c).Padding(12, 16).Gap(12).AlignItems(ui.Center).Children(func() {
-				a.profileAvatar(c, prof, 36)
-				ui.Column(c).Grow(1).Gap(2).Children(func() {
-					ui.Text(c, prof.Nickname).FontSize(13.5).FontWeight(600)
-					ui.Text(c, cmp.Or(prof.Email, "已登录 Spotify")).FontSize(12).TextColor(p.muted)
+			} else {
+				prof := a.profile
+				ui.Row(c).Padding(12, 16).Gap(12).AlignItems(ui.Center).Children(func() {
+					a.profileAvatar(c, prof, 36)
+					ui.Column(c).Grow(1).Gap(2).Children(func() {
+						ui.Text(c, prof.Nickname).FontSize(13.5).FontWeight(600)
+						ui.Text(c, cmp.Or(prof.Email, "已登录 Spotify")).FontSize(12).TextColor(p.muted)
+					})
+					if ui.Button(c.Key("logout"), "退出登录").Clicked() {
+						a.signOut()
+					}
 				})
-				if ui.Button(c.Key("logout"), "退出登录").Clicked() {
-					a.signOut()
+			}
+
+			neLoggedIn := a.settings.NetEaseUserID > 0 && a.settings.neteaseCookie() != ""
+			if !neLoggedIn {
+				desc := "扫码登录后自动同步你的网易云歌单到侧栏「网易云歌单」，也可随时加入混合歌单"
+				if a.netease.err != "" {
+					desc = a.netease.err
+				} else if a.netease.logging && a.netease.status != "" {
+					desc = a.netease.status
 				}
-			})
+				row("网易云音乐", desc, func() {
+					label := "扫码登录"
+					if a.netease.logging {
+						label = "等待扫码…"
+					}
+					if ui.Button(c.Key("settings-netease-login"), label).Disabled(a.netease.logging).Clicked() {
+						a.openNetEaseLogin()
+					}
+				})
+			} else {
+				name := cmp.Or(a.settings.NetEaseNickname, "网易云用户")
+				sub := fmt.Sprintf("已登录网易云音乐 · 已同步 %d 个歌单", len(a.neteaseLists))
+				if a.netease.playlistsLoading {
+					sub = "正在同步网易云歌单…"
+				} else if a.netease.playlistsErr != "" {
+					sub = a.netease.playlistsErr
+				}
+				row("网易云音乐 · "+name, sub, func() {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						if ui.Button(c.Key("settings-netease-refresh"), "刷新歌单").Disabled(a.netease.playlistsLoading).Clicked() {
+							a.loadNetEasePlaylists()
+						}
+						if ui.Button(c.Key("settings-netease-logout"), "退出登录").Clicked() {
+							a.signOutNetEase()
+						}
+					})
+				})
+			}
 		})
 
 		// Only on macOS, the one with a notch player.

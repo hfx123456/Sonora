@@ -855,6 +855,7 @@ func (a *app) scheduleMine() {
 const (
 	sidebarSectionPinned   = "pinned"
 	sidebarSectionMine     = "mine"
+	sidebarSectionNetEase  = "netease"
 	sidebarSectionHybrid   = "hybrid"
 	sidebarSectionSaved    = "saved"
 	sidebarSectionFollowed = "followed"
@@ -895,6 +896,7 @@ func (a *app) isPlaylistPinned(id string) bool {
 
 func (a *app) inLibrary(id string) bool {
 	return slices.ContainsFunc(a.mine, func(pl spotify.Playlist) bool { return pl.ID == id }) ||
+		slices.ContainsFunc(a.neteaseLists, func(pl spotify.Playlist) bool { return pl.ID == id }) ||
 		slices.ContainsFunc(a.hybrids, func(pl spotify.Playlist) bool { return pl.ID == id }) ||
 		slices.ContainsFunc(a.saved, func(pl spotify.Playlist) bool { return pl.ID == id })
 }
@@ -966,6 +968,11 @@ func (a *app) pinnedPlaylists() []pinnedEntry {
 			out = append(out, pinnedEntry{pl: &a.mine[i], mine: true})
 			continue
 		}
+		if i := slices.IndexFunc(a.neteaseLists, func(pl spotify.Playlist) bool { return pl.ID == id }); i >= 0 {
+			seen[id] = true
+			out = append(out, pinnedEntry{pl: &a.neteaseLists[i], mine: false})
+			continue
+		}
 		if i := slices.IndexFunc(a.hybrids, func(pl spotify.Playlist) bool { return pl.ID == id }); i >= 0 {
 			seen[id] = true
 			out = append(out, pinnedEntry{pl: &a.hybrids[i], mine: true})
@@ -1028,13 +1035,13 @@ func (a *app) sidebarSectionHeader(c *ui.Context, section, title string, count i
 	return collapsed
 }
 
-// pinnedPlaylistSection lists playlists the listener pinned above "我的歌单".
+// pinnedPlaylistSection lists playlists the listener pinned above "Spotify 歌单".
 func (a *app) pinnedPlaylistSection(c *ui.Context, prevHadItems bool) (shown, expanded bool) {
 	entries := a.pinnedPlaylists()
 	if len(entries) == 0 {
 		return false, false
 	}
-	if a.sidebarSectionHeader(c, sidebarSectionPinned, "置顶歌单", len(entries), prevHadItems, nil) {
+	if a.sidebarSectionHeader(c, sidebarSectionPinned, "收藏歌单", len(entries), prevHadItems, nil) {
 		return true, false
 	}
 	if a.settings.MyPlaylistGrid {
@@ -1094,6 +1101,54 @@ func (a *app) myPlaylists(c *ui.Context, section, title string, lists []spotify.
 	return true, true
 }
 
+// neteasePlaylistsSection lists dedicated NetEase Cloud Music playlists in the
+// sidebar (from the signed-in NetEase account and any manually added links).
+func (a *app) neteasePlaylistsSection(c *ui.Context, prevHadItems bool) (shown, expanded bool) {
+	trailing := func() {
+		p := a.pal
+		add := ui.ButtonBase(c.Key("add-netease")).Size(26, 26).Margin(0, 3, 0, 0).Shrink(0).Center().Radius(7).
+			FocusRing(false).Label("添加网易云歌单").Tooltip("登录或添加网易云歌单")
+		fg := p.muted
+		if add.Hovered() {
+			add.Background(p.hover)
+			fg = p.text
+		}
+		add.Children(func() { ui.Icon(c, iconPlus).Size(14, 14).TextColor(fg) })
+		if add.Clicked() {
+			a.openNetEaseImport("")
+		}
+	}
+	if a.sidebarSectionHeader(c, sidebarSectionNetEase, "网易云歌单", len(a.neteaseLists), prevHadItems, trailing) {
+		return true, false
+	}
+	if len(a.neteaseLists) == 0 {
+		btn := ui.ButtonBase(c.Key("sidebar-netease-connect")).Height(28).PaddingX(10).Radius(8).
+			AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label("登录或添加网易云歌单…")
+		if btn.Hovered() {
+			btn.Background(a.pal.hover)
+		}
+		btn.Children(func() {
+			ui.Text(c, "登录或添加网易云歌单…").FontSize(12).FontWeight(500).TextColor(a.pal.accent).SingleLine()
+		})
+		if btn.Clicked() {
+			a.openNetEaseImport("")
+		}
+		return true, true
+	}
+	if a.settings.MyPlaylistGrid {
+		ui.Grid(c.Key("netease-grid")).Columns(2).Gap(6).Children(func() {
+			for i := range a.neteaseLists {
+				a.myPlaylist(c, &a.neteaseLists[i], false, true, false, -1, 0)
+			}
+		})
+		return true, true
+	}
+	for i := range a.neteaseLists {
+		a.myPlaylist(c, &a.neteaseLists[i], false, false, false, -1, 0)
+	}
+	return true, true
+}
+
 // hybridPlaylistsSection lists locally stored hybrid playlists in the sidebar.
 // Always shown (even when signed out of Spotify) with a "+" button to create one.
 func (a *app) hybridPlaylistsSection(c *ui.Context, prevHadItems bool) (shown, expanded bool) {
@@ -1115,18 +1170,7 @@ func (a *app) hybridPlaylistsSection(c *ui.Context, prevHadItems bool) (shown, e
 		return true, false
 	}
 	if len(a.hybrids) == 0 {
-		ui.Text(c, "可混排 Spotify、本机与云盘歌曲").FontSize(11.5).TextColor(a.pal.faint).Padding(4, 10, 2, 10)
-		imp := ui.ButtonBase(c.Key("sidebar-netease-import")).Height(28).PaddingX(10).Radius(8).
-			AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label("从网易云导入歌单…")
-		if imp.Hovered() {
-			imp.Background(a.pal.hover)
-		}
-		imp.Children(func() {
-			ui.Text(c, "从网易云导入歌单…").FontSize(12).FontWeight(500).TextColor(a.pal.accent).SingleLine()
-		})
-		if imp.Clicked() {
-			a.openNetEaseImport("")
-		}
+		ui.Text(c, "可混排 Spotify、网易云、本机与云盘歌曲").FontSize(11.5).TextColor(a.pal.faint).Padding(4, 10, 4, 10)
 		return true, true
 	}
 	if a.settings.MyPlaylistGrid {
@@ -1223,6 +1267,17 @@ func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid, pinned
 			a.playlistToHybridMenu(m, pl)
 		}
 		switch {
+		case pl.NetEase():
+			m.Separator()
+			if m.Item("刷新歌单").Chosen() {
+				a.requestPlaylist(pl.ID, false, true)
+			}
+			if a.isManualNetEasePlaylist(pl.ID) {
+				m.Separator()
+				if m.Item("从列表移除").Chosen() {
+					a.removeManualNetEasePlaylist(pl.ID)
+				}
+			}
 		case mine && !pl.Liked():
 			m.Separator()
 			if m.Item("重命名…").Chosen() {
