@@ -687,11 +687,6 @@ func (a *app) miniBarView(c *ui.Context, pal palette) {
 							Background(ui.RGBA(0, 0, 0, 0.44)).PassThrough().Children(func() {
 							ui.Icon(c, heartIcon).Size(18, 18).TextColor(heartCol)
 						})
-					} else if liked {
-						ui.Box(c).Absolute().Right(3).Bottom(3).Size(14, 14).Radius(7).Center().
-							Background(ui.RGBA(0, 0, 0, 0.56)).PassThrough().Children(func() {
-							ui.Icon(c, iconHeartFill).Size(8.5, 8.5).TextColor(pal.accent)
-						})
 					}
 					ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(pt *ui.Painter, r ui.Rect) {
 						in := ui.Rect{X: r.X + 0.5, Y: r.Y + 0.5, W: r.W - 1, H: r.H - 1}
