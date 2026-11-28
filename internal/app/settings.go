@@ -124,6 +124,7 @@ type settings struct {
 	NetEaseSealedCookie   string                           `json:"neteaseSealedCookie,omitempty"`
 	NetEasePlainCookie    string                           `json:"neteasePlainCookie,omitempty"`
 	NetEasePlaylists      []spotify.NetEasePlaylistSummary `json:"neteasePlaylists,omitempty"`
+	HiddenNetEaseIDs      []int64                          `json:"hiddenNeteaseIds,omitempty"`
 	// Notch shows the quick player around the notch: the listener turns
 	// it on.
 	Notch bool `json:"notch"`
@@ -280,6 +281,7 @@ func (s *settings) clearNetEaseAccount() {
 	s.NetEaseAvatarURL = ""
 	s.NetEaseSealedCookie = ""
 	s.NetEasePlainCookie = ""
+	s.HiddenNetEaseIDs = nil
 }
 
 // migratePlainCloudSecrets re-seals any legacy plaintext cloud credentials

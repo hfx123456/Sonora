@@ -1001,16 +1001,14 @@ func (a *app) sidebarSectionHeader(c *ui.Context, section, title string, count i
 		bottomMargin = 2
 	}
 	ui.Row(c.Key("sec-" + section)).AlignItems(ui.Center).Gap(4).Margin(topMargin, 0, bottomMargin, 0).Children(func() {
-		tip := "折叠" + title
 		rot := float32(0)
 		if collapsed {
-			tip = "展开" + title
 			rot = -90
 		}
 		// PaddingLeft=7 + iconDown's ~3px internal glyph inset aligns the
 		// chevron's left stroke cleanly on x=10 with nav icons and covers below.
 		b := ui.ButtonBase(c.Key("toggle")).Grow(1).Shrink(1).MinWidth(0).Height(30).Padding(0, 6, 0, 7).Gap(7).Radius(8).
-			AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(title).Tooltip(tip)
+			AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(title)
 		fg := p.muted
 		if b.Hovered() {
 			b.Background(p.hover)
@@ -1272,11 +1270,9 @@ func (a *app) myPlaylist(c *ui.Context, pl *spotify.Playlist, mine, grid, pinned
 			if m.Item("刷新歌单").Chosen() {
 				a.requestPlaylist(pl.ID, false, true)
 			}
-			if a.isManualNetEasePlaylist(pl.ID) {
-				m.Separator()
-				if m.Item("从列表移除").Chosen() {
-					a.removeManualNetEasePlaylist(pl.ID)
-				}
+			m.Separator()
+			if m.Item("从列表移除").Chosen() {
+				a.removeNetEasePlaylist(pl.ID)
 			}
 		case mine && !pl.Liked():
 			m.Separator()

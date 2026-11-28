@@ -374,6 +374,9 @@ func (a *app) playlistHeader(c *ui.Context, pl *spotify.Playlist) {
 							if m.Item("刷新歌单").Chosen() {
 								a.requestPlaylist(pl.ID, false, true)
 							}
+							if m.Item("从列表移除").Chosen() {
+								a.removeNetEasePlaylist(pl.ID)
+							}
 							hasTop = true
 						}
 						if mine != nil || a.inLibrary(pl.ID) {

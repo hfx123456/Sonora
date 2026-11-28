@@ -218,9 +218,13 @@ func (a *app) loadNetEaseLibrary() {
 
 func (a *app) rebuildNetEaseLists() {
 	seen := map[int64]bool{}
+	hidden := make(map[int64]bool, len(a.settings.HiddenNetEaseIDs))
+	for _, id := range a.settings.HiddenNetEaseIDs {
+		hidden[id] = true
+	}
 	lists := make([]spotify.Playlist, 0, len(a.netease.playlists)+len(a.settings.NetEasePlaylists))
 	addSummary := func(s spotify.NetEasePlaylistSummary) {
-		if s.ID <= 0 || seen[s.ID] {
+		if s.ID <= 0 || seen[s.ID] || hidden[s.ID] {
 			return
 		}
 		seen[s.ID] = true
@@ -244,6 +248,23 @@ func (a *app) rebuildNetEaseLists() {
 	a.neteaseLists = lists
 }
 
+func (a *app) unhideNetEasePlaylist(neID int64) {
+	if i := slices.Index(a.settings.HiddenNetEaseIDs, neID); i >= 0 {
+		a.settings.HiddenNetEaseIDs = slices.Delete(slices.Clone(a.settings.HiddenNetEaseIDs), i, i+1)
+	}
+}
+
+func (a *app) restoreHiddenNetEasePlaylists() {
+	if len(a.settings.HiddenNetEaseIDs) == 0 {
+		return
+	}
+	a.settings.HiddenNetEaseIDs = nil
+	a.settings.save()
+	a.rebuildNetEaseLists()
+	a.expandSidebarSection(sidebarSectionNetEase)
+	a.toast = "已恢复全部网易云歌单"
+}
+
 func (a *app) isManualNetEasePlaylist(plID string) bool {
 	neID := spotify.ParseNetEasePlaylistURI(plID)
 	if neID <= 0 {
@@ -256,6 +277,7 @@ func (a *app) addManualNetEasePlaylist(detail *spotify.NetEasePlaylistDetail) st
 	if detail == nil || detail.ID <= 0 {
 		return ""
 	}
+	a.unhideNetEasePlaylist(detail.ID)
 	summary := spotify.NetEasePlaylistSummary{
 		ID:         detail.ID,
 		Name:       strings.TrimSpace(detail.Name),
@@ -276,18 +298,37 @@ func (a *app) addManualNetEasePlaylist(detail *spotify.NetEasePlaylistDetail) st
 	return spotify.NetEasePlaylistID(detail.ID)
 }
 
-func (a *app) removeManualNetEasePlaylist(plID string) {
+func (a *app) removeNetEasePlaylist(plID string) {
 	neID := spotify.ParseNetEasePlaylistURI(plID)
 	if neID <= 0 {
 		return
 	}
-	idx := slices.IndexFunc(a.settings.NetEasePlaylists, func(s spotify.NetEasePlaylistSummary) bool { return s.ID == neID })
-	if idx < 0 {
+	changed := false
+	if idx := slices.IndexFunc(a.settings.NetEasePlaylists, func(s spotify.NetEasePlaylistSummary) bool { return s.ID == neID }); idx >= 0 {
+		a.settings.NetEasePlaylists = slices.Delete(slices.Clone(a.settings.NetEasePlaylists), idx, idx+1)
+		changed = true
+	}
+	if slices.ContainsFunc(a.netease.playlists, func(s spotify.NetEasePlaylistSummary) bool { return s.ID == neID }) {
+		if !slices.Contains(a.settings.HiddenNetEaseIDs, neID) {
+			a.settings.HiddenNetEaseIDs = append(slices.Clone(a.settings.HiddenNetEaseIDs), neID)
+			changed = true
+		}
+	}
+	if !changed {
 		return
 	}
-	a.settings.NetEasePlaylists = slices.Delete(a.settings.NetEasePlaylists, idx, idx+1)
 	a.settings.save()
 	a.unpinPlaylist(plID)
+	gone := func(r route) bool { return r.page == pagePlaylist && r.playlist == plID }
+	a.history = slices.DeleteFunc(a.history, gone)
+	a.forward = slices.DeleteFunc(a.forward, gone)
+	if gone(a.route) {
+		r := route{page: pageHome}
+		if n := len(a.history); n > 0 {
+			r, a.history = a.history[n-1], a.history[:n-1]
+		}
+		a.showAgain(r)
+	}
 	a.rebuildNetEaseLists()
 	a.toast = "已从网易云歌单列表移除"
 }
@@ -535,6 +576,9 @@ func (a *app) startNetEaseImportFromInput() {
 
 func (a *app) startNetEaseImportBySummary(pl spotify.NetEasePlaylistSummary) {
 	if a.netease.targetHybridID == "" {
+		a.unhideNetEasePlaylist(pl.ID)
+		a.settings.save()
+		a.rebuildNetEaseLists()
 		a.netease.open = false
 		a.expandSidebarSection(sidebarSectionNetEase)
 		a.open(route{page: pagePlaylist, playlist: spotify.NetEasePlaylistID(pl.ID)})
@@ -924,6 +968,11 @@ func (a *app) neteaseImportDialog(c *ui.Context) {
 				}
 				ui.Text(c, title).FontSize(13).FontWeight(600).Grow(1).SingleLine()
 				if loggedIn {
+					if len(a.settings.HiddenNetEaseIDs) > 0 {
+						if ui.Button(c.Key("netease-restore-hidden"), fmt.Sprintf("恢复已移除(%d)", len(a.settings.HiddenNetEaseIDs))).Disabled(st.importing).Clicked() {
+							a.restoreHiddenNetEasePlaylists()
+						}
+					}
 					if ui.Button(c.Key("netease-refresh"), "刷新").Disabled(st.playlistsLoading || st.importing).Clicked() {
 						a.loadNetEasePlaylists()
 					}

@@ -174,4 +174,14 @@ func TestNetEaseSidebarSectionSettingsAndHybridJoin(t *testing.T) {
 	if added2 != 0 || skipped2 != 1 {
 		t.Fatalf("lower-priority NetEase duplicate should be skipped, got added:%d skipped:%d", added2, skipped2)
 	}
+
+	// Removing a synced NetEase playlist hides it from the sidebar list and can be restored.
+	a.removeNetEasePlaylist(neID)
+	if len(a.neteaseLists) != 0 || len(a.settings.HiddenNetEaseIDs) != 1 {
+		t.Fatalf("after removeNetEasePlaylist: lists=%d hidden=%v", len(a.neteaseLists), a.settings.HiddenNetEaseIDs)
+	}
+	a.restoreHiddenNetEasePlaylists()
+	if len(a.neteaseLists) != 1 {
+		t.Fatalf("after restoreHiddenNetEasePlaylists: lists=%d", len(a.neteaseLists))
+	}
 }
