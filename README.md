@@ -164,6 +164,16 @@
 - **单曲独立歌词时间校准**：
   - 歌词时间偏移按 **「歌曲 + 歌词源」** 独立记忆并持久化，桌面歌词、顶部灵动岛、侧边双语面板、Now Playing 与律动舞台完全同步，提供 `±0.2s` 精细微调与点击归零。
 
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/hybrid-playlist.png" alt="四源混合歌单与侧栏多音源歌单分组"><br><b>四源混合歌单 &amp; 侧栏多音源分组</b>：Spotify、网易云、本机与云盘同单混排，一键随机混播与智能去重。</td>
+    <td width="50%"><img src="docs/screenshots/dual-account-settings.png" alt="设置页 Spotify 主账号与网易云子账号统一卡片"><br><b>双账号统一管理（设置 › 账号）</b>：Spotify 主账号与网易云子账号统一头像样式，一键刷新歌单。</td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/screenshots/home-multisource.png" alt="Sonora v1.1.0 主页与置顶歌单、多音源侧栏及呼吸光珠进度条"><br><b>Sonora v1.1.0 主页总览</b>：置顶歌单、Spotify / 网易云 / 混合歌单清晰分层，配合液态玻璃与动效进度条。</td>
+  </tr>
+</table>
+
 ---
 
 ## 下载与开始使用

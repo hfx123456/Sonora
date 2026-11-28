@@ -131,6 +131,16 @@ Bring **Spotify, NetEase Cloud Music, local lossless files, and 6 cloud drives**
 - **Per-Track Lyrics Timing Offset**:
   - Fine-tune lyrics timing in `±0.2s` steps (with one-click reset) persisted independently per `(track, lyrics source)` across desktop lyrics, Dynamic Island, side panel, Now Playing, and Stage.
 
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/hybrid-playlist.png" alt="Multi-source Hybrid Playlist and sidebar playlist sections"><br><b>Multi-Source Hybrid Playlist &amp; Sidebar</b>: Mix Spotify, NetEase, local, and cloud tracks with smart dedup and shuffled playback.</td>
+    <td width="50%"><img src="docs/screenshots/dual-account-settings.png" alt="Settings Account card with Spotify primary and NetEase secondary accounts"><br><b>Unified Dual-Account Settings</b>: Manage Spotify (Primary) and NetEase (Secondary) side by side with one-click playlist sync.</td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/screenshots/home-multisource.png" alt="Sonora v1.1.0 Home overview with pinned playlists and multi-source sidebar"><br><b>Sonora v1.1.0 Home Overview</b>: Pinned playlists, separated Spotify / NetEase / Hybrid sections, Liquid Glass, and animated progress bar.</td>
+  </tr>
+</table>
+
 ---
 
 ## Install, Isolation & Build
