@@ -70,8 +70,8 @@ Store your personal audio library in your own cloud drive and stream seamlessly 
     <td width="50%"><img src="docs/screenshots/fusion-locked-unlock.png" alt="Locked desktop lyrics with unlock pill"><br><b>Quick Unlock Pill</b>: Appears on hover/click while keeping lyrics click-through.</td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/island.webp" alt="Top-edge Dynamic Island"><br><b>Top-Edge Island</b>: Attached cleanly to the display's physical top with live spectrum bars.</td>
-    <td width="50%"><img src="docs/screenshots/desktop-lyrics.webp" alt="Transparent desktop lyrics"><br><b>Desktop Lyrics</b>: Crisp outlined bilingual subtitles over any window.</td>
+    <td width="50%"><img src="docs/screenshots/island.png" alt="Top-edge Dynamic Island"><br><b>Top-Edge Island</b>: Attached cleanly to the display's physical top with live spectrum bars.</td>
+    <td width="50%"><img src="docs/screenshots/desktop-lyrics.png" alt="Transparent desktop lyrics"><br><b>Desktop Lyrics</b>: Crisp outlined bilingual subtitles over any window.</td>
   </tr>
 </table>
 

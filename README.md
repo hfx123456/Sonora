@@ -99,8 +99,8 @@
     <td width="50%"><img src="docs/screenshots/fusion-locked-unlock.png" alt="锁定点击穿透态悬停浮出解锁按钮"><br><b>锁定态一键解锁</b>：保持点击穿透，移入或点击自动浮出「解锁」按钮。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/island.webp" alt="贴顶灵动岛与彩色音频频谱"><br><b>贴顶灵动岛</b>：紧贴屏幕顶部边缘，集成动态音波柱与双语字幕。</td>
-    <td width="50%"><img src="docs/screenshots/desktop-lyrics.webp" alt="透明桌面双语歌词"><br><b>透明桌面歌词</b>：清晰双语描边字幕，支持单独设置中文字体。</td>
+    <td width="50%"><img src="docs/screenshots/island.png" alt="贴顶灵动岛与彩色音频频谱"><br><b>贴顶灵动岛</b>：紧贴屏幕顶部边缘，集成动态音波柱与双语字幕。</td>
+    <td width="50%"><img src="docs/screenshots/desktop-lyrics.png" alt="透明桌面双语歌词"><br><b>透明桌面歌词</b>：清晰双语描边字幕，支持单独设置中文字体。</td>
   </tr>
   <tr>
     <td width="50%" align="center"><img src="docs/screenshots/fusion.webp" alt="侧边双语歌词与选源面板"><br><b>侧边双语词面板</b>：独立字体缩放、译文开关与时间轴微调。</td>
