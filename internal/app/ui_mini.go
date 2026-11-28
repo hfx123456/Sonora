@@ -61,27 +61,38 @@ func (a *app) titlebarMiniButton(c *ui.Context, darkOnOverlay bool) {
 		h = topBar(c)
 	}
 	dark := a.pal.dark || darkOnOverlay
-	fore := ui.RGBA(0, 0, 0, 0.89)
+	fore := a.pal.muted
+	hoverFore := a.pal.text
+	hoverBG := a.pal.hover
+	pressBG := a.pal.press
 	if dark {
-		fore = ui.RGB(255, 255, 255)
+		fore = ui.RGBA(255, 255, 255, 0.72)
+		hoverFore = ui.RGB(255, 255, 255)
+		hoverBG = ui.RGBA(255, 255, 255, 0.12)
+		pressBG = ui.RGBA(255, 255, 255, 0.20)
 	}
-	b := ui.ButtonBase(c.Key("mini-mode-switch")).
-		Absolute().Top(0).Right(bar.Right).Size(46, h).Center().Radius(0).
-		FocusRing(false).TextColor(fore).Label("切换迷你模式").Tooltip("切换迷你模式")
-	bg := ui.Transparent
-	switch {
-	case b.Pressed():
-		bg = fore.Alpha(0.20)
-	case b.Hovered():
-		bg = fore.Alpha(0.10)
-	}
-	b.Background(b.AnimateColor("mini-btn-bg", bg, ui.Animation{Duration: 110 * time.Millisecond}))
-	b.Children(func() {
-		ui.Icon(c.Key("mini-btn-icon"), iconMiniCaption).Size(13, 13)
+	ui.Row(c).Absolute().Top(0).Right(bar.Right+6).Height(h).AlignItems(ui.Center).Children(func() {
+		b := ui.ButtonBase(c.Key("mini-mode-switch")).
+			Size(28, 28).Center().Radius(8).
+			FocusRing(false).Label("切换迷你模式").Tooltip("切换迷你模式")
+		bg := ui.Transparent
+		col := fore
+		switch {
+		case b.Pressed():
+			bg = pressBG
+			col = hoverFore
+		case b.Hovered():
+			bg = hoverBG
+			col = hoverFore
+		}
+		b.Background(b.AnimateColor("mini-btn-bg", bg, ui.Animation{Duration: 110 * time.Millisecond}))
+		b.Children(func() {
+			ui.Icon(c.Key("mini-btn-icon"), iconMiniCaption).Size(13.5, 13.5).TextColor(col)
+		})
+		if b.Clicked() {
+			a.enterMiniMode()
+		}
 	})
-	if b.Clicked() {
-		a.enterMiniMode()
-	}
 }
 
 // enterMiniMode switches directly from the full main window to the floating
